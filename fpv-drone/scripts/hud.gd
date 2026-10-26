@@ -40,7 +40,7 @@ const GREEN := Color(0.45, 1.0, 0.55)
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_mono = FontVariation.new()
 	_mono.base_font = load("res://fonts/JetBrainsMono.ttf")
 	_mono.variation_opentype = {"wght": 700}

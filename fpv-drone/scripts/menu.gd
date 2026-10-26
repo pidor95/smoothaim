@@ -24,7 +24,7 @@ var _paused := false
 
 
 func _ready() -> void:
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	theme = _make_theme()
 	_build()
 	Settings.changed.connect(_refresh)
@@ -160,7 +160,7 @@ func _build() -> void:
 	shade.stretch_mode = TextureRect.STRETCH_SCALE
 	shade.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(shade)
 
 	var column := VBoxContainer.new()
@@ -385,9 +385,9 @@ func _refresh() -> void:
 		s.set_value_no_signal(float(Settings.get(key)))
 		_on_slider(s.value, key)
 	if Settings.control_mode == Settings.Controls.EASY:
-		_help.text = "Слева: вперёд, назад и повороты. Справа: вверх и вниз. Дрон сам держит высоту. Клавиатура: стрелки и W/S."
+		_help.text = "Слева: вперёд и назад. Справа: вверх и вниз. Поворот: проведи пальцем по экрану. Дрон сам держит высоту."
 	else:
-		_help.text = "Левый стик: газ (центр = зависание) и поворот. Правый стик: наклон вперёд, назад и вбок. Дрон сам выравнивается, если отпустить стик. Клавиатура: W/S/A/D и стрелки."
+		_help.text = "Левый стик: вперёд, назад и поворот. Правый стик: вверх и вниз (центр = зависание). Пальцем по экрану тоже можно поворачивать камеру."
 	if Settings.best_lap > 0.0:
 		_best.text = "ЛУЧШИЙ КРУГ  %s" % _format_time(Settings.best_lap)
 	else:

@@ -21,6 +21,8 @@ var world: WorldScript
 var mode: int = 1
 var active := false
 var camera_tilt_deg := 20.0
+## Extra camera pitch from swiping the screen, in radians.
+var look_pitch := 0.0
 
 var yaw := 0.0
 var pitch := 0.0
@@ -86,6 +88,7 @@ func reset_to(pos: Vector3, heading: float) -> void:
 	in_forward = 0.0
 	in_turn = 0.0
 	in_lift = 0.0
+	look_pitch = 0.0
 	_apply_rotation()
 	var back := Vector3(sin(yaw), 0.0, cos(yaw))
 	chase_cam.global_position = pos + back * 1.6 + Vector3.UP * 0.55
@@ -217,7 +220,7 @@ func _update_cameras(delta: float) -> void:
 	if active:
 		shake = 0.0012 + throttle_level * 0.002 + minf(velocity.length(), 40.0) * 0.00006
 	fpv_cam.rotation = Vector3(
-		deg_to_rad(camera_tilt_deg) + sin(_shake_t * 47.0) * shake,
+		deg_to_rad(camera_tilt_deg) + look_pitch + sin(_shake_t * 47.0) * shake,
 		0.0,
 		sin(_shake_t * 39.0 + 1.3) * shake)
 
@@ -227,6 +230,6 @@ func _update_cameras(delta: float) -> void:
 	if world != null:
 		cam_pos.y = maxf(cam_pos.y, world.surface_height(cam_pos.x, cam_pos.z) + 0.3)
 	chase_cam.global_position = cam_pos
-	var look := global_position + fwd * 2.0 + Vector3.UP * 0.15
+	var look := global_position + fwd * 2.0 + Vector3.UP * (0.15 + look_pitch * 2.5)
 	if not cam_pos.is_equal_approx(look):
 		chase_cam.look_at(look, Vector3.UP)

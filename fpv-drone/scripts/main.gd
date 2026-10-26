@@ -51,14 +51,14 @@ func _ready() -> void:
 	add_child(ui)
 	loading = Label.new()
 	loading.text = "Загрузка долины…"
-	loading.set_anchors_preset(Control.PRESET_FULL_RECT)
+	loading.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	loading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	loading.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	loading.add_theme_font_override("font", load("res://fonts/RussoOne-Regular.ttf"))
 	loading.add_theme_font_size_override("font_size", 40)
 	var loading_bg := ColorRect.new()
 	loading_bg.color = Color(0.06, 0.07, 0.09)
-	loading_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	loading_bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	ui.add_child(loading_bg)
 	loading_bg.add_child(loading)
 	await get_tree().process_frame
@@ -158,7 +158,7 @@ func _setup_ui(ui: CanvasLayer) -> void:
 	touch.view_pressed.connect(func() -> void: Settings.put("third_person", not Settings.third_person))
 
 	static_rect = ColorRect.new()
-	static_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	static_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	static_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var sm := ShaderMaterial.new()
 	sm.shader = load("res://shaders/static.gdshader")
@@ -372,14 +372,18 @@ static func _deadzone(v: Vector2) -> Vector2:
 func _gather_input() -> void:
 	var jl := _deadzone(Vector2(Input.get_joy_axis(0, JOY_AXIS_LEFT_X), -Input.get_joy_axis(0, JOY_AXIS_LEFT_Y)))
 	var jr := _deadzone(Vector2(Input.get_joy_axis(0, JOY_AXIS_RIGHT_X), -Input.get_joy_axis(0, JOY_AXIS_RIGHT_Y)))
+	# Swiping the free part of the screen turns the drone and tilts the camera.
+	var look := touch.consume_look() * Settings.sensitivity
+	drone.yaw = wrapf(drone.yaw - look.x * 0.006, -PI, PI)
+	drone.look_pitch = clampf(drone.look_pitch - look.y * 0.004, -0.8, 0.8)
 	if drone.mode == Settings.Controls.CASUAL:
-		drone.in_throttle = clampf(touch.stick_l.y + _axis(KEY_W, KEY_S) + jl.y, -1.0, 1.0)
+		drone.in_pitch = clampf(touch.stick_l.y + _axis(KEY_UP, KEY_DOWN) + jl.y, -1.0, 1.0)
 		drone.in_yaw = clampf(touch.stick_l.x + _axis(KEY_D, KEY_A) + jl.x, -1.0, 1.0)
-		drone.in_pitch = clampf(touch.stick_r.y + _axis(KEY_UP, KEY_DOWN) + jr.y, -1.0, 1.0)
-		drone.in_roll = clampf(touch.stick_r.x + _axis(KEY_RIGHT, KEY_LEFT) + jr.x, -1.0, 1.0)
+		drone.in_throttle = clampf(touch.stick_r.y + _axis(KEY_W, KEY_S) + jr.y, -1.0, 1.0)
+		drone.in_roll = clampf(_axis(KEY_RIGHT, KEY_LEFT) + jr.x, -1.0, 1.0)
 	else:
 		drone.in_forward = clampf(touch.is_down("fwd") - touch.is_down("back") + _axis(KEY_UP, KEY_DOWN) + jl.y, -1.0, 1.0)
-		drone.in_turn = clampf(touch.is_down("right") - touch.is_down("left") + _axis(KEY_RIGHT, KEY_LEFT) + jl.x, -1.0, 1.0)
+		drone.in_turn = clampf(_axis(KEY_RIGHT, KEY_LEFT) + jl.x, -1.0, 1.0)
 		drone.in_lift = clampf(touch.is_down("up") - touch.is_down("down") + _axis(KEY_W, KEY_S) + jr.y, -1.0, 1.0)
 
 
@@ -427,7 +431,7 @@ func _update_hud() -> void:
 	hud.lap_time = lap_time
 	hud.lap_running = lap_running
 	hud.best_lap = Settings.best_lap
-	hud.pitch = drone.pitch
+	hud.pitch = drone.pitch + drone.look_pitch
 	hud.roll = drone.roll
 	hud.throttle = drone.throttle_level
 	hud.mode_text = "ANGLE" if drone.mode == Settings.Controls.CASUAL else "EASY"
@@ -446,8 +450,8 @@ func _smoke_update(delta: float) -> void:
 	var t := _smoke_t
 	match _smoke_step:
 		0:
-			touch.stick_l = Vector2(0.0, 0.5)
-			touch.stick_r = Vector2(0.0, 0.6)
+			touch.stick_l = Vector2(0.1, 0.6)
+			touch.stick_r = Vector2(0.0, 0.5)
 			if t > 3.0:
 				_shot("fpv_casual")
 				Settings.put("third_person", true)
@@ -482,11 +486,17 @@ func _smoke_update(delta: float) -> void:
 		5:
 			if t > 11.5:
 				_shot("pause")
+				menu._toggle_settings()
+				_smoke_step = 7
+		7:
+			if t > 12.5:
+				_shot("settings")
+				menu._toggle_settings()
 				_resume()
 				_enter_menu()
 				_smoke_step = 6
 		6:
-			if t > 13.5:
+			if t > 14.5:
 				_shot("menu")
 				print("SMOKE OK")
 				get_tree().quit()

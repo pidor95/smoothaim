@@ -1,31 +1,30 @@
 extends Control
-## On-screen controls with real multitouch: two floating sticks for the casual
-## mode or arrow buttons for the easy mode, plus pause and camera buttons.
+## On-screen controls with real multitouch. Casual mode: left stick flies
+## forward/back and turns, right stick climbs and descends. Easy mode: arrow
+## buttons. In both modes a swipe on the free part of the screen turns the camera.
 
 signal pause_pressed
 signal view_pressed
 
-const BUTTONS := ["fwd", "back", "left", "right", "up", "down"]
+const BUTTONS := ["fwd", "back", "up", "down"]
 
 var mode: int = 1
-## Left stick: x = yaw, y = throttle (up is positive).
+## Left stick: x = turn, y = forward (up is positive).
 var stick_l := Vector2.ZERO
-## Right stick: x = roll, y = pitch (up is forward).
+## Right stick: y = climb (up is positive). x is always 0.
 var stick_r := Vector2.ZERO
 var buttons := {}
 
 var _touches := {} # touch index -> target name
 var _origins := {} # touch index -> stick centre
-var _font: FontVariation
+var _last := {} # touch index -> last position, for camera swipes
+var _look := Vector2.ZERO
 var _label_font: FontVariation
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	set_anchors_preset(Control.PRESET_FULL_RECT)
-	_font = FontVariation.new()
-	_font.base_font = load("res://fonts/JetBrainsMono.ttf")
-	_font.variation_opentype = {"wght": 700}
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_label_font = FontVariation.new()
 	_label_font.base_font = load("res://fonts/Exo2.ttf")
 	_label_font.variation_opentype = {"wght": 700}
@@ -40,6 +39,8 @@ func set_mode(m: int) -> void:
 func reset() -> void:
 	_touches.clear()
 	_origins.clear()
+	_last.clear()
+	_look = Vector2.ZERO
 	stick_l = Vector2.ZERO
 	stick_r = Vector2.ZERO
 	for b: String in BUTTONS:
@@ -49,6 +50,13 @@ func reset() -> void:
 
 func is_down(button: String) -> float:
 	return 1.0 if buttons.get(button, false) else 0.0
+
+
+## Swipe movement since the last call, in canvas pixels.
+func consume_look() -> Vector2:
+	var v := _look
+	_look = Vector2.ZERO
+	return v
 
 
 # --- Layout ------------------------------------------------------------------
@@ -77,25 +85,21 @@ func _home(left: bool) -> Vector2:
 
 
 func _button_center(b: String) -> Vector2:
-	var d := _radius() * 0.78
+	var d := _radius() * 0.62
 	match b:
 		"fwd":
 			return _home(true) + Vector2(0, -d)
 		"back":
 			return _home(true) + Vector2(0, d)
-		"left":
-			return _home(true) + Vector2(-d, 0)
-		"right":
-			return _home(true) + Vector2(d, 0)
 		"up":
-			return _home(false) + Vector2(0, -d * 0.72)
+			return _home(false) + Vector2(0, -d)
 		"down":
-			return _home(false) + Vector2(0, d * 0.72)
+			return _home(false) + Vector2(0, d)
 	return Vector2.ZERO
 
 
-func _button_radius(b: String) -> float:
-	return _radius() * (0.46 if b in ["up", "down"] else 0.4)
+func _button_radius() -> float:
+	return _radius() * 0.5
 
 
 func _pause_center() -> Vector2:
@@ -114,13 +118,16 @@ func _hit(pos: Vector2) -> String:
 	if pos.distance_to(_view_center()) < 40.0:
 		return "view"
 	if mode == 1:
-		if pos.y < size.y * 0.25:
-			return ""
-		return "lstick" if pos.x < size.x * 0.5 else "rstick"
-	for b: String in BUTTONS:
-		if pos.distance_to(_button_center(b)) < _button_radius(b) * 1.3:
-			return b
-	return ""
+		var zone := _radius() * 1.7
+		if pos.distance_to(_home(true)) < zone:
+			return "lstick"
+		if pos.distance_to(_home(false)) < zone:
+			return "rstick"
+	else:
+		for b: String in BUTTONS:
+			if pos.distance_to(_button_center(b)) < _button_radius() * 1.25:
+				return b
+	return "look"
 
 
 func _input(event: InputEvent) -> void:
@@ -134,8 +141,9 @@ func _input(event: InputEvent) -> void:
 				pause_pressed.emit()
 			elif target == "view":
 				view_pressed.emit()
-			elif target != "":
+			else:
 				_touches[touch.index] = target
+				_last[touch.index] = touch.position
 				if target == "lstick" or target == "rstick":
 					var home := _home(target == "lstick")
 					_origins[touch.index] = home if touch.position.distance_to(home) < _radius() * 1.2 else touch.position
@@ -150,9 +158,16 @@ func _input(event: InputEvent) -> void:
 
 func _apply(index: int, pos: Vector2) -> void:
 	var target: String = _touches[index]
+	var last: Vector2 = _last.get(index, pos)
+	_last[index] = pos
+	if target == "look":
+		_look += pos - last
+		return
 	if target == "lstick" or target == "rstick":
 		var origin: Vector2 = _origins[index]
 		var v := (pos - origin) / _radius()
+		if target == "rstick":
+			v.x = 0.0
 		if v.length() > 1.0:
 			v = v.normalized()
 		var value := Vector2(v.x, -v.y)
@@ -176,11 +191,12 @@ func _release(index: int) -> void:
 	var target: String = _touches[index]
 	_touches.erase(index)
 	_origins.erase(index)
+	_last.erase(index)
 	if target == "lstick":
 		stick_l = Vector2.ZERO
 	elif target == "rstick":
 		stick_r = Vector2.ZERO
-	else:
+	elif target in BUTTONS:
 		buttons[target] = false
 	queue_redraw()
 
@@ -196,33 +212,38 @@ func _origin_for(target: String) -> Vector2:
 
 func _draw() -> void:
 	if mode == 1:
-		_draw_stick(_origin_for("lstick"), stick_l, "ГАЗ · ПОВОРОТ", true)
-		_draw_stick(_origin_for("rstick"), stick_r, "НАКЛОН", false)
+		_draw_stick(_origin_for("lstick"), stick_l, "ВПЕРЁД · ПОВОРОТ", false)
+		_draw_stick(_origin_for("rstick"), stick_r, "ВВЕРХ · ВНИЗ", true)
 	else:
 		for b: String in BUTTONS:
 			_draw_button(b)
-		_draw_caption(_home(true) + Vector2(0, -_radius() * 1.45), "ПОЛЁТ · ПОВОРОТ")
-		_draw_caption(_home(false) + Vector2(0, -_radius() * 1.45), "ВЫСОТА")
+		_draw_caption(_home(true) + Vector2(0, -_radius() * 1.3), "ВПЕРЁД · НАЗАД")
+		_draw_caption(_home(false) + Vector2(0, -_radius() * 1.3), "ВВЕРХ · ВНИЗ")
+	_draw_caption(Vector2(size.x * 0.5, size.y - 64.0), "проведи по экрану, чтобы повернуть камеру")
 	_draw_round_button(_pause_center(), "pause")
 	_draw_round_button(_view_center(), "view")
 
 
 func _draw_caption(center: Vector2, text: String) -> void:
-	var w := 320.0
+	var w := 460.0
 	var pos := center + Vector2(-w * 0.5, 0)
 	draw_string_outline(_label_font, pos, text, HORIZONTAL_ALIGNMENT_CENTER, w, 17, 5, Color(0, 0, 0, 0.55))
 	draw_string(_label_font, pos, text, HORIZONTAL_ALIGNMENT_CENTER, w, 17, Color(1, 1, 1, 0.75))
 
 
-func _draw_stick(c: Vector2, v: Vector2, caption: String, throttle: bool) -> void:
+func _draw_stick(c: Vector2, v: Vector2, caption: String, vertical_only: bool) -> void:
 	var r := _radius()
-	draw_circle(c, r, Color(0.05, 0.06, 0.08, 0.28))
-	draw_arc(c, r, 0.0, TAU, 64, Color(1, 1, 1, 0.35), 2.5, true)
-	draw_line(c + Vector2(-r * 0.85, 0), c + Vector2(r * 0.85, 0), Color(1, 1, 1, 0.12), 2.0)
-	draw_line(c + Vector2(0, -r * 0.85), c + Vector2(0, r * 0.85), Color(1, 1, 1, 0.12), 2.0)
-	if throttle:
-		# Centre of the throttle axis is hover.
+	if vertical_only:
+		# A slot instead of a circle: this stick only moves up and down.
+		var slot := Rect2(c - Vector2(r * 0.45, r), Vector2(r * 0.9, r * 2.0))
+		draw_rect(slot, Color(0.05, 0.06, 0.08, 0.28))
+		draw_rect(slot, Color(1, 1, 1, 0.35), false, 2.5)
 		draw_line(c + Vector2(-r * 0.3, 0), c + Vector2(r * 0.3, 0), Color(1.0, 0.62, 0.2, 0.7), 3.0)
+	else:
+		draw_circle(c, r, Color(0.05, 0.06, 0.08, 0.28))
+		draw_arc(c, r, 0.0, TAU, 64, Color(1, 1, 1, 0.35), 2.5, true)
+		draw_line(c + Vector2(-r * 0.85, 0), c + Vector2(r * 0.85, 0), Color(1, 1, 1, 0.12), 2.0)
+		draw_line(c + Vector2(0, -r * 0.85), c + Vector2(0, r * 0.85), Color(1, 1, 1, 0.12), 2.0)
 	var knob := c + Vector2(v.x, -v.y) * r
 	draw_circle(knob, r * 0.36, Color(1, 1, 1, 0.22))
 	draw_arc(knob, r * 0.36, 0.0, TAU, 40, Color(1, 1, 1, 0.85), 3.0, true)
@@ -232,20 +253,11 @@ func _draw_stick(c: Vector2, v: Vector2, caption: String, throttle: bool) -> voi
 
 func _draw_button(b: String) -> void:
 	var c := _button_center(b)
-	var r := _button_radius(b)
+	var r := _button_radius()
 	var down: bool = buttons.get(b, false)
 	draw_circle(c, r, Color(1.0, 0.56, 0.14, 0.85) if down else Color(0.05, 0.06, 0.08, 0.35))
 	draw_arc(c, r, 0.0, TAU, 48, Color(1, 1, 1, 0.55), 2.5, true)
-	var dir := Vector2.ZERO
-	match b:
-		"fwd", "up":
-			dir = Vector2.UP
-		"back", "down":
-			dir = Vector2.DOWN
-		"left":
-			dir = Vector2.LEFT
-		"right":
-			dir = Vector2.RIGHT
+	var dir := Vector2.UP if b == "fwd" or b == "up" else Vector2.DOWN
 	var side := Vector2(-dir.y, dir.x)
 	var a := r * 0.42
 	var col := Color(0.08, 0.06, 0.04) if down else Color(1, 1, 1, 0.92)
