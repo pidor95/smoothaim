@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b4a74"/>
+      <stop offset="0.62" stop-color="#e9a46a"/>
+      <stop offset="1" stop-color="#f3c58c"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="48" fill="url(#sky)"/>
+  <path d="M0 196 L58 120 L96 160 L150 84 L214 168 L256 136 L256 256 L0 256 Z" fill="#3b4652"/>
+  <path d="M0 214 Q128 186 256 212 L256 256 L0 256 Z" fill="#4f7a2c"/>
+  <g transform="translate(128 112)" stroke="#111418" stroke-linecap="round">
+    <line x1="-52" y1="-34" x2="52" y2="34" stroke-width="12"/>
+    <line x1="-52" y1="34" x2="52" y2="-34" stroke-width="12"/>
+    <rect x="-20" y="-14" width="40" height="28" rx="6" fill="#111418" stroke="none"/>
+    <rect x="-7" y="-22" width="14" height="10" rx="3" fill="#ff8a1f" stroke="none"/>
+  </g>
+  <g fill="none" stroke="#111418" stroke-width="5" opacity="0.85">
+    <ellipse cx="76" cy="78" rx="30" ry="8"/>
+    <ellipse cx="180" cy="78" rx="30" ry="8"/>
+    <ellipse cx="76" cy="146" rx="30" ry="8"/>
+    <ellipse cx="180" cy="146" rx="30" ry="8"/>
+  </g>
+</svg>

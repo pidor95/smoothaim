@@ -1,0 +1,507 @@
+extends Node3D
+## Game flow: loading, menu, flight, pause, crash and respawn, race gates.
+
+const WorldScript := preload("res://scripts/world.gd")
+const DroneScript := preload("res://scripts/drone.gd")
+const HudScript := preload("res://scripts/hud.gd")
+const TouchScript := preload("res://scripts/touch_controls.gd")
+const MenuScript := preload("res://scripts/menu.gd")
+const AudioScript := preload("res://scripts/drone_audio.gd")
+
+enum State { LOADING, MENU, PLAYING, PAUSED, CRASHED }
+
+const BATTERY_FULL := 16.8
+const MENU_ORBIT_CENTER := Vector3(40.0, 0.0, -80.0)
+
+var state: State = State.LOADING
+var world: WorldScript
+var drone: DroneScript
+var hud: HudScript
+var touch: TouchScript
+var menu: MenuScript
+var audio: AudioScript
+var env: Environment
+var sun: DirectionalLight3D
+var menu_cam: Camera3D
+var static_rect: ColorRect
+var loading: Label
+
+var next_gate := 0
+var lap_time := 0.0
+var lap_running := false
+var flight_time := 0.0
+var battery := BATTERY_FULL
+var crash_timer := 0.0
+
+var _menu_angle := 0.6
+var _prev_pos := Vector3.ZERO
+var _time := 0.0
+var _applied_quality := -1
+var _smoke := false
+var _smoke_t := 0.0
+var _smoke_step := 0
+
+
+func _ready() -> void:
+	_smoke = OS.get_cmdline_user_args().has("--smoke")
+	get_tree().quit_on_go_back = false
+	_setup_environment()
+	var ui := CanvasLayer.new()
+	ui.name = "UI"
+	add_child(ui)
+	loading = Label.new()
+	loading.text = "Загрузка долины…"
+	loading.set_anchors_preset(Control.PRESET_FULL_RECT)
+	loading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	loading.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	loading.add_theme_font_override("font", load("res://fonts/RussoOne-Regular.ttf"))
+	loading.add_theme_font_size_override("font_size", 40)
+	var loading_bg := ColorRect.new()
+	loading_bg.color = Color(0.06, 0.07, 0.09)
+	loading_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ui.add_child(loading_bg)
+	loading_bg.add_child(loading)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	world = WorldScript.new()
+	world.name = "World"
+	add_child(world)
+	world.build()
+
+	drone = DroneScript.new()
+	drone.name = "Drone"
+	drone.world = world
+	add_child(drone)
+	drone.crashed.connect(_on_crashed)
+
+	audio = AudioScript.new()
+	add_child(audio)
+
+	menu_cam = Camera3D.new()
+	menu_cam.fov = 62.0
+	menu_cam.far = 2600.0
+	add_child(menu_cam)
+
+	_setup_ui(ui)
+	loading_bg.queue_free()
+
+	Settings.changed.connect(_apply_settings)
+	_apply_settings()
+	_place_at_start()
+	_enter_menu()
+	if _smoke:
+		print("SMOKE: world ready, gates=%d" % world.gates.size())
+		_start_flight()
+
+
+func _setup_environment() -> void:
+	env = Environment.new()
+	env.background_mode = Environment.BG_SKY
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = Color(0.17, 0.32, 0.57)
+	sky_mat.sky_horizon_color = Color(0.93, 0.71, 0.53)
+	sky_mat.sky_curve = 0.12
+	sky_mat.ground_bottom_color = Color(0.16, 0.17, 0.18)
+	sky_mat.ground_horizon_color = Color(0.82, 0.66, 0.54)
+	sky_mat.sun_angle_max = 24.0
+	sky_mat.sun_curve = 0.08
+	var sky := Sky.new()
+	sky.sky_material = sky_mat
+	sky.radiance_size = Sky.RADIANCE_SIZE_64
+	env.sky = sky
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_energy = 0.75
+	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.tonemap_white = 6.0
+	env.fog_enabled = true
+	env.fog_light_color = Color(0.86, 0.74, 0.64)
+	env.fog_sun_scatter = 0.3
+	env.fog_density = 0.0011
+	env.fog_aerial_perspective = 0.5
+	env.fog_sky_affect = 0.2
+	env.glow_enabled = true
+	env.glow_intensity = 0.9
+	env.glow_strength = 1.0
+	env.glow_bloom = 0.06
+	env.glow_hdr_threshold = 1.0
+	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
+	env.set_glow_level(1, 0.6)
+	env.set_glow_level(2, 1.0)
+	env.set_glow_level(4, 1.0)
+	env.adjustment_enabled = true
+	env.adjustment_saturation = 1.12
+	env.adjustment_contrast = 1.05
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+
+	sun = DirectionalLight3D.new()
+	sun.name = "Sun"
+	sun.rotation_degrees = Vector3(-22.0, 200.0, 0.0)
+	sun.light_color = Color(1.0, 0.86, 0.7)
+	sun.light_energy = 1.5
+	sun.shadow_enabled = true
+	sun.shadow_blur = 1.2
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	sun.directional_shadow_max_distance = 140.0
+	add_child(sun)
+
+
+func _setup_ui(ui: CanvasLayer) -> void:
+	hud = HudScript.new()
+	ui.add_child(hud)
+	touch = TouchScript.new()
+	ui.add_child(touch)
+	touch.pause_pressed.connect(_pause)
+	touch.view_pressed.connect(func() -> void: Settings.put("third_person", not Settings.third_person))
+
+	static_rect = ColorRect.new()
+	static_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	static_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sm := ShaderMaterial.new()
+	sm.shader = load("res://shaders/static.gdshader")
+	static_rect.material = sm
+	static_rect.visible = false
+	ui.add_child(static_rect)
+
+	menu = MenuScript.new()
+	ui.add_child(menu)
+	menu.play_pressed.connect(_start_flight)
+	menu.resume_pressed.connect(_resume)
+	menu.restart_pressed.connect(_start_flight)
+	menu.menu_pressed.connect(_enter_menu)
+
+
+func _apply_settings() -> void:
+	sun.shadow_enabled = Settings.shadows
+	env.glow_enabled = Settings.bloom
+	var q: int = Settings.quality
+	if q != _applied_quality:
+		_applied_quality = q
+		var vp := get_viewport()
+		vp.scaling_3d_scale = [0.55, 0.75, 1.0][q]
+		vp.msaa_3d = Viewport.MSAA_2X if q == 2 else Viewport.MSAA_DISABLED
+		world.set_grass_density([0.35, 0.65, 1.0][q])
+		RenderingServer.directional_shadow_atlas_set_size([1024, 2048, 4096][q], true)
+		sun.directional_shadow_max_distance = [90.0, 140.0, 200.0][q]
+		env.fog_density = [0.0016, 0.0011, 0.0009][q]
+	drone.camera_tilt_deg = Settings.camera_tilt
+	if drone.mode != Settings.control_mode:
+		drone.mode = Settings.control_mode
+		touch.set_mode(Settings.control_mode)
+	audio.enabled = Settings.sound
+	audio.set_running(Settings.sound and state == State.PLAYING)
+	_update_camera()
+
+
+func _update_camera() -> void:
+	if state == State.MENU or state == State.LOADING:
+		menu_cam.current = true
+	elif Settings.third_person:
+		drone.chase_cam.current = true
+	else:
+		drone.fpv_cam.current = true
+	hud.fpv = not Settings.third_person
+	hud.camera_tilt = Settings.camera_tilt
+	hud.camera_fov = drone.fpv_cam.fov
+
+
+# --- Flow --------------------------------------------------------------------
+
+func _enter_menu() -> void:
+	state = State.MENU
+	drone.active = false
+	_place_at_start()
+	menu.show_main()
+	hud.visible = false
+	touch.visible = false
+	touch.reset()
+	static_rect.visible = false
+	audio.set_running(false)
+	_update_camera()
+
+
+func _start_flight() -> void:
+	state = State.PLAYING
+	menu.hide_all()
+	hud.visible = true
+	touch.visible = true
+	touch.reset()
+	static_rect.visible = false
+	next_gate = 0
+	world.highlight_gates(0)
+	lap_time = 0.0
+	lap_running = false
+	flight_time = 0.0
+	battery = BATTERY_FULL
+	_place_at_start()
+	drone.mode = Settings.control_mode
+	touch.set_mode(Settings.control_mode)
+	drone.active = true
+	audio.set_running(Settings.sound)
+	_update_camera()
+
+
+func _pause() -> void:
+	if state != State.PLAYING:
+		return
+	state = State.PAUSED
+	drone.active = false
+	touch.visible = false
+	touch.reset()
+	audio.set_running(false)
+	menu.show_pause()
+
+
+func _resume() -> void:
+	if state != State.PAUSED:
+		return
+	state = State.PLAYING
+	menu.hide_all()
+	touch.visible = true
+	drone.active = true
+	_prev_pos = drone.global_position
+	audio.set_running(Settings.sound)
+	_update_camera()
+
+
+func _on_crashed(reason: String) -> void:
+	state = State.CRASHED
+	crash_timer = 1.6
+	static_rect.visible = true
+	touch.reset()
+	audio.set_running(false)
+	hud.show_message("КРУШЕНИЕ", reason, Color(1.0, 0.35, 0.3), 1.6)
+	Input.vibrate_handheld(250)
+
+
+func _respawn() -> void:
+	static_rect.visible = false
+	if next_gate > 0:
+		var i := next_gate - 1
+		var pos := world.gates[i].global_position + world.gate_dirs[i] * 5.0
+		pos.y = maxf(pos.y, world.surface_height(pos.x, pos.z) + 1.0)
+		var target := world.gates[next_gate].global_position if next_gate < world.gates.size() else pos + world.gate_dirs[i]
+		drone.reset_to(pos, atan2(-(target.x - pos.x), -(target.z - pos.z)))
+	else:
+		_place_at_start()
+	_prev_pos = drone.global_position
+	state = State.PLAYING
+	drone.active = true
+	audio.set_running(Settings.sound)
+
+
+func _place_at_start() -> void:
+	var start := Vector3(WorldScript.SPAWN.x, WorldScript.SPAWN_Y + 0.3, WorldScript.SPAWN.y)
+	var g0 := world.gates[0].global_position
+	drone.reset_to(start, atan2(-(g0.x - start.x), -(g0.z - start.z)))
+	_prev_pos = start
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		if state == State.PLAYING:
+			_pause()
+		elif state == State.PAUSED:
+			_resume()
+		elif state == State.MENU:
+			get_tree().quit()
+	elif (what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_APPLICATION_PAUSED) and not _smoke:
+		_pause()
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_cancel"):
+		if state == State.PLAYING:
+			_pause()
+		elif state == State.PAUSED:
+			_resume()
+	elif event is InputEventKey and event.is_pressed() and (event as InputEventKey).keycode == KEY_C:
+		Settings.put("third_person", not Settings.third_person)
+
+
+# --- Per frame ---------------------------------------------------------------
+
+func _process(delta: float) -> void:
+	if state == State.LOADING:
+		return
+	_time += delta
+	if world.beacon_material:
+		world.beacon_material.emission_energy_multiplier = 5.0 if fmod(_time, 1.5) < 0.2 else 0.4
+	match state:
+		State.MENU:
+			_orbit_menu_camera(delta)
+		State.PLAYING:
+			_gather_input()
+			flight_time += delta
+			battery = maxf(13.6, battery - (0.0015 + drone.throttle_level * 0.006) * delta)
+			if lap_running:
+				lap_time += delta
+			_check_gate()
+			audio.update(drone.throttle_level, drone.velocity.length(), delta)
+		State.CRASHED:
+			crash_timer -= delta
+			(static_rect.material as ShaderMaterial).set_shader_parameter("amount", clampf(crash_timer / 0.5, 0.0, 1.0))
+			if crash_timer <= 0.0:
+				_respawn()
+	if hud.visible:
+		_update_hud()
+	if _smoke:
+		_smoke_update(delta)
+
+
+func _orbit_menu_camera(delta: float) -> void:
+	_menu_angle += delta * 0.045
+	var c := MENU_ORBIT_CENTER
+	menu_cam.global_position = c + Vector3(cos(_menu_angle) * 330.0, 105.0 + sin(_menu_angle * 0.7) * 20.0, sin(_menu_angle) * 330.0)
+	menu_cam.look_at(c + Vector3(0.0, 20.0, 0.0), Vector3.UP)
+
+
+static func _axis(positive: Key, negative: Key) -> float:
+	return float(Input.is_key_pressed(positive)) - float(Input.is_key_pressed(negative))
+
+
+static func _deadzone(v: Vector2) -> Vector2:
+	if v.length() < 0.12:
+		return Vector2.ZERO
+	return v
+
+
+func _gather_input() -> void:
+	var jl := _deadzone(Vector2(Input.get_joy_axis(0, JOY_AXIS_LEFT_X), -Input.get_joy_axis(0, JOY_AXIS_LEFT_Y)))
+	var jr := _deadzone(Vector2(Input.get_joy_axis(0, JOY_AXIS_RIGHT_X), -Input.get_joy_axis(0, JOY_AXIS_RIGHT_Y)))
+	if drone.mode == Settings.Controls.CASUAL:
+		drone.in_throttle = clampf(touch.stick_l.y + _axis(KEY_W, KEY_S) + jl.y, -1.0, 1.0)
+		drone.in_yaw = clampf(touch.stick_l.x + _axis(KEY_D, KEY_A) + jl.x, -1.0, 1.0)
+		drone.in_pitch = clampf(touch.stick_r.y + _axis(KEY_UP, KEY_DOWN) + jr.y, -1.0, 1.0)
+		drone.in_roll = clampf(touch.stick_r.x + _axis(KEY_RIGHT, KEY_LEFT) + jr.x, -1.0, 1.0)
+	else:
+		drone.in_forward = clampf(touch.is_down("fwd") - touch.is_down("back") + _axis(KEY_UP, KEY_DOWN) + jl.y, -1.0, 1.0)
+		drone.in_turn = clampf(touch.is_down("right") - touch.is_down("left") + _axis(KEY_RIGHT, KEY_LEFT) + jl.x, -1.0, 1.0)
+		drone.in_lift = clampf(touch.is_down("up") - touch.is_down("down") + _axis(KEY_W, KEY_S) + jr.y, -1.0, 1.0)
+
+
+func _check_gate() -> void:
+	var p := drone.global_position
+	if next_gate < world.gates.size():
+		var g := world.gates[next_gate].global_position
+		var n := world.gate_dirs[next_gate]
+		var d0 := (_prev_pos - g).dot(n)
+		var d1 := (p - g).dot(n)
+		if d0 < 0.0 and d1 >= 0.0:
+			var hit := _prev_pos.lerp(p, d0 / (d0 - d1))
+			if hit.distance_to(g) < WorldScript.GATE_RADIUS:
+				_gate_passed()
+	_prev_pos = p
+
+
+func _gate_passed() -> void:
+	if next_gate == 0:
+		lap_running = true
+		lap_time = 0.0
+	next_gate += 1
+	if next_gate >= world.gates.size():
+		lap_running = false
+		var best: float = Settings.best_lap
+		if best <= 0.0 or lap_time < best:
+			Settings.put("best_lap", lap_time)
+			hud.show_message("НОВЫЙ РЕКОРД", HudScript.format_time(lap_time), Color(0.45, 1.0, 0.55), 3.5)
+		else:
+			hud.show_message("КРУГ ПРОЙДЕН", HudScript.format_time(lap_time), Color.WHITE, 3.0)
+		next_gate = 0
+	else:
+		hud.show_message("+", "", Color(1.0, 0.66, 0.2), 0.35)
+	world.highlight_gates(next_gate)
+	Input.vibrate_handheld(40)
+
+
+func _update_hud() -> void:
+	hud.speed_kmh = drone.velocity.length() * 3.6
+	hud.altitude = drone.altitude()
+	hud.battery = battery - drone.throttle_level * 0.5
+	hud.flight_time = flight_time
+	hud.gate_index = next_gate
+	hud.gate_count = world.gates.size()
+	hud.lap_time = lap_time
+	hud.lap_running = lap_running
+	hud.best_lap = Settings.best_lap
+	hud.pitch = drone.pitch
+	hud.roll = drone.roll
+	hud.throttle = drone.throttle_level
+	hud.mode_text = "ANGLE" if drone.mode == Settings.Controls.CASUAL else "EASY"
+	var cam := get_viewport().get_camera_3d()
+	if cam and next_gate < world.gates.size():
+		var gp := world.gates[next_gate].global_position
+		hud.target_behind = cam.is_position_behind(gp)
+		hud.target_screen = cam.unproject_position(gp)
+		hud.target_distance = drone.global_position.distance_to(gp)
+
+
+# --- Automated check used by CI ---------------------------------------------
+
+func _smoke_update(delta: float) -> void:
+	_smoke_t += delta
+	var t := _smoke_t
+	match _smoke_step:
+		0:
+			touch.stick_l = Vector2(0.0, 0.5)
+			touch.stick_r = Vector2(0.0, 0.6)
+			if t > 3.0:
+				_shot("fpv_casual")
+				Settings.put("third_person", true)
+				_smoke_step = 1
+		1:
+			if t > 5.0:
+				_shot("chase")
+				Settings.put("third_person", false)
+				Settings.put("control_mode", Settings.Controls.EASY)
+				_smoke_step = 2
+		2:
+			touch.buttons["fwd"] = true
+			touch.buttons["up"] = true
+			if t > 7.5:
+				_shot("fpv_easy")
+				touch.reset()
+				drone.reset_to(Vector3(60.0, 35.0, -40.0), atan2(-(150.0 - 60.0), -(-150.0 + 40.0)))
+				_smoke_step = 3
+		3:
+			if t > 9.0:
+				_shot("city")
+				Settings.put("third_person", true)
+				drone.reset_to(Vector3(-140.0, 8.0, 20.0), PI * 0.9)
+				_smoke_step = 4
+		4:
+			if t > 10.5:
+				_shot("lake_chase")
+				Settings.put("third_person", false)
+				Settings.put("control_mode", Settings.Controls.CASUAL)
+				_pause()
+				_smoke_step = 5
+		5:
+			if t > 11.5:
+				_shot("pause")
+				_resume()
+				_enter_menu()
+				_smoke_step = 6
+		6:
+			if t > 13.5:
+				_shot("menu")
+				print("SMOKE OK")
+				get_tree().quit()
+
+
+func _shot(label: String) -> void:
+	var tex := get_viewport().get_texture()
+	if tex == null:
+		return
+	var img := tex.get_image()
+	if img == null or img.is_empty():
+		print("SHOT %s: no image (headless)" % label)
+		return
+	img.resize(640, 360, Image.INTERPOLATE_BILINEAR)
+	var b64 := Marshalls.raw_to_base64(img.save_jpg_to_buffer(0.7))
+	var parts := ceili(b64.length() / 3000.0)
+	for i in parts:
+		print("SHOT %s %d/%d %s" % [label, i + 1, parts, b64.substr(i * 3000, 3000)])

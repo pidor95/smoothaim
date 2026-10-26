@@ -1,0 +1,399 @@
+extends Control
+## Main menu, pause menu and the settings panel.
+
+signal play_pressed
+signal resume_pressed
+signal restart_pressed
+signal menu_pressed
+
+const ACCENT := Color(1.0, 0.56, 0.14)
+const INK := Color(0.94, 0.94, 0.91)
+const PANEL := Color(0.055, 0.065, 0.085, 0.92)
+
+var _main_box: VBoxContainer
+var _pause_box: VBoxContainer
+var _settings_panel: PanelContainer
+var _title: Label
+var _tagline: Label
+var _best: Label
+var _help: Label
+var _choices := {} # setting key -> Array of Buttons
+var _sliders := {} # setting key -> HSlider
+var _slider_values := {} # setting key -> Label
+var _paused := false
+
+
+func _ready() -> void:
+	set_anchors_preset(Control.PRESET_FULL_RECT)
+	theme = _make_theme()
+	_build()
+	Settings.changed.connect(_refresh)
+	_refresh()
+
+
+# --- Public ------------------------------------------------------------------
+
+func show_main() -> void:
+	_paused = false
+	visible = true
+	_main_box.visible = true
+	_pause_box.visible = false
+	_settings_panel.visible = false
+	_title.text = "ДОЛИНА"
+	_tagline.text = "FPV · СИМУЛЯТОР ДРОНА"
+	_refresh()
+
+
+func show_pause() -> void:
+	_paused = true
+	visible = true
+	_main_box.visible = false
+	_pause_box.visible = true
+	_settings_panel.visible = false
+	_title.text = "ПАУЗА"
+	_tagline.text = "ДРОН ЗАВИС И ЖДЁТ"
+	_refresh()
+
+
+func hide_all() -> void:
+	visible = false
+
+
+# --- Building ----------------------------------------------------------------
+
+func _font(path: String, weight: int, spacing := 0) -> FontVariation:
+	var f := FontVariation.new()
+	f.base_font = load(path)
+	if weight > 0:
+		f.variation_opentype = {"wght": weight}
+	f.spacing_glyph = spacing
+	return f
+
+
+func _box(color: Color, border: Color, radius := 14, border_width := 2) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = color
+	sb.border_color = border
+	sb.set_border_width_all(border_width)
+	sb.set_corner_radius_all(radius)
+	sb.content_margin_left = 22
+	sb.content_margin_right = 22
+	sb.content_margin_top = 12
+	sb.content_margin_bottom = 12
+	sb.anti_aliasing = true
+	return sb
+
+
+func _circle_texture(radius: int, color: Color) -> ImageTexture:
+	var d := radius * 2
+	var img := Image.create(d, d, false, Image.FORMAT_RGBA8)
+	for y in d:
+		for x in d:
+			var dist := Vector2(x + 0.5 - radius, y + 0.5 - radius).length()
+			var a := clampf(radius - dist, 0.0, 1.0)
+			img.set_pixel(x, y, Color(color.r, color.g, color.b, a))
+	return ImageTexture.create_from_image(img)
+
+
+func _make_theme() -> Theme:
+	var t := Theme.new()
+	t.default_font = _font("res://fonts/Exo2.ttf", 600)
+	t.default_font_size = 24
+
+	t.set_stylebox("normal", "Button", _box(Color(0.07, 0.08, 0.1, 0.85), Color(1, 1, 1, 0.12)))
+	t.set_stylebox("hover", "Button", _box(Color(0.12, 0.13, 0.16, 0.92), Color(ACCENT, 0.8)))
+	t.set_stylebox("pressed", "Button", _box(ACCENT, ACCENT.lightened(0.2)))
+	t.set_stylebox("hover_pressed", "Button", _box(ACCENT, ACCENT.lightened(0.3)))
+	t.set_stylebox("focus", "Button", _box(Color(0, 0, 0, 0), Color(ACCENT, 0.9)))
+	t.set_stylebox("disabled", "Button", _box(Color(0.07, 0.08, 0.1, 0.5), Color(1, 1, 1, 0.05)))
+	t.set_color("font_color", "Button", INK)
+	t.set_color("font_hover_color", "Button", Color.WHITE)
+	t.set_color("font_focus_color", "Button", Color.WHITE)
+	t.set_color("font_pressed_color", "Button", Color(0.07, 0.05, 0.03))
+	t.set_color("font_hover_pressed_color", "Button", Color(0.07, 0.05, 0.03))
+
+	t.set_color("font_color", "Label", INK)
+
+	var panel := _box(PANEL, Color(1, 1, 1, 0.08), 20, 1)
+	panel.content_margin_left = 28
+	panel.content_margin_right = 28
+	panel.content_margin_top = 22
+	panel.content_margin_bottom = 22
+	t.set_stylebox("panel", "PanelContainer", panel)
+
+	var track := _box(Color(1, 1, 1, 0.16), Color(0, 0, 0, 0), 6, 0)
+	track.content_margin_top = 5
+	track.content_margin_bottom = 5
+	t.set_stylebox("slider", "HSlider", track)
+	var fill := _box(ACCENT, Color(0, 0, 0, 0), 6, 0)
+	fill.content_margin_top = 5
+	fill.content_margin_bottom = 5
+	t.set_stylebox("grabber_area", "HSlider", fill)
+	t.set_stylebox("grabber_area_highlight", "HSlider", fill)
+	var knob := _circle_texture(17, Color.WHITE)
+	t.set_icon("grabber", "HSlider", knob)
+	t.set_icon("grabber_highlight", "HSlider", _circle_texture(17, ACCENT.lightened(0.4)))
+
+	var bar := _box(Color(1, 1, 1, 0.25), Color(0, 0, 0, 0), 4, 0)
+	bar.content_margin_left = 3
+	bar.content_margin_right = 3
+	t.set_stylebox("grabber", "VScrollBar", bar)
+	t.set_stylebox("grabber_highlight", "VScrollBar", bar)
+	t.set_stylebox("grabber_pressed", "VScrollBar", bar)
+	t.set_stylebox("scroll", "VScrollBar", StyleBoxEmpty.new())
+	return t
+
+
+func _build() -> void:
+	# Darken the left side so the menu reads over the 3D scene.
+	var shade := TextureRect.new()
+	var grad := Gradient.new()
+	grad.set_color(0, Color(0.03, 0.035, 0.05, 0.88))
+	grad.set_color(1, Color(0.03, 0.035, 0.05, 0.0))
+	var gtex := GradientTexture2D.new()
+	gtex.gradient = grad
+	gtex.fill_from = Vector2(0.0, 0.5)
+	gtex.fill_to = Vector2(0.75, 0.5)
+	gtex.width = 256
+	gtex.height = 8
+	shade.texture = gtex
+	shade.stretch_mode = TextureRect.STRETCH_SCALE
+	shade.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(shade)
+
+	var column := VBoxContainer.new()
+	column.set_anchors_preset(Control.PRESET_LEFT_WIDE)
+	column.offset_left = 64
+	column.offset_top = 40
+	column.offset_bottom = -32
+	column.offset_right = 64 + 440
+	column.add_theme_constant_override("separation", 10)
+	add_child(column)
+
+	_title = Label.new()
+	_title.add_theme_font_override("font", _font("res://fonts/RussoOne-Regular.ttf", 0, 4))
+	_title.add_theme_font_size_override("font_size", 84)
+	_title.add_theme_color_override("font_color", Color(1.0, 0.97, 0.92))
+	_title.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.45))
+	_title.add_theme_constant_override("shadow_offset_y", 4)
+	column.add_child(_title)
+
+	_tagline = Label.new()
+	_tagline.add_theme_font_override("font", _font("res://fonts/JetBrainsMono.ttf", 700, 3))
+	_tagline.add_theme_font_size_override("font_size", 18)
+	_tagline.add_theme_color_override("font_color", ACCENT)
+	column.add_child(_tagline)
+
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(0, 18)
+	column.add_child(gap)
+
+	_main_box = _button_list(column, [
+		["ЛЕТАТЬ", func() -> void: play_pressed.emit()],
+		["НАСТРОЙКИ", _toggle_settings],
+		["ВЫХОД", func() -> void: get_tree().quit()],
+	])
+	_pause_box = _button_list(column, [
+		["ПРОДОЛЖИТЬ", func() -> void: resume_pressed.emit()],
+		["ЗАНОВО", func() -> void: restart_pressed.emit()],
+		["НАСТРОЙКИ", _toggle_settings],
+		["В МЕНЮ", func() -> void: menu_pressed.emit()],
+	])
+
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	column.add_child(spacer)
+
+	_best = Label.new()
+	_best.add_theme_font_override("font", _font("res://fonts/JetBrainsMono.ttf", 600))
+	_best.add_theme_font_size_override("font_size", 18)
+	_best.add_theme_color_override("font_color", Color(1, 1, 1, 0.75))
+	column.add_child(_best)
+
+	_build_settings()
+
+
+func _button_list(parent: Control, items: Array) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 12)
+	parent.add_child(box)
+	for item: Array in items:
+		var b := Button.new()
+		b.text = item[0]
+		b.custom_minimum_size = Vector2(320, 64)
+		b.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.add_theme_font_size_override("font_size", 26)
+		var cb: Callable = item[1]
+		b.pressed.connect(cb)
+		box.add_child(b)
+	return box
+
+
+func _build_settings() -> void:
+	_settings_panel = PanelContainer.new()
+	_settings_panel.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+	_settings_panel.offset_left = -640
+	_settings_panel.offset_right = -40
+	_settings_panel.offset_top = 32
+	_settings_panel.offset_bottom = -32
+	_settings_panel.visible = false
+	add_child(_settings_panel)
+
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_settings_panel.add_child(scroll)
+
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_theme_constant_override("separation", 16)
+	scroll.add_child(list)
+
+	var header := HBoxContainer.new()
+	list.add_child(header)
+	var title := Label.new()
+	title.text = "НАСТРОЙКИ"
+	title.add_theme_font_override("font", _font("res://fonts/RussoOne-Regular.ttf", 0, 2))
+	title.add_theme_font_size_override("font_size", 34)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	var close := Button.new()
+	close.text = "ГОТОВО"
+	close.custom_minimum_size = Vector2(150, 56)
+	close.pressed.connect(_toggle_settings)
+	header.add_child(close)
+
+	_section(list, "ГРАФИКА")
+	_choice(list, "Тени", "shadows", ["Выкл", "Вкл"])
+	_choice(list, "Блум (свечение)", "bloom", ["Выкл", "Вкл"])
+	_choice(list, "Качество", "quality", ["Низкое", "Среднее", "Высокое"])
+
+	_section(list, "УПРАВЛЕНИЕ")
+	_choice(list, "Схема", "control_mode", ["Лёгкое · стрелки", "Казуальное · стики"])
+	_help = Label.new()
+	_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_help.add_theme_font_size_override("font_size", 19)
+	_help.add_theme_color_override("font_color", Color(1, 1, 1, 0.7))
+	list.add_child(_help)
+	_slider(list, "Чувствительность", "sensitivity", 0.5, 1.6, 0.05, "×")
+
+	_section(list, "КАМЕРА И ЗВУК")
+	_choice(list, "Вид", "third_person", ["FPV", "Сзади"])
+	_slider(list, "Наклон FPV-камеры", "camera_tilt", 0.0, 45.0, 1.0, "°")
+	_choice(list, "Звук моторов", "sound", ["Выкл", "Вкл"])
+
+
+func _section(parent: Control, text: String) -> void:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_override("font", _font("res://fonts/JetBrainsMono.ttf", 700, 3))
+	l.add_theme_font_size_override("font_size", 16)
+	l.add_theme_color_override("font_color", ACCENT)
+	parent.add_child(l)
+
+
+func _choice(parent: Control, label: String, key: String, options: Array) -> void:
+	var row := VBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	parent.add_child(row)
+	var l := Label.new()
+	l.text = label
+	row.add_child(l)
+	var buttons := HBoxContainer.new()
+	buttons.add_theme_constant_override("separation", 8)
+	row.add_child(buttons)
+	var group := ButtonGroup.new()
+	var list: Array[Button] = []
+	for i in options.size():
+		var b := Button.new()
+		b.text = options[i]
+		b.toggle_mode = true
+		b.button_group = group
+		b.custom_minimum_size = Vector2(0, 54)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.add_theme_font_size_override("font_size", 20)
+		b.pressed.connect(_on_choice.bind(key, i))
+		buttons.add_child(b)
+		list.append(b)
+	_choices[key] = list
+
+
+func _slider(parent: Control, label: String, key: String, lo: float, hi: float, step: float, unit: String) -> void:
+	var row := VBoxContainer.new()
+	parent.add_child(row)
+	var top := HBoxContainer.new()
+	row.add_child(top)
+	var l := Label.new()
+	l.text = label
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(l)
+	var value := Label.new()
+	value.add_theme_font_override("font", _font("res://fonts/JetBrainsMono.ttf", 700))
+	value.add_theme_color_override("font_color", ACCENT)
+	top.add_child(value)
+	var s := HSlider.new()
+	s.min_value = lo
+	s.max_value = hi
+	s.step = step
+	s.custom_minimum_size = Vector2(0, 48)
+	s.set_meta("unit", unit)
+	s.value_changed.connect(_on_slider.bind(key))
+	row.add_child(s)
+	_sliders[key] = s
+	_slider_values[key] = value
+
+
+# --- Behaviour ---------------------------------------------------------------
+
+func _toggle_settings() -> void:
+	_settings_panel.visible = not _settings_panel.visible
+	# On narrow screens the panel would cover the buttons, so hide them meanwhile.
+	var room := size.x - 640.0 > 64.0 + 440.0
+	_main_box.visible = not _paused and (room or not _settings_panel.visible)
+	_pause_box.visible = _paused and (room or not _settings_panel.visible)
+	_refresh()
+
+
+func _on_choice(key: String, index: int) -> void:
+	var current: Variant = Settings.get(key)
+	if current is bool:
+		Settings.put(key, index == 1)
+	else:
+		Settings.put(key, index)
+
+
+func _on_slider(value: float, key: String) -> void:
+	var label: Label = _slider_values[key]
+	var s: HSlider = _sliders[key]
+	var unit: String = s.get_meta("unit")
+	label.text = ("%d" % roundi(value) if unit == "°" else "%.2f" % value) + unit
+	if not is_equal_approx(float(Settings.get(key)), value):
+		Settings.put(key, value)
+
+
+func _refresh() -> void:
+	for key: String in _choices:
+		var value: Variant = Settings.get(key)
+		var index := (1 if value else 0) if value is bool else int(value)
+		var list: Array[Button] = _choices[key]
+		for i in list.size():
+			list[i].set_pressed_no_signal(i == index)
+	for key: String in _sliders:
+		var s: HSlider = _sliders[key]
+		s.set_value_no_signal(float(Settings.get(key)))
+		_on_slider(s.value, key)
+	if Settings.control_mode == Settings.Controls.EASY:
+		_help.text = "Слева: вперёд, назад и повороты. Справа: вверх и вниз. Дрон сам держит высоту. Клавиатура: стрелки и W/S."
+	else:
+		_help.text = "Левый стик: газ (центр = зависание) и поворот. Правый стик: наклон вперёд, назад и вбок. Дрон сам выравнивается, если отпустить стик. Клавиатура: W/S/A/D и стрелки."
+	if Settings.best_lap > 0.0:
+		_best.text = "ЛУЧШИЙ КРУГ  %s" % _format_time(Settings.best_lap)
+	else:
+		_best.text = "14 ВОРОТ · ЛУГ, ОЗЕРО, ГОРОД И ГОРЫ"
+
+
+static func _format_time(t: float) -> String:
+	var minutes := int(t / 60.0)
+	return "%02d:%05.2f" % [minutes, t - minutes * 60.0]
