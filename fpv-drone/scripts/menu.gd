@@ -1,5 +1,7 @@
 extends Control
-## Main menu, pause menu and the settings panel.
+## Main menu, pause menu, the drone picker and the settings panel.
+
+const DroneScript := preload("res://scripts/drone.gd")
 
 signal play_pressed
 signal resume_pressed
@@ -13,6 +15,8 @@ const PANEL := Color(0.055, 0.065, 0.085, 0.92)
 var _main_box: VBoxContainer
 var _pause_box: VBoxContainer
 var _settings_panel: PanelContainer
+var _drones_panel: PanelContainer
+var _drone_cards: Array[Button] = []
 var _title: Label
 var _tagline: Label
 var _best: Label
@@ -39,6 +43,7 @@ func show_main() -> void:
 	_main_box.visible = true
 	_pause_box.visible = false
 	_settings_panel.visible = false
+	_drones_panel.visible = false
 	_title.text = "ДОЛИНА"
 	_tagline.text = "FPV · СИМУЛЯТОР ДРОНА"
 	_refresh()
@@ -50,6 +55,7 @@ func show_pause() -> void:
 	_main_box.visible = false
 	_pause_box.visible = true
 	_settings_panel.visible = false
+	_drones_panel.visible = false
 	_title.text = "ПАУЗА"
 	_tagline.text = "ДРОН ЗАВИС И ЖДЁТ"
 	_refresh()
@@ -192,12 +198,14 @@ func _build() -> void:
 
 	_main_box = _button_list(column, [
 		["ЛЕТАТЬ", func() -> void: play_pressed.emit()],
+		["ДРОН", _toggle_drones],
 		["НАСТРОЙКИ", _toggle_settings],
 		["ВЫХОД", func() -> void: get_tree().quit()],
 	])
 	_pause_box = _button_list(column, [
 		["ПРОДОЛЖИТЬ", func() -> void: resume_pressed.emit()],
 		["ЗАНОВО", func() -> void: restart_pressed.emit()],
+		["ДРОН", _toggle_drones],
 		["НАСТРОЙКИ", _toggle_settings],
 		["В МЕНЮ", func() -> void: menu_pressed.emit()],
 	])
@@ -213,6 +221,7 @@ func _build() -> void:
 	column.add_child(_best)
 
 	_build_settings()
+	_build_drones()
 
 
 func _button_list(parent: Control, items: Array) -> VBoxContainer:
@@ -233,15 +242,7 @@ func _button_list(parent: Control, items: Array) -> VBoxContainer:
 
 
 func _build_settings() -> void:
-	_settings_panel = PanelContainer.new()
-	_settings_panel.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
-	_settings_panel.offset_left = -640
-	_settings_panel.offset_right = -40
-	_settings_panel.offset_top = 32
-	_settings_panel.offset_bottom = -32
-	_settings_panel.visible = false
-	add_child(_settings_panel)
-
+	_settings_panel = _side_panel()
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_settings_panel.add_child(scroll)
@@ -250,20 +251,7 @@ func _build_settings() -> void:
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	list.add_theme_constant_override("separation", 16)
 	scroll.add_child(list)
-
-	var header := HBoxContainer.new()
-	list.add_child(header)
-	var title := Label.new()
-	title.text = "НАСТРОЙКИ"
-	title.add_theme_font_override("font", _font("res://fonts/RussoOne-Regular.ttf", 0, 2))
-	title.add_theme_font_size_override("font_size", 34)
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	header.add_child(title)
-	var close := Button.new()
-	close.text = "ГОТОВО"
-	close.custom_minimum_size = Vector2(150, 56)
-	close.pressed.connect(_toggle_settings)
-	header.add_child(close)
+	_panel_header(list, "НАСТРОЙКИ", _toggle_settings)
 
 	_section(list, "ГРАФИКА")
 	_choice(list, "Тени", "shadows", ["Выкл", "Вкл"])
@@ -283,6 +271,121 @@ func _build_settings() -> void:
 	_choice(list, "Вид", "third_person", ["FPV", "Сзади"])
 	_slider(list, "Наклон FPV-камеры", "camera_tilt", 0.0, 45.0, 1.0, "°")
 	_choice(list, "Звук моторов", "sound", ["Выкл", "Вкл"])
+
+
+func _side_panel() -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+	panel.offset_left = -640
+	panel.offset_right = -40
+	panel.offset_top = 32
+	panel.offset_bottom = -32
+	panel.visible = false
+	add_child(panel)
+	return panel
+
+
+func _panel_header(parent: Control, text: String, close_action: Callable) -> void:
+	var header := HBoxContainer.new()
+	parent.add_child(header)
+	var title := Label.new()
+	title.text = text
+	title.add_theme_font_override("font", _font("res://fonts/RussoOne-Regular.ttf", 0, 2))
+	title.add_theme_font_size_override("font_size", 34)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	var close := Button.new()
+	close.text = "ГОТОВО"
+	close.custom_minimum_size = Vector2(150, 56)
+	close.pressed.connect(close_action)
+	header.add_child(close)
+
+
+func _build_drones() -> void:
+	_drones_panel = _side_panel()
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_drones_panel.add_child(scroll)
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_theme_constant_override("separation", 14)
+	scroll.add_child(list)
+	_panel_header(list, "ВЫБОР ДРОНА", _toggle_drones)
+
+	var group := ButtonGroup.new()
+	var fastest := 0.0
+	for t: Dictionary in DroneScript.TYPES:
+		fastest = maxf(fastest, float(t["speed"]))
+	for i in DroneScript.TYPES.size():
+		var t: Dictionary = DroneScript.TYPES[i]
+		var accent: Color = t["accent"]
+		var card := Button.new()
+		card.toggle_mode = true
+		card.button_group = group
+		card.custom_minimum_size = Vector2(0, 128)
+		card.add_theme_stylebox_override("pressed", _box(Color(0.1, 0.11, 0.14, 0.95), accent, 14, 3))
+		card.add_theme_stylebox_override("hover_pressed", _box(Color(0.12, 0.13, 0.16, 0.95), accent, 14, 3))
+		card.pressed.connect(func() -> void: Settings.put("drone_type", i))
+		list.add_child(card)
+		_drone_cards.append(card)
+
+		var row := HBoxContainer.new()
+		row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		row.offset_left = 18
+		row.offset_right = -18
+		row.offset_top = 14
+		row.offset_bottom = -14
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_theme_constant_override("separation", 16)
+		card.add_child(row)
+		var stripe := ColorRect.new()
+		stripe.color = accent
+		stripe.custom_minimum_size = Vector2(8, 0)
+		stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(stripe)
+		var text := VBoxContainer.new()
+		text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		text.add_theme_constant_override("separation", 4)
+		row.add_child(text)
+		var name_label := Label.new()
+		name_label.text = t["name"]
+		name_label.add_theme_font_override("font", _font("res://fonts/RussoOne-Regular.ttf", 0, 2))
+		name_label.add_theme_font_size_override("font_size", 28)
+		text.add_child(name_label)
+		var about := Label.new()
+		about.text = t["about"]
+		about.add_theme_font_size_override("font_size", 18)
+		about.add_theme_color_override("font_color", Color(1, 1, 1, 0.7))
+		text.add_child(about)
+		var speed_row := HBoxContainer.new()
+		speed_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		speed_row.add_theme_constant_override("separation", 12)
+		text.add_child(speed_row)
+		var speed := Label.new()
+		speed.text = "ДО %d КМ/Ч" % roundi(float(t["speed"]))
+		speed.add_theme_font_override("font", _font("res://fonts/JetBrainsMono.ttf", 700))
+		speed.add_theme_font_size_override("font_size", 18)
+		speed.add_theme_color_override("font_color", accent)
+		speed_row.add_child(speed)
+		var bar_bg := ColorRect.new()
+		bar_bg.color = Color(1, 1, 1, 0.12)
+		bar_bg.custom_minimum_size = Vector2(200, 8)
+		bar_bg.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		speed_row.add_child(bar_bg)
+		var bar := ColorRect.new()
+		bar.color = accent
+		bar.size = Vector2(200.0 * float(t["speed"]) / fastest, 8)
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bar_bg.add_child(bar)
+
+	var note := Label.new()
+	note.text = "Быстрым дронам нужна точность: на 200 км/ч ворота приближаются очень быстро."
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.add_theme_font_size_override("font_size", 18)
+	note.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
+	list.add_child(note)
 
 
 func _section(parent: Control, text: String) -> void:
@@ -348,11 +451,23 @@ func _slider(parent: Control, label: String, key: String, lo: float, hi: float, 
 # --- Behaviour ---------------------------------------------------------------
 
 func _toggle_settings() -> void:
-	_settings_panel.visible = not _settings_panel.visible
+	_toggle_panel(_settings_panel)
+
+
+func _toggle_drones() -> void:
+	_toggle_panel(_drones_panel)
+
+
+## Opens one side panel (closing the other one) or closes it if it is open.
+func _toggle_panel(panel: PanelContainer) -> void:
+	var open := not panel.visible
+	_settings_panel.visible = false
+	_drones_panel.visible = false
+	panel.visible = open
 	# On narrow screens the panel would cover the buttons, so hide them meanwhile.
 	var room := size.x - 640.0 > 64.0 + 440.0
-	_main_box.visible = not _paused and (room or not _settings_panel.visible)
-	_pause_box.visible = _paused and (room or not _settings_panel.visible)
+	_main_box.visible = not _paused and (room or not open)
+	_pause_box.visible = _paused and (room or not open)
 	_refresh()
 
 
@@ -391,7 +506,9 @@ func _refresh() -> void:
 	if Settings.best_lap > 0.0:
 		_best.text = "ЛУЧШИЙ КРУГ  %s" % _format_time(Settings.best_lap)
 	else:
-		_best.text = "14 ВОРОТ · ЛУГ, ОЗЕРО, ГОРОД И ГОРЫ"
+		_best.text = "18 ВОРОТ · ОЗЁРА, ГОРОД, ДЕРЕВНЯ И ГОРЫ"
+	for i in _drone_cards.size():
+		_drone_cards[i].set_pressed_no_signal(i == Settings.drone_type)
 
 
 static func _format_time(t: float) -> String:

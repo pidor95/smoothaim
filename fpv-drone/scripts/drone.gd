@@ -10,15 +10,31 @@ const WorldScript := preload("res://scripts/world.gd")
 const ModelScript := preload("res://scripts/drone_model.gd")
 
 const G := 9.81
-const MAX_TILT := 0.70 # rad, about 40 degrees
-const YAW_RATE := 2.6 # rad/s at full stick
-const EASY_SPEED := 24.0
 const EASY_TURN := 1.75
-const CEILING := 520.0
-const LIMIT := 660.0
+const CEILING := 900.0
+const LIMIT := 1740.0
+const BASE_FOV := 80.0
+
+## Selectable drones. speed is the top speed in km/h, tilt the maximum lean
+## angle in radians, yaw the turn rate in rad/s and climb the extra thrust in g.
+const TYPES := [
+	{"name": "СТАНДАРТ", "about": "5 дюймов · фристайл, мягкий и послушный", "speed": 110.0,
+		"tilt": 0.70, "yaw": 2.6, "climb": 1.3, "accent": Color(1.0, 0.45, 0.08), "arms": 1.0},
+	{"name": "ГОНЩИК", "about": "рейсинг-рама · резкий, быстро поворачивает", "speed": 160.0,
+		"tilt": 0.92, "yaw": 3.3, "climb": 1.8, "accent": Color(0.1, 0.8, 1.0), "arms": 0.88},
+	{"name": "РАКЕТА", "about": "спид-билд 6S · разгон до 200 км/ч", "speed": 200.0,
+		"tilt": 1.08, "yaw": 3.0, "climb": 2.4, "accent": Color(1.0, 0.16, 0.22), "arms": 1.1},
+]
 
 var world: WorldScript
 var mode: int = 1
+var drone_type := 0
+var top_speed := 30.0 # m/s
+var max_tilt := 0.7
+var yaw_rate := 2.6
+var climb := 1.3
+var _drag_lin := 0.06
+var _drag_quad := 0.0
 var active := false
 var camera_tilt_deg := 20.0
 ## Extra camera pitch from swiping the screen, in radians.
@@ -62,7 +78,7 @@ func _ready() -> void:
 	fpv_cam.position = Vector3(0.0, 0.02, -0.06)
 	fpv_cam.fov = 80.0
 	fpv_cam.near = 0.03
-	fpv_cam.far = 2400.0
+	fpv_cam.far = 4500.0
 	fpv_cam.cull_mask = 0xFFFFF & ~ModelScript.MODEL_LAYER
 	add_child(fpv_cam)
 
@@ -70,8 +86,24 @@ func _ready() -> void:
 	chase_cam.top_level = true
 	chase_cam.fov = 72.0
 	chase_cam.near = 0.05
-	chase_cam.far = 2400.0
+	chase_cam.far = 4500.0
 	add_child(chase_cam)
+	set_type(drone_type)
+
+
+## Switches flight characteristics and looks to one of TYPES.
+func set_type(index: int) -> void:
+	drone_type = clampi(index, 0, TYPES.size() - 1)
+	var t: Dictionary = TYPES[drone_type]
+	top_speed = float(t["speed"]) / 3.6
+	max_tilt = t["tilt"]
+	yaw_rate = t["yaw"]
+	climb = t["climb"]
+	# Drag chosen so that full forward stick settles exactly at top_speed:
+	# in level flight the horizontal acceleration is g * tan(tilt).
+	_drag_lin = 0.06
+	_drag_quad = maxf(0.0, (G * tan(max_tilt) / top_speed - _drag_lin) / top_speed)
+	model.restyle(t["accent"], t["arms"])
 
 
 func reset_to(pos: Vector3, heading: float) -> void:
@@ -129,21 +161,21 @@ static func _expo(v: float) -> float:
 
 func _fly_casual(delta: float) -> void:
 	var s := Settings.sensitivity
-	var tilt := MAX_TILT * clampf(s, 0.6, 1.4)
 	var k := 1.0 - exp(-7.0 * delta)
-	pitch = lerpf(pitch, -_expo(in_pitch) * tilt, k)
-	roll = lerpf(roll, -_expo(in_roll) * tilt, k)
-	yaw = wrapf(yaw - _expo(in_yaw) * YAW_RATE * s * delta, -PI, PI)
+	pitch = lerpf(pitch, -_expo(in_pitch) * max_tilt, k)
+	roll = lerpf(roll, -_expo(in_roll) * max_tilt, k)
+	yaw = wrapf(yaw - _expo(in_yaw) * yaw_rate * s * delta, -PI, PI)
 
 	var up := Basis.from_euler(Vector3(pitch, yaw, roll)).y
-	var gain := 1.3 if in_throttle > 0.0 else 0.95
+	var gain := climb if in_throttle > 0.0 else 0.95
+	var max_thrust := G * (1.0 + climb) / cos(max_tilt)
 	var thrust := G * (1.0 + gain * in_throttle)
-	thrust = minf(thrust / maxf(up.y, 0.5), G * 3.0)
-	throttle_level = clampf(thrust / (G * 3.0), 0.0, 1.0)
+	thrust = minf(thrust / maxf(up.y, 0.3), max_thrust)
+	throttle_level = clampf(thrust / max_thrust, 0.0, 1.0)
 
 	var acc := up * thrust + Vector3.DOWN * G
 	var hv := Vector3(velocity.x, 0.0, velocity.z)
-	acc -= hv * (0.3 + hv.length() * 0.0035)
+	acc -= hv * (_drag_lin + hv.length() * _drag_quad)
 	acc.y -= velocity.y * 0.9
 	velocity += acc * delta
 
@@ -153,13 +185,13 @@ func _fly_easy(delta: float) -> void:
 	yaw = wrapf(yaw - in_turn * EASY_TURN * s * delta, -PI, PI)
 	var fwd := forward_flat()
 	var hv := Vector3(velocity.x, 0.0, velocity.z)
-	hv = hv.lerp(fwd * in_forward * EASY_SPEED * clampf(s, 0.7, 1.3), 1.0 - exp(-1.8 * delta))
-	var vy := lerpf(velocity.y, in_lift * 9.0, 1.0 - exp(-3.0 * delta))
+	hv = hv.lerp(fwd * in_forward * top_speed, 1.0 - exp(-1.2 * delta))
+	var vy := lerpf(velocity.y, in_lift * (6.0 + climb * 3.0), 1.0 - exp(-3.0 * delta))
 	velocity = Vector3(hv.x, vy, hv.z)
 
 	var fspeed := hv.dot(fwd)
 	var k := 1.0 - exp(-5.0 * delta)
-	pitch = lerpf(pitch, -clampf(fspeed / EASY_SPEED, -1.0, 1.0) * 0.42, k)
+	pitch = lerpf(pitch, -clampf(fspeed / top_speed, -1.0, 1.0) * 0.42, k)
 	roll = lerpf(roll, -in_turn * 0.35 * clampf(absf(fspeed) / 8.0, 0.25, 1.0), k)
 	throttle_level = clampf(0.4 + in_lift * 0.3 + absf(in_forward) * 0.25, 0.0, 1.0)
 
@@ -224,9 +256,13 @@ func _update_cameras(delta: float) -> void:
 		0.0,
 		sin(_shake_t * 39.0 + 1.3) * shake)
 
+	# Widen the FPV view with speed: it sells the sense of speed.
+	var speed_fov := BASE_FOV + clampf(velocity.length() / 55.0, 0.0, 1.0) * 16.0
+	fpv_cam.fov = lerpf(fpv_cam.fov, speed_fov, 1.0 - exp(-3.0 * delta))
+
 	var fwd := forward_flat()
 	var target := global_position - fwd * 1.6 + Vector3.UP * 0.55
-	var cam_pos := chase_cam.global_position.lerp(target, 1.0 - exp(-6.0 * delta))
+	var cam_pos := chase_cam.global_position.lerp(target, 1.0 - exp(-12.0 * delta))
 	if world != null:
 		cam_pos.y = maxf(cam_pos.y, world.surface_height(cam_pos.x, cam_pos.z) + 0.3)
 	chase_cam.global_position = cam_pos

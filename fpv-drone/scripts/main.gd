@@ -11,7 +11,7 @@ const AudioScript := preload("res://scripts/drone_audio.gd")
 enum State { LOADING, MENU, PLAYING, PAUSED, CRASHED }
 
 const BATTERY_FULL := 16.8
-const MENU_ORBIT_CENTER := Vector3(40.0, 0.0, -80.0)
+const MENU_ORBIT_CENTER := Vector3(250.0, 0.0, -250.0)
 
 var state: State = State.LOADING
 var world: WorldScript
@@ -80,7 +80,7 @@ func _ready() -> void:
 
 	menu_cam = Camera3D.new()
 	menu_cam.fov = 62.0
-	menu_cam.far = 2600.0
+	menu_cam.far = 5000.0
 	add_child(menu_cam)
 
 	_setup_ui(ui)
@@ -98,14 +98,8 @@ func _ready() -> void:
 func _setup_environment() -> void:
 	env = Environment.new()
 	env.background_mode = Environment.BG_SKY
-	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color(0.17, 0.32, 0.57)
-	sky_mat.sky_horizon_color = Color(0.93, 0.71, 0.53)
-	sky_mat.sky_curve = 0.12
-	sky_mat.ground_bottom_color = Color(0.16, 0.17, 0.18)
-	sky_mat.ground_horizon_color = Color(0.82, 0.66, 0.54)
-	sky_mat.sun_angle_max = 24.0
-	sky_mat.sun_curve = 0.08
+	var sky_mat := ShaderMaterial.new()
+	sky_mat.shader = load("res://shaders/sky.gdshader")
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	sky.radiance_size = Sky.RADIANCE_SIZE_64
@@ -183,11 +177,15 @@ func _apply_settings() -> void:
 		var vp := get_viewport()
 		vp.scaling_3d_scale = [0.55, 0.75, 1.0][q]
 		vp.msaa_3d = Viewport.MSAA_2X if q == 2 else Viewport.MSAA_DISABLED
-		world.set_grass_density([0.35, 0.65, 1.0][q])
+		world.set_grass_quality([2, 3, 3][q], [260, 480, 820][q])
+		world.set_tree_distance([850.0, 1300.0, 1900.0][q])
+		world.update_grass(drone.global_position, 100)
 		RenderingServer.directional_shadow_atlas_set_size([1024, 2048, 4096][q], true)
 		sun.directional_shadow_max_distance = [90.0, 140.0, 200.0][q]
-		env.fog_density = [0.0016, 0.0011, 0.0009][q]
+		env.fog_density = [0.0009, 0.0006, 0.00045][q]
 	drone.camera_tilt_deg = Settings.camera_tilt
+	if drone.drone_type != Settings.drone_type:
+		drone.set_type(Settings.drone_type)
 	if drone.mode != Settings.control_mode:
 		drone.mode = Settings.control_mode
 		touch.set_mode(Settings.control_mode)
@@ -294,7 +292,7 @@ func _respawn() -> void:
 
 
 func _place_at_start() -> void:
-	var start := Vector3(WorldScript.SPAWN.x, WorldScript.SPAWN_Y + 0.3, WorldScript.SPAWN.y)
+	var start := Vector3(WorldScript.SPAWN.x, world.spawn_y + 0.3, WorldScript.SPAWN.y)
 	var g0 := world.gates[0].global_position
 	drone.reset_to(start, atan2(-(g0.x - start.x), -(g0.z - start.z)))
 	_prev_pos = start
@@ -346,6 +344,7 @@ func _process(delta: float) -> void:
 			(static_rect.material as ShaderMaterial).set_shader_parameter("amount", clampf(crash_timer / 0.5, 0.0, 1.0))
 			if crash_timer <= 0.0:
 				_respawn()
+	world.update_grass(drone.global_position)
 	if hud.visible:
 		_update_hud()
 	if _smoke:
@@ -355,8 +354,8 @@ func _process(delta: float) -> void:
 func _orbit_menu_camera(delta: float) -> void:
 	_menu_angle += delta * 0.045
 	var c := MENU_ORBIT_CENTER
-	menu_cam.global_position = c + Vector3(cos(_menu_angle) * 330.0, 105.0 + sin(_menu_angle * 0.7) * 20.0, sin(_menu_angle) * 330.0)
-	menu_cam.look_at(c + Vector3(0.0, 20.0, 0.0), Vector3.UP)
+	menu_cam.global_position = c + Vector3(cos(_menu_angle) * 650.0, 230.0 + sin(_menu_angle * 0.7) * 40.0, sin(_menu_angle) * 650.0)
+	menu_cam.look_at(c + Vector3(0.0, 30.0, 0.0), Vector3.UP)
 
 
 static func _axis(positive: Key, negative: Key) -> float:
@@ -434,7 +433,8 @@ func _update_hud() -> void:
 	hud.pitch = drone.pitch + drone.look_pitch
 	hud.roll = drone.roll
 	hud.throttle = drone.throttle_level
-	hud.mode_text = "ANGLE" if drone.mode == Settings.Controls.CASUAL else "EASY"
+	hud.mode_text = ("ANGLE · " if drone.mode == Settings.Controls.CASUAL else "EASY · ") + str(DroneScript.TYPES[drone.drone_type]["name"])
+	hud.camera_fov = drone.fpv_cam.fov
 	var cam := get_viewport().get_camera_3d()
 	if cam and next_gate < world.gates.size():
 		var gp := world.gates[next_gate].global_position
@@ -450,9 +450,12 @@ func _smoke_update(delta: float) -> void:
 	var t := _smoke_t
 	match _smoke_step:
 		0:
-			touch.stick_l = Vector2(0.1, 0.6)
-			touch.stick_r = Vector2(0.0, 0.5)
+			if drone.drone_type != 2:
+				Settings.put("drone_type", 2)
+			touch.stick_l = Vector2(0.0, 1.0)
+			touch.stick_r = Vector2(0.0, 0.25)
 			if t > 3.0:
+				print("SMOKE: rocket speed after 3 s = %d km/h" % roundi(drone.velocity.length() * 3.6))
 				_shot("fpv_casual")
 				Settings.put("third_person", true)
 				_smoke_step = 1
@@ -468,17 +471,17 @@ func _smoke_update(delta: float) -> void:
 			if t > 7.5:
 				_shot("fpv_easy")
 				touch.reset()
-				drone.reset_to(Vector3(60.0, 35.0, -40.0), atan2(-(150.0 - 60.0), -(-150.0 + 40.0)))
+				drone.reset_to(Vector3(150.0, 60.0, -300.0), atan2(-(420.0 - 150.0), -(-480.0 + 300.0)))
 				_smoke_step = 3
 		3:
 			if t > 9.0:
 				_shot("city")
 				Settings.put("third_person", true)
-				drone.reset_to(Vector3(-140.0, 8.0, 20.0), PI * 0.9)
+				drone.reset_to(Vector3(-600.0, 40.0, 420.0), atan2(-(-720.0 + 600.0), -(600.0 - 420.0)))
 				_smoke_step = 4
 		4:
 			if t > 10.5:
-				_shot("lake_chase")
+				_shot("village_chase")
 				Settings.put("third_person", false)
 				Settings.put("control_mode", Settings.Controls.CASUAL)
 				_pause()
@@ -492,11 +495,17 @@ func _smoke_update(delta: float) -> void:
 			if t > 12.5:
 				_shot("settings")
 				menu._toggle_settings()
+				menu._toggle_drones()
+				_smoke_step = 8
+		8:
+			if t > 13.5:
+				_shot("drones")
+				menu._toggle_drones()
 				_resume()
 				_enter_menu()
 				_smoke_step = 6
 		6:
-			if t > 14.5:
+			if t > 15.5:
 				_shot("menu")
 				print("SMOKE OK")
 				get_tree().quit()

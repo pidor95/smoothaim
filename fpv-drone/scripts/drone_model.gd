@@ -12,12 +12,34 @@ const CUSTOM_MODEL_ROTATION := Vector3(0.0, 0.0, 0.0)
 const TARGET_SIZE := 0.26
 const MODEL_LAYER := 2
 
+## Colour of the TPU parts and LEDs; differs per drone type.
+var accent := Color(1.0, 0.45, 0.08)
+## Arm length multiplier; differs per drone type.
+var arm_scale := 1.0
+
 var _props: Array[Node3D] = []
 var _prop_dirs: Array[float] = []
 var _leds: StandardMaterial3D
 
 
 func _ready() -> void:
+	_rebuild()
+
+
+## Rebuilds the model with a new accent colour and arm length.
+func restyle(new_accent: Color, new_arm_scale: float) -> void:
+	accent = new_accent
+	arm_scale = new_arm_scale
+	if is_inside_tree():
+		_rebuild()
+
+
+func _rebuild() -> void:
+	for child in get_children():
+		remove_child(child)
+		child.queue_free()
+	_props.clear()
+	_prop_dirs.clear()
 	if not _load_custom():
 		_build_default()
 	_set_layer(self)
@@ -121,21 +143,21 @@ func _build_default() -> void:
 	var alu := _mat(Color(0.75, 0.42, 0.12), 0.3, 0.8)
 	var motor_mat := _mat(Color(0.08, 0.08, 0.09), 0.3, 0.7)
 	var bell := _mat(Color(0.12, 0.12, 0.13), 0.25, 0.9)
-	var tpu := _mat(Color(1.0, 0.45, 0.08), 0.7)
+	var tpu := _mat(accent, 0.7)
 	var battery_mat := _mat(Color(0.1, 0.1, 0.11), 0.6)
 	var label_mat := _mat(Color(0.95, 0.75, 0.1), 0.5)
 	var strap_mat := _mat(Color(0.75, 0.05, 0.05), 0.8)
 	var lens_mat := _mat(Color(0.02, 0.02, 0.03), 0.05, 0.6)
 	var prop_mat := _mat(Color(0.05, 0.05, 0.06, 0.9), 0.4)
 	_leds = StandardMaterial3D.new()
-	_leds.albedo_color = Color(1.0, 0.2, 0.1)
+	_leds.albedo_color = accent
 	_leds.emission_enabled = true
-	_leds.emission = Color(1.0, 0.15, 0.05)
+	_leds.emission = accent
 	_leds.emission_energy_multiplier = 3.0
 
 	# Bottom plate and arms in a true X.
 	_box(Vector3(0.05, 0.004, 0.11), Vector3(0, 0, 0), carbon)
-	var arm_len := TARGET_SIZE * 0.5
+	var arm_len := TARGET_SIZE * 0.5 * arm_scale
 	for i in 4:
 		var angle := deg_to_rad(45.0 + 90.0 * i)
 		var dir := Vector3(sin(angle), 0.0, cos(angle))

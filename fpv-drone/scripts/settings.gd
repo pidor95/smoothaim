@@ -17,10 +17,11 @@ var sensitivity := 1.0
 var sound := true
 var third_person := false
 var best_lap := 0.0
+var drone_type := 0
 
 const _KEYS := [
 	"shadows", "bloom", "control_mode", "quality", "camera_tilt",
-	"sensitivity", "sound", "third_person", "best_lap",
+	"sensitivity", "sound", "third_person", "best_lap", "drone_type",
 ]
 
 
