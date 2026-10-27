@@ -6,30 +6,34 @@ const ZONE := 4700.0             # battle zone radius, m
 const ZONE_KILL := 5600.0
 
 const TYPES := {
-	"su57": {"cat": "plane", "name": "Су-57", "hp": 100.0, "r": 10.0, "vmax": 330.0, "maneuver": true, "model": "su57",
+	"su57": {"cat": "plane", "name": "Су-57", "hp": 100.0, "r": 10.0, "vmax": 330.0, "maneuver": true, "model": "su57", "small": 0.3,
 		"desc": "Истребитель 5-го поколения. 8 ракет с автонаводкой, пушка, флаеры, сверхманёвренность (кобра, кульбит, разворот).",
 		"slots": [{"w": "gun", "n": "Пушка", "a": 250}, {"w": "aam", "n": "Ракеты", "a": 8}, {"w": "flare", "n": "Флаеры", "a": 240}]},
-	"mig29": {"cat": "plane", "name": "МиГ-29", "hp": 100.0, "r": 10.0, "vmax": 310.0, "maneuver": false, "model": "mig29",
+	"mig29": {"cat": "plane", "name": "МиГ-29", "hp": 100.0, "r": 10.0, "vmax": 310.0, "maneuver": false, "model": "mig29", "small": 0.3,
 		"desc": "Фронтовой истребитель. 8 ракет с автонаводкой, пушка, флаеры.",
 		"slots": [{"w": "gun", "n": "Пушка", "a": 250}, {"w": "aam", "n": "Ракеты", "a": 8}, {"w": "flare", "n": "Флаеры", "a": 240}]},
-	"ah64": {"cat": "heli", "name": "AH-64 Апач", "hp": 140.0, "r": 8.0, "vmax": 82.0, "model": "apache",
+	"ah64": {"cat": "heli", "name": "AH-64 Апач", "hp": 140.0, "r": 8.0, "vmax": 82.0, "model": "apache", "small": 0.25,
 		"desc": "Ударный вертолёт. Пушка 360° с разрывными снарядами, 5 ракет с автонаводкой, 10 НАР, флаеры.",
 		"slots": [{"w": "gun360", "n": "Пушка 360°", "a": 1200}, {"w": "atgm", "n": "Ракеты", "a": 5}, {"w": "rkt", "n": "НАР", "a": 10}, {"w": "flare", "n": "Флаеры", "a": 160}]},
-	"mi24": {"cat": "heli", "name": "Ми-24", "hp": 160.0, "r": 9.0, "vmax": 86.0, "model": "mi24",
+	"mi24": {"cat": "heli", "name": "Ми-24", "hp": 160.0, "r": 9.0, "vmax": 86.0, "model": "mi24", "small": 0.15,
 		"desc": "Летающий танк. Пушки по бокам, 4 ракеты с автонаводкой, 10 НАР, флаеры.",
 		"slots": [{"w": "sidegun", "n": "Пушки", "a": 1000}, {"w": "atgm", "n": "Ракеты", "a": 4}, {"w": "rkt", "n": "НАР", "a": 10}, {"w": "flare", "n": "Флаеры", "a": 160}]},
-	"abrams": {"cat": "tank", "name": "M1 Абрамс", "hp": 300.0, "r": 5.5, "vmax": 19.0, "model": "abrams",
+	"abrams": {"cat": "tank", "name": "M1 Абрамс", "hp": 300.0, "r": 5.5, "vmax": 19.0, "model": "abrams", "small": 0.0,
 		"desc": "Основной танк. 120-мм пушка, пулемёт, дымовая завеса (в дыму ракеты не наводятся).",
 		"slots": [{"w": "cannon", "n": "120 мм", "a": 40}, {"w": "mg", "n": "Пулемёт", "a": 1500}, {"w": "smoke", "n": "Дым", "a": 4}]},
-	"pantsir": {"cat": "tank", "kind": "ЗРПК", "name": "Панцирь-С1", "hp": 180.0, "r": 5.5, "vmax": 23.0, "model": "pantsir",
+	"pantsir": {"cat": "tank", "kind": "ЗРПК", "name": "Панцирь-С1", "hp": 180.0, "r": 5.5, "vmax": 23.0, "model": "pantsir", "small": 0.04,
 		"turn": 0.9, "turret_rate": 1.6, "pitch_rate": 1.1, "pitch_max": 1.45, "muzzle": 2.5, "aim_h": 3.6,
 		"desc": "Зенитный ракетно-пушечный комплекс на колёсах. 12 зенитных ракет с автонаводкой (только по воздушным целям) и спаренные 30-мм пушки во вращающейся башне.",
 		"slots": [{"w": "aa30", "n": "30-мм пушки", "a": 1400}, {"w": "sam", "n": "Ракеты ЗУР", "a": 12}, {"w": "smoke", "n": "Дым", "a": 2}]},
+	"soldier": {"cat": "inf", "kind": "Пехота", "name": "Пехотинец", "hp": 100.0, "r": 0.6, "vmax": 4.4, "model": "soldier",
+		"desc": "Солдат с АК-47, дробовиком и ПЗРК «Стингер» (сбивает самолёты и вертолёты). Попадание в голову — сразу насмерть.",
+		"slots": [{"w": "ak", "n": "АК-47", "a": 240}, {"w": "shotgun", "n": "Дробовик", "a": 40}, {"w": "stinger", "n": "Стингер", "a": 3}]},
 }
-const ORDER := ["su57", "mig29", "ah64", "mi24", "abrams", "pantsir"]
+const ORDER := ["su57", "mig29", "ah64", "mi24", "abrams", "pantsir", "soldier"]
 const AIR := ["su57", "mig29", "ah64", "mi24"]
 const GROUND := ["abrams", "pantsir"]
-const CAT_RU := {"plane": "Самолёт", "heli": "Вертолёт", "tank": "Танк"}
+const INF := ["soldier"]
+const CAT_RU := {"plane": "Самолёт", "heli": "Вертолёт", "tank": "Танк", "inf": "Пехота"}
 
 
 static func kind_of(t: String) -> String:
@@ -49,18 +53,29 @@ const WEAP := {
 	"flare": {"auto": true, "rate": 12.0},
 	"smoke": {"auto": false, "rate": 0.5},
 	"aa30": {"auto": true, "rate": 25.0, "dmg": 9.0, "spd": 960.0, "spread": 0.004, "life": 3.2, "splash": 4.0, "sdmg": 6.0, "col": Color(1, 0.7, 0.3), "len": 0.024},
+	# infantry: "small" weapons do little to armour; "mag" rounds per magazine, "reload" seconds
+	"ak": {"auto": true, "rate": 10.0, "dmg": 34.0, "spd": 715.0, "spread": 0.006, "life": 1.4, "col": Color(1, 0.8, 0.45), "len": 0.012,
+		"small": true, "mag": 30, "reload": 2.4},
+	"shotgun": {"auto": false, "rate": 1.25, "dmg": 16.0, "pellets": 9, "spd": 420.0, "spread": 0.04, "life": 0.6, "col": Color(1, 0.75, 0.4), "len": 0.008,
+		"small": true, "mag": 6, "reload": 3.2},
+	"stinger": {"auto": false, "rate": 0.3, "homing": true, "air_only": true, "dmg": 130.0, "launch": 28.0, "burn": 2.8, "thrust": 380.0, "drag": 8e-5, "max_g": 26.0, "nav": 4.0,
+		"gimbal": 1.0, "min_spd": 200.0, "life": 13.0, "prox": 10.0, "range": 4800.0, "cone": 0.3, "lock_t": 1.8, "mag": 1, "reload": 3.5},
 	"sam": {"auto": false, "rate": 1.0, "homing": true, "air_only": true, "dmg": 140.0, "launch": 60.0, "burn": 2.4, "thrust": 420.0, "drag": 6e-5, "max_g": 35.0, "nav": 4.0,
 		"gimbal": 1.2, "min_spd": 250.0, "life": 16.0, "prox": 12.0, "range": 9000.0, "cone": 0.5, "lock_t": 1.4},
 }
 const W_RU := {"gun": "пушка", "gun360": "пушка", "sidegun": "пушки", "mg": "пулемёт", "cannon": "120 мм", "rkt": "НАР",
-	"aam": "ракета", "atgm": "ракета", "aa30": "30 мм", "sam": "ЗУР", "crash": "крушение", "zone": "вне зоны"}
+	"aam": "ракета", "atgm": "ракета", "aa30": "30 мм", "sam": "ЗУР", "ak": "АК-47", "shotgun": "дробовик", "stinger": "Стингер",
+	"headshot": "ХЕДШОТ", "crash": "крушение", "zone": "вне зоны"}
 
 ## Bot skill. err: aim error, msl: seconds between missiles, flare: chance to flare, lock: lock time factor,
-## turn: share of the player's turn rate, react: seconds before opening fire, gun: share of time spent firing.
+## turn: share of the player's turn rate, react: seconds before opening fire, gun: share of time spent firing,
+## inf: infantry aim error (radians), dmg: share of normal damage bots deal.
 const DIFF := [
-	{"n": "Легко", "err": 0.07, "msl": 40.0, "flare": 0.25, "lock": 2.2, "turn": 0.65, "react": 3.5, "gun": 0.25},
-	{"n": "Норма", "err": 0.045, "msl": 26.0, "flare": 0.45, "lock": 1.7, "turn": 0.78, "react": 2.2, "gun": 0.4},
-	{"n": "Сложно", "err": 0.025, "msl": 16.0, "flare": 0.7, "lock": 1.3, "turn": 0.9, "react": 1.2, "gun": 0.6},
+	{"n": "Новичок", "err": 0.11, "msl": 60.0, "flare": 0.15, "lock": 3.0, "turn": 0.55, "react": 5.0, "gun": 0.15, "inf": 0.03, "dmg": 0.5},
+	{"n": "Легко", "err": 0.085, "msl": 45.0, "flare": 0.25, "lock": 2.4, "turn": 0.62, "react": 4.0, "gun": 0.22, "inf": 0.022, "dmg": 0.7},
+	{"n": "Норма", "err": 0.06, "msl": 32.0, "flare": 0.4, "lock": 1.9, "turn": 0.72, "react": 2.8, "gun": 0.32, "inf": 0.015, "dmg": 0.85},
+	{"n": "Сложно", "err": 0.04, "msl": 22.0, "flare": 0.55, "lock": 1.5, "turn": 0.84, "react": 1.8, "gun": 0.45, "inf": 0.01, "dmg": 1.0},
+	{"n": "Ас", "err": 0.025, "msl": 15.0, "flare": 0.7, "lock": 1.25, "turn": 0.92, "react": 1.0, "gun": 0.6, "inf": 0.006, "dmg": 1.0},
 ]
 
 ## Flight model. m kg, s m², thrust N (military / afterburner), cla per rad, a_st stall AoA rad,

@@ -65,6 +65,17 @@ x = t(.5); save('lock', np.sin(2 * np.pi * 1760 * x), True)
 x = t(.09); save('warn', np.sign(np.sin(2 * np.pi * 1250 * x)) * .6 * np.minimum(1, (len(x) - np.arange(len(x))) / 200))
 x = t(.05); save('click', np.sin(2 * np.pi * 700 * x) * np.exp(-x / .015))
 
+# infantry weapons
+n = int(SR * .25); save('ak', lowpass(noise(n), .55) * env(n, .001, .045) + np.sin(2 * np.pi * 160 * t(.25)) * env(n, .001, .03) * .7)
+n = int(SR * .5); save('shotgun', lowpass(noise(n), .3) * env(n, .002, .09) * 1.4 + np.sin(2 * np.pi * 90 * t(.5)) * env(n, .001, .06))
+x = t(.9); clk = np.zeros(len(x))
+for at, f in ((.05, 1400), (.45, 900), (.75, 1800)):
+    i = int(at * SR); m = min(len(x) - i, int(.04 * SR)); clk[i:i + m] += np.sin(2 * np.pi * f * np.arange(m) / SR) * np.exp(-np.arange(m) / (SR * .008))
+save('reload', clk)
+n = int(SR * .18); save('flesh', lowpass(noise(n), .2) * env(n, .001, .03))
+x = t(.35); save('headshot', np.sin(2 * np.pi * 1500 * x) * np.exp(-x / .08) * .6 + lowpass(noise(len(x)), .3) * env(len(x), .001, .03))
+n = int(SR * .2); save('step', lowpass(noise(n), .08) * env(n, .002, .03))
+
 # sprites
 S = 128
 yy, xx = np.mgrid[0:S, 0:S] / (S - 1) * 2 - 1
@@ -93,4 +104,15 @@ fire = np.clip(1 - r, 0, 1) ** 1.6 * (0.6 + 0.5 * fbm(9))
 Image.fromarray((np.dstack([np.ones_like(r), np.ones_like(r), np.ones_like(r), np.clip(fire * 1.4, 0, 1)]) * 255).astype(np.uint8)).save(os.path.join(OUT, 'fx', 'fire.png'))
 glow = np.clip(1 - r, 0, 1) ** 2.5
 Image.fromarray((np.dstack([np.ones_like(r)] * 3 + [glow]) * 255).astype(np.uint8)).save(os.path.join(OUT, 'fx', 'glow.png'))
+# blood: a soft spray particle and a splat for the ground
+spray = np.clip(1 - r, 0, 1) ** 1.5 * (0.7 + 0.4 * fbm(13))
+Image.fromarray((np.dstack([np.full_like(r, .55), np.full_like(r, .03), np.full_like(r, .02), np.clip(spray * 1.3, 0, 1)]) * 255).astype(np.uint8)).save(os.path.join(OUT, 'fx', 'blood.png'))
+g2 = np.random.default_rng(21)
+splat = np.clip(1 - r * (1.1 + 0.5 * fbm(17)), 0, 1)
+for _ in range(14):
+    cx, cy, rr = g2.uniform(-.75, .75), g2.uniform(-.75, .75), g2.uniform(.04, .14)
+    splat = np.maximum(splat, np.clip(1 - np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2) / rr, 0, 1))
+a = np.clip(splat * 3.0, 0, 1) ** 0.8
+shade = 0.75 + 0.25 * fbm(19)
+Image.fromarray((np.dstack([.26 * shade, .012 * shade, .01 * shade, a * .95]) * 255).astype(np.uint8)).save(os.path.join(OUT, 'fx', 'blood_splat.png'))
 print('fx done')

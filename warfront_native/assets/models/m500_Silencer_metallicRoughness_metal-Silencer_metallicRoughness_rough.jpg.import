@@ -1,0 +1,37 @@
+[remap]
+
+importer="texture"
+type="CompressedTexture2D"
+uid="uid://cos3wesf8jmnn"
+path="res://.godot/imported/m500_Silencer_metallicRoughness_metal-Silencer_metallicRoughness_rough.jpg-f7d266379a2cbaf618bef95583ababfc.ctex"
+metadata={
+"vram_texture": false
+}
+generator_parameters={
+"md5": "6f8d0cbe4a7462508139d1b650e0181c"
+}
+
+[deps]
+
+source_file="res://assets/models/m500_Silencer_metallicRoughness_metal-Silencer_metallicRoughness_rough.jpg"
+dest_files=["res://.godot/imported/m500_Silencer_metallicRoughness_metal-Silencer_metallicRoughness_rough.jpg-f7d266379a2cbaf618bef95583ababfc.ctex"]
+
+[params]
+
+compress/mode=0
+compress/high_quality=false
+compress/lossy_quality=0.7
+compress/hdr_compression=1
+compress/normal_map=0
+compress/channel_pack=0
+mipmaps/generate=true
+mipmaps/limit=-1
+roughness/mode=0
+roughness/src_normal=""
+process/fix_alpha_border=true
+process/premult_alpha=false
+process/normal_map_invert_y=false
+process/hdr_as_srgb=false
+process/hdr_clamp_exposure=false
+process/size_limit=0
+detect_3d/compress_to=1

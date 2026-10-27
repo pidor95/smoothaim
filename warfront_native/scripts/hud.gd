@@ -12,6 +12,11 @@ var font: Font
 var u := 1.0                     # scale: 1 at 720 px screen height
 var touches := {}                # finger index -> {"role": String, "pos": Vector2}
 var btn := {}                    # id -> {"rect": Rect2, "round": bool}
+var joy_area := Rect2()          # infantry: touching here spawns the movement stick
+var joy_c := Vector2.ZERO
+var joy_k := Vector2.ZERO
+var joy_on := false
+var desktop := not OS.has_feature("mobile")
 
 const COL_RED := Color(1.0, 0.33, 0.3)
 const COL_GRN := Color(0.45, 1.0, 0.6)
@@ -38,7 +43,11 @@ func _layout() -> void:
 	u = s.y / 720.0
 	btn.clear()
 	var cat: String = game.player.cat if game.player else "plane"
-	btn["thr"] = {"rect": Rect2(26 * u, s.y * 0.2, 74 * u, s.y * 0.52), "round": false}
+	if cat != "inf":
+		btn["thr"] = {"rect": Rect2(26 * u, s.y * 0.2, 74 * u, s.y * 0.52), "round": false}
+	else:
+		joy_area = Rect2(0, s.y * 0.3, s.x * 0.4, s.y * 0.7)
+		btn["reload"] = {"rect": _circ(Vector2(s.x - 315 * u, s.y - 95 * u), 52 * u), "round": true}
 	if cat == "heli":
 		btn["a"] = {"rect": _circ(Vector2(205 * u, s.y - 235 * u), 50 * u), "round": true}
 		btn["b"] = {"rect": _circ(Vector2(205 * u, s.y - 115 * u), 50 * u), "round": true}
@@ -46,7 +55,7 @@ func _layout() -> void:
 		btn["a"] = {"rect": _circ(Vector2(195 * u, s.y - 105 * u), 52 * u), "round": true}
 		btn["b"] = {"rect": _circ(Vector2(315 * u, s.y - 105 * u), 52 * u), "round": true}
 	btn["fire"] = {"rect": _circ(Vector2(s.x - 150 * u, s.y - 165 * u), 88 * u), "round": true}
-	if cat != "tank":
+	if cat != "tank" and cat != "inf":
 		btn["flare"] = {"rect": _circ(Vector2(s.x - 315 * u, s.y - 95 * u), 56 * u), "round": true}
 	btn["zoom"] = {"rect": _circ(Vector2(s.x - 300 * u, s.y - 240 * u), 44 * u), "round": true}
 	btn["pause"] = {"rect": Rect2(s.x - 66 * u, 12 * u, 54 * u, 54 * u), "round": false}
@@ -90,6 +99,36 @@ func _notification(what: int) -> void:
 func _input(e: InputEvent) -> void:
 	if not active or game.player == null:
 		return
+	# desktop: the mouse is captured during battle, moves the camera, LMB fires, RMB aims, Esc pauses
+	if desktop:
+		if e is InputEventKey and e.pressed and not e.echo and e.keycode == KEY_ESCAPE:
+			pause_pressed.emit()
+			get_viewport().set_input_as_handled()
+			return
+		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+			if e is InputEventMouseMotion:
+				game.look(e.relative.x, e.relative.y)
+				return
+			if e is InputEventMouseButton:
+				var c: Dictionary = game.ctrl
+				if e.button_index == MOUSE_BUTTON_LEFT:
+					if e.pressed and not c["fire"]:
+						c["fire_pressed"] = true
+					c["fire"] = e.pressed
+				elif e.button_index == MOUSE_BUTTON_RIGHT:
+					c["zoom"] = e.pressed
+				elif e.button_index == MOUSE_BUTTON_WHEEL_UP and e.pressed:
+					game.select_slot(posmod(game.ctrl["slot"] - 1, game.player.T["slots"].size()))
+				elif e.button_index == MOUSE_BUTTON_WHEEL_DOWN and e.pressed:
+					game.select_slot(posmod(game.ctrl["slot"] + 1, game.player.T["slots"].size()))
+				get_viewport().set_input_as_handled()
+				return
+			if (e is InputEventScreenTouch or e is InputEventScreenDrag) and e.device == InputEvent.DEVICE_ID_EMULATION:
+				return
+		elif e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT and not _on_button(e.position):
+			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+			get_viewport().set_input_as_handled()
+			return
 	if e is InputEventScreenTouch:
 		var t := e as InputEventScreenTouch
 		if t.pressed:
@@ -104,15 +143,34 @@ func _input(e: InputEvent) -> void:
 			match tr["role"]:
 				"look", "fire":
 					game.look(d.relative.x, d.relative.y)
+				"joy":
+					var v := (d.position - joy_c) / (95.0 * u)
+					if v.length() > 1.0:
+						v = v.normalized()
+					joy_k = v
+					game.ctrl["move"] = Vector2(v.x, -v.y) * (1.0 if v.length() > 0.9 else 0.85)
 				"thr":
 					_set_thr(d.position.y)
 			tr["pos"] = d.position
 		get_viewport().set_input_as_handled()
 
 
+func _on_button(p: Vector2) -> bool:
+	for k in btn:
+		if _hit(k, p):
+			return true
+	return false
+
+
 func _press(i: int, p: Vector2) -> void:
 	var c: Dictionary = game.ctrl
 	var role := "look"
+	if game.player.cat == "inf" and joy_area.has_point(p) and not joy_on and not _on_button(p):
+		joy_on = true
+		joy_c = p
+		joy_k = Vector2.ZERO
+		touches[i] = {"role": "joy", "pos": p}
+		return
 	for k in btn:
 		if not _hit(k, p):
 			continue
@@ -132,6 +190,9 @@ func _press(i: int, p: Vector2) -> void:
 				role = "none"
 			"cobra", "kulbit", "flat":
 				game.maneuver(k)
+				role = "none"
+			"reload":
+				c["reload"] = true
 				role = "none"
 			"fire":
 				if not c["fire"]:
@@ -158,12 +219,17 @@ func _release(i: int) -> void:
 	touches.erase(i)
 	var c: Dictionary = game.ctrl
 	match role:
+		"joy":
+			joy_on = false
+			c["move"] = Vector2.ZERO
 		"fire": c["fire"] = false
 		"flare": c["flare"] = false
 		"a", "b": c[role] = false
 
 
 func _set_thr(y: float) -> void:
+	if not btn.has("thr"):
+		return
 	var r: Rect2 = btn["thr"]["rect"]
 	var v := clampf(1.0 - (y - r.position.y) / r.size.y, 0.0, 1.0)
 	if game.player and game.player.cat == "tank" and absf(v - 0.5) < 0.06:
@@ -230,18 +296,24 @@ func _draw() -> void:
 			continue
 		var sp = _screen(v.pos + Vector3(0, v.T["r"] + 2.0, 0))
 		var d: float = v.pos.distance_to(p.pos)
-		if sp == null or d > 9000.0:
+		if sp == null or d > 9000.0 or (v.cat == "inf" and d > (1500.0 if v.team == p.team else 350.0)):
 			continue
 		var col := COL_BLU if v.team == p.team else COL_RED
-		var txt: String = ("%s " % v.nick if d < 3000.0 else "") + "%.1f км" % (d / 1000.0)
+		var txt: String = ("%s " % v.nick if d < 3000.0 else "") + ("%d м" % roundi(d) if d < 1000.0 else "%.1f км" % (d / 1000.0))
 		_text(sp, txt, 15, col, HORIZONTAL_ALIGNMENT_CENTER)
 		draw_line(sp + Vector2(-5, 6) * u, sp + Vector2(0, 12) * u, col, 2.0 * u)
 		draw_line(sp + Vector2(5, 6) * u, sp + Vector2(0, 12) * u, col, 2.0 * u)
 	# crosshair
 	var ctr := s / 2.0
 	var ch := Color(1, 1, 1, 0.85)
+	var gap := 6.0
+	if p.cat == "inf" and W.has("spread"):
+		var cam0: Camera3D = game.cam
+		gap = 4.0 + tan(W["spread"] * (1.0 + p.speed * 0.35) * (0.45 if c["zoom"] else 1.0) * 2.0) / tan(deg_to_rad(cam0.fov) / 2.0) * s.y / (2.0 * u)
 	for a in [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1)]:
-		draw_line(ctr + a * 6 * u, ctr + a * 16 * u, ch, 2.0 * u)
+		draw_line(ctr + a * gap * u, ctr + a * (gap + 10) * u, ch, 2.0 * u)
+	if p.cat == "inf":
+		draw_circle(ctr, 1.6 * u, ch)
 	if game.hit_t > 0.0:
 		for a in [Vector2(1, 1), Vector2(-1, 1), Vector2(1, -1), Vector2(-1, -1)]:
 			draw_line(ctr + a * 9 * u, ctr + a * 20 * u, COL_RED, 3.0 * u)
@@ -252,7 +324,7 @@ func _draw() -> void:
 				draw_arc(np, 13 * u, 0, TAU, 24, COL_GRN, 2.0 * u)
 				draw_line(np + Vector2(-26, 0) * u, np + Vector2(-13, 0) * u, COL_GRN, 2.0 * u)
 				draw_line(np + Vector2(13, 0) * u, np + Vector2(26, 0) * u, COL_GRN, 2.0 * u)
-		elif not W.get("homing", false) and wname != "flare" and wname != "smoke":
+		elif not W.get("homing", false) and wname != "flare" and wname != "smoke" and p.cat != "inf":
 			var piv: Vector3 = p.pos + Vector3(0, T.get("aim_h", 2.4), 0) if p.cat == "tank" else p.chin_pos()
 			var dir: Vector3 = p.fixed_dir if wname == "rkt" else p.aim_dir
 			var dist := maxf(50.0, piv.distance_to(p.inp["aim_point"]))
@@ -285,8 +357,10 @@ func _draw() -> void:
 	var st := "%d км/ч" % roundi(p.speed * 3.6)
 	if p.cat == "plane":
 		st += "  M%.2f  %.1fG  α%d°" % [p.mach, p.gload, roundi(rad_to_deg(p.aoa))]
-	if p.cat != "tank":
+	if p.cat != "tank" and p.cat != "inf":
 		st += "  ВЫС %d м" % alt
+	if p.cat == "inf" and p.sprinting:
+		st += "  БЕГ"
 	_text(Vector2(28 * u, 88 * u), st, 16, Color(0.9, 0.95, 1.0))
 	# top-right: score, kill feed, radar
 	_text(Vector2(s.x - 470 * u, 40 * u), "Уничтожено: %d  ·  Потери: %d" % [game.kills, game.deaths], 16)
@@ -320,7 +394,61 @@ func _draw() -> void:
 	for wv in warns:
 		_text(Vector2(s.x / 2.0, y * u), wv[0], 22, wv[1], HORIZONTAL_ALIGNMENT_CENTER)
 		y += 32.0
-	# throttle
+	# infantry: movement stick and ammo; vehicles: throttle
+	if p.cat == "inf":
+		_draw_infantry(p, W)
+	else:
+		_draw_throttle(p, c)
+	# buttons
+	_button("fire", "ОГОНЬ", c["fire"])
+	_button("flare", "ФЛАЕРЫ", c["flare"])
+	_button("zoom", "ПРИЦЕЛ" if p.cat == "inf" else "ZOOM", c["zoom"])
+	_button("reload", "R")
+	if p.cat == "heli":
+		_button("a", "▲", c["a"])
+		_button("b", "▼", c["b"])
+	elif p.cat == "tank":
+		_button("a", "◀", c["a"])
+		_button("b", "▶", c["b"])
+	_button("man", "СВМ", c["man"])
+	_button("cobra", "Кобра")
+	_button("kulbit", "Кульбит")
+	_button("flat", "Разворот")
+	for i in T["slots"].size():
+		var sl: Dictionary = T["slots"][i]
+		var Wi: Dictionary = D.WEAP[sl["w"]]
+		var ammo_t := "∞" if game.infinite_ammo(p) else str(p.ammo[i])
+		if p.cat == "inf" and Wi.has("mag") and not game.infinite_ammo(p):
+			ammo_t = "%d / %d" % [p.mag[i], p.ammo[i] - p.mag[i]]
+		_button("slot%d" % i, "%d  %s" % [i + 1, sl["n"]], i == p.slot, ammo_t)
+		var cdv: float = p.cd.get(sl["w"], 0.0)
+		if not Wi["auto"] and cdv > 0.0:
+			var br: Rect2 = btn["slot%d" % i]["rect"]
+			draw_rect(Rect2(br.position.x, br.end.y - 5 * u, br.size.x * clampf(cdv * Wi["rate"], 0.0, 1.0), 5 * u), COL_ORG)
+
+
+func _draw_infantry(p, W: Dictionary) -> void:
+	var s := size
+	if joy_on:
+		draw_circle(joy_c, 95.0 * u, Color(0.05, 0.08, 0.1, 0.35))
+		draw_arc(joy_c, 95.0 * u, 0, TAU, 48, Color(1, 1, 1, 0.45), 2.0 * u, true)
+		draw_circle(joy_c + joy_k * 95.0 * u, 38.0 * u, Color(1, 1, 1, 0.55))
+	elif not desktop:
+		var c0 := Vector2(170 * u, s.y - 190 * u)
+		draw_arc(c0, 95.0 * u, 0, TAU, 48, Color(1, 1, 1, 0.2), 2.0 * u, true)
+		_text(c0 + Vector2(0, 8 * u), "ХОДЬБА", 15, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER)
+	if W.has("mag"):
+		var txt := "%d / %d" % [p.mag[p.slot], p.ammo[p.slot] - p.mag[p.slot]]
+		_text(Vector2(s.x - 200 * u, s.y - 300 * u), txt, 26, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER)
+		if p.reload_t > 0.0:
+			_text(Vector2(s.x / 2.0, s.y / 2.0 + 60 * u), "ПЕРЕЗАРЯДКА…", 18, COL_ORG, HORIZONTAL_ALIGNMENT_CENTER)
+	if desktop and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		_text(Vector2(s.x / 2.0, s.y - 110 * u), "Щёлкните по экрану, чтобы управлять мышью (Esc — пауза)", 15, Color(1, 1, 1, 0.8), HORIZONTAL_ALIGNMENT_CENTER)
+
+
+func _draw_throttle(p, c: Dictionary) -> void:
+	if not btn.has("thr"):
+		return
 	var tr: Rect2 = btn["thr"]["rect"]
 	_panel(tr, BG, 12)
 	var thr: float = c["thr"]
@@ -341,29 +469,6 @@ func _draw() -> void:
 		_text(Vector2(tr.position.x, tr.end.y + 24 * u), ("ТЯГА %d%%" if p.cat == "plane" else "СКОРОСТЬ %d%%") % roundi(thr * 100) + (" ФОРСАЖ" if ab else ""), 15)
 	var ky := tr.end.y - tr.size.y * thr
 	draw_rect(Rect2(tr.position.x - 6 * u, ky - 5 * u, tr.size.x + 12 * u, 10 * u), Color.WHITE)
-	# buttons
-	_button("fire", "ОГОНЬ", c["fire"])
-	_button("flare", "ФЛАЕРЫ", c["flare"])
-	_button("zoom", "ZOOM", c["zoom"])
-	if p.cat == "heli":
-		_button("a", "▲", c["a"])
-		_button("b", "▼", c["b"])
-	elif p.cat == "tank":
-		_button("a", "◀", c["a"])
-		_button("b", "▶", c["b"])
-	_button("man", "СВМ", c["man"])
-	_button("cobra", "Кобра")
-	_button("kulbit", "Кульбит")
-	_button("flat", "Разворот")
-	for i in T["slots"].size():
-		var sl: Dictionary = T["slots"][i]
-		var ammo_t := "∞" if game.infinite_ammo(p) else str(p.ammo[i])
-		_button("slot%d" % i, "%d  %s" % [i + 1, sl["n"]], i == p.slot, ammo_t)
-		var Wi: Dictionary = D.WEAP[sl["w"]]
-		var cdv: float = p.cd.get(sl["w"], 0.0)
-		if not Wi["auto"] and cdv > 0.0:
-			var br: Rect2 = btn["slot%d" % i]["rect"]
-			draw_rect(Rect2(br.position.x, br.end.y - 5 * u, br.size.x * clampf(cdv * Wi["rate"], 0.0, 1.0), 5 * u), COL_ORG)
 
 
 func _radar(r: Rect2) -> void:

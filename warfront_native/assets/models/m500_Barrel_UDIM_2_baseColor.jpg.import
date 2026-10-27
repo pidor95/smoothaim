@@ -1,0 +1,37 @@
+[remap]
+
+importer="texture"
+type="CompressedTexture2D"
+uid="uid://bv0b6urbk5c70"
+path="res://.godot/imported/m500_Barrel_UDIM_2_baseColor.jpg-253e1181b05b428fbc24d521c58f2787.ctex"
+metadata={
+"vram_texture": false
+}
+generator_parameters={
+"md5": "948fd8e68c8852e2d28849d95b348fa4"
+}
+
+[deps]
+
+source_file="res://assets/models/m500_Barrel_UDIM_2_baseColor.jpg"
+dest_files=["res://.godot/imported/m500_Barrel_UDIM_2_baseColor.jpg-253e1181b05b428fbc24d521c58f2787.ctex"]
+
+[params]
+
+compress/mode=0
+compress/high_quality=false
+compress/lossy_quality=0.7
+compress/hdr_compression=1
+compress/normal_map=0
+compress/channel_pack=0
+mipmaps/generate=true
+mipmaps/limit=-1
+roughness/mode=0
+roughness/src_normal=""
+process/fix_alpha_border=true
+process/premult_alpha=false
+process/normal_map_invert_y=false
+process/hdr_as_srgb=false
+process/hdr_clamp_exposure=false
+process/size_limit=0
+detect_3d/compress_to=1

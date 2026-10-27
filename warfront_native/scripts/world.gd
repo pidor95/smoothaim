@@ -365,9 +365,10 @@ func _outer() -> void:
 func _water() -> void:
 	var v: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://assets/map/vectors.json"))
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.13, 0.22, 0.24)
-	mat.metallic = 0.2
-	mat.roughness = 0.08
+	mat.albedo_color = Color(0.05, 0.085, 0.09)
+	mat.metallic = 0.0
+	mat.roughness = 0.18
+	mat.metallic_specular = 0.35
 	for poly in v["water"]:
 		var pts := PackedVector2Array()
 		for q in poly:

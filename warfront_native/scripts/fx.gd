@@ -287,6 +287,91 @@ func burning(parent: Node3D) -> Array:
 	return [fire, sm]
 
 
+var blood_mat: StandardMaterial3D
+var splat_mat: StandardMaterial3D
+var decals: Array[MeshInstance3D] = []
+var decal_i := 0
+
+
+func _blood_mats() -> void:
+	if blood_mat:
+		return
+	blood_mat = smoke_mat.duplicate()
+	blood_mat.albedo_texture = preload("res://assets/fx/blood.png")
+	splat_mat = StandardMaterial3D.new()
+	splat_mat.albedo_texture = preload("res://assets/fx/blood_splat.png")
+	splat_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	splat_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	splat_mat.albedo_color = Color(0.75, 0.75, 0.75)
+	splat_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var q := QuadMesh.new()
+	q.size = Vector2(1, 1)
+	q.orientation = PlaneMesh.FACE_Y
+	for i in 48:
+		var m := MeshInstance3D.new()
+		m.mesh = q
+		m.material_override = splat_mat
+		m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		m.visible = false
+		m.visibility_range_end = 250.0
+		add_child(m)
+		decals.append(m)
+
+
+## Blood spray where a bullet hits a body, and a stain on the ground below.
+func blood(p: Vector3, dir: Vector3, amount: float) -> void:
+	_blood_mats()
+	var e := _emitter(blood_mat, int(10 * amount) + 6, 0.9)
+	e.global_position = p
+	e.one_shot = true
+	e.explosiveness = 0.95
+	e.direction = dir
+	e.spread = 30.0
+	e.initial_velocity_min = 1.5
+	e.initial_velocity_max = 4.0 * amount
+	e.gravity = Vector3(0, -9.8, 0)
+	e.scale_amount_min = 0.12
+	e.scale_amount_max = 0.3 * amount
+	e.scale_amount_curve = _curve(1.0, 0.4)
+	e.color_ramp = _ramp(Color(0.55, 0.02, 0.02, 0.95), Color(0.3, 0.0, 0.0, 0.0))
+	e.emitting = true
+	_free_later(e, 1.5)
+	var w: Node3D = get_parent().world
+	var g := p + dir * randf_range(0.3, 1.2) * amount
+	var gy: float = w.height(g.x, g.z)
+	if p.y - gy < 2.5:
+		var d := decals[decal_i]
+		decal_i = (decal_i + 1) % decals.size()
+		var n: Vector3 = w.normal(g.x, g.z)
+		var b := Basis(Vector3.UP, randf() * TAU)
+		b = Basis(Quaternion(Vector3.UP, n)) * b
+		var sz := randf_range(0.5, 0.9) * (0.7 + amount * 0.4)
+		d.global_transform = Transform3D(b.scaled(Vector3(sz, 1, sz)), Vector3(g.x, gy + 0.03, g.z))
+		d.visible = true
+
+
+## Red mist and fragments from a headshot.
+func blood_mist(p: Vector3, dir: Vector3) -> void:
+	_blood_mats()
+	var e := _emitter(blood_mat, 18, 1.2)
+	e.global_position = p
+	e.one_shot = true
+	e.explosiveness = 1.0
+	e.direction = dir
+	e.spread = 50.0
+	e.initial_velocity_min = 0.5
+	e.initial_velocity_max = 2.5
+	e.damping_min = 2.0
+	e.damping_max = 3.0
+	e.gravity = Vector3(0, -1.0, 0)
+	e.scale_amount_min = 0.4
+	e.scale_amount_max = 0.9
+	e.scale_amount_curve = _curve(0.6, 1.6)
+	e.color_ramp = _ramp(Color(0.6, 0.03, 0.03, 0.7), Color(0.5, 0.05, 0.05, 0.0))
+	e.emitting = true
+	_free_later(e, 1.6)
+
+
 ## Black smoke column over a wreck.
 func wreck(p: Vector3) -> void:
 	var e := _emitter(smoke_mat, 24, 6.0)

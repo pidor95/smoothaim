@@ -298,7 +298,10 @@ func _plane(dt: float) -> void:
 		# stall recovery: after a moment in a stall the autopilot points the nose along the fall to regain speed
 		if stall_t > 0.8:
 			var k := clampf((stall_t - 0.8) / 0.8, 0.0, 1.0)
-			d = d.lerp((vel.normalized() + Vector3(0, -0.25, 0)).normalized(), k).normalized()
+			# dive to regain speed only with height to spare; close to the ground fly level out of it
+			var alt: float = pos.y - world.surf_h(pos.x, pos.z)
+			var dip := -0.25 if alt > 700.0 else (0.0 if alt > 300.0 else 0.15)
+			d = d.lerp((Vector3(vel.x, 0, vel.z).normalized() * 0.9 + Vector3(0, dip, 0)).normalized(), k).normalized()
 		var dl := Vector3(-d.dot(r), d.dot(u), d.dot(f))   # left, up, forward
 		var off := acos(clampf(dl.z, -1.0, 1.0))
 		var bank := atan2(-Vector3.UP.dot(r), Vector3.UP.dot(u))

@@ -3,11 +3,14 @@ extends Node3D
 
 const D := preload("res://scripts/data.gd")
 const Vehicle := preload("res://scripts/vehicle.gd")
+const Soldier := preload("res://scripts/soldier.gd")
 const Flare := preload("res://scripts/flare.gd")
 const G := D.G
 const ZONE := D.ZONE
 const ZONE_KILL := D.ZONE_KILL
-const CAMC := {"plane": [30.0, 7.0], "heli": [24.0, 6.0], "tank": [15.0, 5.5]}
+const CAMC := {"plane": [30.0, 7.0], "heli": [24.0, 6.0], "tank": [15.0, 5.5], "inf": [3.3, 0.35]}
+# infantry fights around the Prokhorovka village; each side gathers on its own edge of it
+const INF_SPAWN := {"blue": Vector2(2150, 250), "red": Vector2(2380, -680)}
 
 signal player_died(attacker_name: String, weapon: String)
 
@@ -27,7 +30,8 @@ var missiles: Array = []
 var flares: Array = []
 var smokes: Array = []
 var killfeed: Array = []
-var feed_log: Array = []         # every kill message of the match (for tests)
+var feed_log: Array = []
+var hit_stats := {}              # body-part hits (for tests)         # every kill message of the match (for tests)
 var kills := 0
 var deaths := 0
 var time := 0.0
@@ -38,6 +42,7 @@ var cam_yaw := 0.0
 var cam_pitch := 0.0
 var cam_fwd := Vector3.FORWARD
 var cam_shake := 0.0
+var recoil_p := 0.0
 var cam_sm := Vector3.ZERO
 var cam_sm_init := false
 var menu_t := 0.0
@@ -106,15 +111,23 @@ func start(vehicle_type: String, online: bool) -> void:
 			list.append("mi24" if i % 2 else "ah64")
 		for i in int(settings["bt"]):
 			list.append("pantsir" if i % 2 else "abrams")
+		for i in int(settings.get("bi", 6)):
+			list.append("soldier")
 		for t in list:
 			var b = _new_vehicle(t, "red", {"bot": true, "name": "Бот " + D.TYPES[t]["name"]})
 			spawn(b)
+		for i in int(settings.get("ba", 3)):
+			spawn(_new_vehicle("soldier", "blue", {"bot": true, "name": "Союзник"}))
 	playing = true
 	paused = false
 
 
+func _make(t: String):
+	return Soldier.new() if D.TYPES[t]["cat"] == "inf" else Vehicle.new()
+
+
 func _new_vehicle(t: String, team: String, opts: Dictionary):
-	var v = Vehicle.new()
+	var v = _make(t)
 	add_child(v)
 	v.setup(self, t, team, opts)
 	vehicles.append(v)
@@ -126,7 +139,7 @@ func respawn_player(t: String) -> void:
 		var nick: String = player.nick
 		var idx := vehicles.find(player)
 		player.queue_free()
-		var v = Vehicle.new()
+		var v = _make(t)
 		add_child(v)
 		v.setup(self, t, "blue", {"player": true, "name": nick})
 		vehicles[idx] = v
@@ -139,13 +152,25 @@ func respawn_player(t: String) -> void:
 	ctrl["zoom"] = false
 	ctrl["flare"] = false
 	cam_yaw = player.heading
-	cam_pitch = 0.0 if cat == "plane" else -0.12
+	cam_pitch = 0.0 if cat == "plane" or cat == "inf" else -0.12
 	cam_sm_init = false
 
 
 func spawn_point(cat: String, team: String) -> Array:
 	var s := 1.0 if team == "blue" else -1.0
 	var online: bool = net != null and net.active
+	if cat == "inf":
+		var c: Vector2 = INF_SPAWN["blue" if team == "blue" else "red"]
+		for k in 60:
+			var a := randf() * TAU
+			var r := randf_range(0, 90.0 + k * 6.0)
+			var q := c + Vector2(cos(a), sin(a)) * r
+			var gy: float = world.height(q.x, q.y)
+			if world.building_hit(Vector3(q.x, gy + 1.0, q.y), 1.0):
+				continue
+			var tgt: Vector2 = INF_SPAWN["red" if team == "blue" else "blue"]
+			return [Vector3(q.x, gy, q.y), Vehicle.heading_of(Vector3(tgt.x - q.x, 0, tgt.y - q.y))]
+		return [Vector3(c.x, world.height(c.x, c.y), c.y), 0.0]
 	for k in 40:
 		var x: float
 		var z: float
@@ -208,12 +233,17 @@ func _process(delta: float) -> void:
 					spawn(v)
 			continue
 		if v.is_bot:
-			_bot_think(v, dt)
+			if v.cat == "inf":
+				_bot_inf(v, dt)
+			else:
+				_bot_think(v, dt)
 		v.physics(dt)
 		if v.dead:
 			continue
 		_handle_weapons(v, dt)
-		if v.cat != "tank" and world.building_hit(v.pos, 2.0):
+		if v.cat == "tank" and v.speed > 2.5:
+			_run_over(v)
+		if v.cat != "tank" and v.cat != "inf" and world.building_hit(v.pos, 2.0):
 			kill(v, null, "crash")
 			continue
 		var r := Vector2(v.pos.x, v.pos.z).length()
@@ -260,7 +290,23 @@ func maneuver(mtype: String) -> void:
 		audio.play3d("smoke", player.pos, -6.0, 60.0, 1.6)
 
 
+## A moving tank crushes enemy soldiers in its way.
+func _run_over(t) -> void:
+	for v in vehicles:
+		if v.cat == "inf" and not v.dead and can_hit(t, v) and v.pos.distance_to(t.pos) < 3.2:
+			v.hit_part = "torso"
+			v.last_impulse = t.vel * 1.5 + Vector3(0, 2, 0)
+			fx.blood(v.centre(), t.vel.normalized(), 2.0)
+			kill(v, t, "crash")
+
+
 func _keys(dt: float) -> void:
+	if player and player.cat == "inf":
+		if Input.is_key_pressed(KEY_LEFT):
+			look(-500.0 * dt, 0)
+		if Input.is_key_pressed(KEY_RIGHT):
+			look(500.0 * dt, 0)
+		return
 	if Input.is_key_pressed(KEY_W):
 		ctrl["thr"] = clampf(ctrl["thr"] + dt * 0.5, 0.0, 1.0)
 	if Input.is_key_pressed(KEY_S):
@@ -292,6 +338,9 @@ func _unhandled_key_input(e: InputEvent) -> void:
 		if n >= 0 and n < player.T["slots"].size():
 			select_slot(n)
 		match k.keycode:
+			KEY_R:
+				if player.cat == "inf":
+					player.start_reload()
 			KEY_M:
 				if player.T.get("maneuver", false):
 					ctrl["man"] = not ctrl["man"]
@@ -315,6 +364,15 @@ func _player_input(dt: float) -> void:
 	var inp: Dictionary = p.inp
 	_keys(dt)
 	inp["aim"] = cam_fwd
+	if p.cat == "inf":
+		var mv: Vector2 = ctrl.get("move", Vector2.ZERO)
+		var kv := Vector2(float(Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_A)), float(Input.is_key_pressed(KEY_W)) - float(Input.is_key_pressed(KEY_S)))
+		if kv.length() > 0.0:
+			mv = kv.normalized() * (1.0 if Input.is_key_pressed(KEY_SHIFT) else 0.9)
+		inp["move"] = mv
+		if ctrl.get("reload", false):
+			ctrl["reload"] = false
+			p.start_reload()
 	var a: bool = ctrl["a"] or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_R)
 	var b: bool = ctrl["b"] or Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_F)
 	if p.cat == "tank":
@@ -348,13 +406,14 @@ func _aim_point() -> Vector3:
 	for v in vehicles:
 		if v == player or v.dead:
 			continue
-		var to: Vector3 = v.pos - o
+		var inf: bool = v.cat == "inf"
+		var to: Vector3 = (v.pos + Vector3(0, 1.0, 0) if inf else v.pos) - o
 		var al := to.dot(d)
 		if al < 0.0 or al > best:
 			continue
-		if to.length_squared() - al * al < pow(v.T["r"] * 1.3, 2):
+		if to.length_squared() - al * al < (0.8 if inf else pow(v.T["r"] * 1.3, 2)):
 			best = al
-	var t := 8.0
+	var t := 2.0 if player and player.cat == "inf" else 8.0
 	while t < best:
 		var step := 12.0 + t * 0.03
 		var q := o + d * t
@@ -375,11 +434,13 @@ func _aim_point() -> Vector3:
 
 
 func _update_camera(dt: float) -> void:
-	cam_fwd = Vector3(-sin(cam_yaw) * cos(cam_pitch), sin(cam_pitch), -cos(cam_yaw) * cos(cam_pitch))
+	recoil_p *= exp(-7.0 * dt)
+	var cp := clampf(cam_pitch + recoil_p, -1.45, 1.45)
+	cam_fwd = Vector3(-sin(cam_yaw) * cos(cp), sin(cp), -cos(cam_yaw) * cos(cp))
 	cam_shake *= exp(-4.0 * dt)
 	var sk := cam_shake * cam_shake * 0.02
-	cam.rotation = Vector3(cam_pitch + randf_range(-1, 1) * sk, cam_yaw + randf_range(-1, 1) * sk, randf_range(-1, 1) * sk * 0.5)
-	var fov := 24.0 if ctrl["zoom"] else 65.0
+	cam.rotation = Vector3(cp + randf_range(-1, 1) * sk, cam_yaw + randf_range(-1, 1) * sk, randf_range(-1, 1) * sk * 0.5)
+	var fov := (38.0 if player and player.cat == "inf" else 24.0) if ctrl["zoom"] else 65.0
 	if player and player.cat == "plane" and not ctrl["zoom"]:
 		fov += clampf((player.speed - 200.0) / 45.0, 0.0, 8.0)
 	cam.fov = lerpf(cam.fov, fov, 1.0 - exp(-6.0 * dt))
@@ -389,6 +450,16 @@ func _update_camera(dt: float) -> void:
 	var dist: float = c[0] * (0.7 if ctrl["zoom"] else 1.0) * (1.6 if player.dead else 1.0)
 	var up := cam.global_transform.basis.y
 	var ideal: Vector3 = player.pos - cam_fwd * dist + up * c[1]
+	if player.cat == "inf":
+		# over the right shoulder
+		var right := cam.global_transform.basis.x
+		var pivot: Vector3 = player.pos + Vector3(0, 1.55, 0) + right * (0.45 if ctrl["zoom"] else 0.6)
+		if player.dead:
+			pivot = player.pos + Vector3(0, 1.2, 0)
+		ideal = pivot - cam_fwd * (1.4 if ctrl["zoom"] else dist) + up * (0.05 if ctrl["zoom"] else c[1])
+		ideal.y = maxf(ideal.y, world.height(ideal.x, ideal.z) + 0.4)
+		cam.global_position = ideal
+		return
 	if player.cat == "plane" and not player.dead:
 		ideal -= player.acc * 0.012
 		if player.gload > 5.0:
@@ -466,9 +537,10 @@ func being_locked(v) -> bool:
 
 # ---------------------------------------------------------------- weapons
 func has_los(a: Vector3, b: Vector3) -> bool:
-	for i in range(1, 16):
-		var q := a.lerp(b, i / 16.0)
-		if q.y < world.height(q.x, q.z) - 1.0:
+	var n := clampi(int(a.distance_to(b) / 25.0), 8, 40)
+	for i in range(1, n):
+		var q := a.lerp(b, float(i) / n)
+		if q.y < world.height(q.x, q.z) - 1.0 or world.building_hit(q):
 			return false
 	for c in smokes:
 		if _seg_dist2(a, b, c["p"]) < c["r"] * c["r"] * 0.6 and a.distance_to(c["p"]) > c["r"] and b.distance_to(c["p"]) > c["r"]:
@@ -491,7 +563,7 @@ func _find_lock(v, dir: Vector3, W: Dictionary):
 	var best = null
 	var ba: float = W["cone"]
 	for o in vehicles:
-		if o == v or o.dead or o.team == v.team or o.in_smoke or (W.get("air_only", false) and o.cat == "tank"):
+		if o == v or o.dead or o.team == v.team or o.in_smoke or o.cat == "inf" or (W.get("air_only", false) and o.cat == "tank"):
 			continue
 		var to: Vector3 = o.pos - v.pos
 		var d := to.length()
@@ -511,7 +583,7 @@ func _update_lock(v, wname: String, dt: float) -> void:
 		dir = v.inp["aim"]
 	elif v.cat == "plane":
 		dir = v.fwd()
-	elif v.cat == "tank":
+	elif v.cat == "tank" or v.cat == "inf":
 		dir = v.aim_dir
 	else:
 		dir = Vehicle.dir_of(v.heading).lerp(v.inp["aim"], 0.5).normalized()
@@ -568,6 +640,14 @@ func _handle_weapons(v, dt: float) -> void:
 		if v.is_player and v.inp["fire_pressed"]:
 			audio.tone("click", -6.0, 0.5)
 		return
+	if W.has("mag") and not infinite_ammo(v):
+		# magazine weapons: no shooting while reloading, reload automatically when empty
+		if v.reload_t > 0.0 or v.sprinting:
+			return
+		if v.mag[v.slot] <= 0:
+			v.start_reload()
+			return
+		v.mag[v.slot] -= 1
 	if not infinite_ammo(v):
 		v.ammo[v.slot] -= 1
 	v.cd[wname] = 1.0 / W["rate"]
@@ -660,6 +740,34 @@ func _fire(v, wname: String) -> void:
 				net.event({"t": "m", "w": wname, "p": mp, "d": d, "tid": tg.peer if tg != null and tg.remote else (-1 if tg == null else 0)})
 			if v.is_bot:
 				v.lock_time = 0.0
+		"ak", "shotgun":
+			var mp: Vector3 = v.muzzle_world
+			var target: Vector3 = v.inp["aim_point"]
+			var d: Vector3 = (target - mp).normalized() if target.distance_to(mp) > 3.0 else v.aim_dir
+			# moving and hip fire spread; bots also miss by their skill
+			var sp: float = W["spread"] * (1.0 + v.speed * 0.35) * (0.45 if pl and ctrl["zoom"] else 1.0)
+			for i in int(W.get("pellets", 1)):
+				_bullet(v, mp, d, W, Vector3.ZERO, wname, sp)
+			v.flash_muzzle(mp, 1.4 if wname == "shotgun" else 1.0)
+			audio.play3d(wname, mp, -2.0 if pl else -6.0, 30.0)
+			if pl:
+				# muzzle climb that recovers by itself
+				var kick := 0.045 if wname == "shotgun" else 0.012
+				recoil_p = minf(recoil_p + kick, 0.12)
+				cam_yaw += randf_range(-0.3, 0.3) * kick
+				cam_shake = maxf(cam_shake, 0.25 if wname == "shotgun" else 0.08)
+			if pl and net and net.active:
+				pass
+		"stinger":
+			var mp: Vector3 = v.muzzle_world
+			var tg = v.lock_target if v.locked else null
+			var d: Vector3 = ((tg.pos - mp).normalized() if tg != null else v.aim_dir)
+			spawn_missile(v, mp, d, wname, tg)
+			fx.impact(mp - d * 1.8, true)
+			if pl and net and net.active:
+				net.event({"t": "m", "w": wname, "p": mp, "d": d, "tid": tg.peer if tg != null and tg.remote else (-1 if tg == null else 0)})
+			if v.is_bot:
+				v.lock_time = 0.0
 		"flare":
 			drop_flares(v)
 			if pl and net and net.active:
@@ -670,9 +778,9 @@ func _fire(v, wname: String) -> void:
 				net.event({"t": "sm", "p": p})
 
 
-func _bullet(owner, p: Vector3, dir: Vector3, W: Dictionary, inherit: Vector3, wname: String) -> void:
+func _bullet(owner, p: Vector3, dir: Vector3, W: Dictionary, inherit: Vector3, wname: String, spread := -1.0) -> void:
 	var d := dir
-	var s: float = W.get("spread", 0.0)
+	var s: float = W.get("spread", 0.0) if spread < 0.0 else spread
 	if s > 0.0:
 		d = (d + Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * s).normalized()
 	bullets.append({"p": p, "prev": p, "v": d * W["spd"] + inherit, "life": W["life"], "W": W, "w": wname, "owner": owner, "col": W["col"], "len": W["len"]})
@@ -762,7 +870,9 @@ func remote_destroyed(v) -> void:
 	for m in missiles:
 		if m["target"] == v:
 			m["target"] = null
-	if v.cat == "tank":
+	if v.cat == "inf":
+		v.start_wreck()
+	elif v.cat == "tank":
 		explosion(v.pos, 2.0)
 		v.wreck_fx = fx.burning(v)
 	else:
@@ -786,6 +896,11 @@ func damage(victim, amt: float, attacker, wname: String) -> void:
 		audio.tone("hit", -12.0)
 	if victim.remote:
 		return
+	var W = D.WEAP.get(wname)
+	if W is Dictionary and W.get("small", false) and victim.cat != "inf":
+		amt *= victim.T.get("small", 1.0)      # rifle bullets barely scratch armour
+	if attacker != null and attacker.is_bot and not victim.is_bot:
+		amt *= D.DIFF[settings["diff"]]["dmg"]
 	victim.hp -= amt
 	victim.last_hit_by = attacker
 	if victim == player:
@@ -799,8 +914,12 @@ func splash(p: Vector3, r: float, dmg: float, attacker, wname: String, except = 
 	for v in vehicles:
 		if v.dead or v == except or not can_hit(attacker, v):
 			continue
-		var d := maxf(0.0, v.pos.distance_to(p) - v.T["r"] * 0.6)
+		var c: Vector3 = v.centre() if v.cat == "inf" else v.pos
+		var d := maxf(0.0, c.distance_to(p) - v.T["r"] * 0.6)
 		if d < r:
+			if v.cat == "inf":
+				v.hit_part = "torso"
+				v.last_impulse = (c - p).normalized() * 9.0 * (1.0 - d / r) + Vector3(0, 4, 0)
 			damage(v, dmg * (1.0 - d / r), attacker, wname)
 
 
@@ -821,7 +940,12 @@ func kill(v, attacker, wname: String) -> void:
 	v.respawn_t = 8.0
 	v.locked = false
 	v.lock_target = null
-	if v.cat != "tank" and wname != "crash" and wname != "zone":
+	if v.cat == "inf":
+		# soldiers go limp and fall as a ragdoll
+		v.start_wreck()
+		v.respawn_t = 12.0
+		audio.play3d("flesh", v.centre(), -4.0, 20.0)
+	elif v.cat != "tank" and wname != "crash" and wname != "zone":
 		# shot down in the air: a small blast, then the burning wreck falls
 		explosion(v.pos, 1.0)
 		v.start_wreck()
@@ -864,14 +988,42 @@ func add_feed(a, v, wname: String) -> void:
 
 
 # ---------------------------------------------------------------- projectiles
+## First vehicle the segment passes through; for soldiers the body part is tested (stored in v.hit_part).
 func _seg_hit(a: Vector3, b: Vector3, owner, pad: float):
 	for v in vehicles:
 		if v.dead or not can_hit(owner, v):
+			continue
+		if v.cat == "inf":
+			if _seg_dist2(a, b, v.centre()) < 1.6 and (pad > 0.0 or v.test_hit(a, b) != ""):
+				v.hit_part = "torso" if pad > 0.0 else v.test_hit(a, b)
+				return v
 			continue
 		var r: float = v.T["r"] + pad
 		if _seg_dist2(a, b, v.pos) < r * r:
 			return v
 	return null
+
+
+## Bullet or pellet hitting a soldier: body-part damage, blood, and an instant kill through the head.
+func _hit_soldier(v, b: Dictionary) -> void:
+	var W: Dictionary = b["W"]
+	var dir: Vector3 = b["v"].normalized()
+	var part: String = v.hit_part
+	hit_stats[part] = hit_stats.get(part, 0) + 1
+	v.last_impulse = dir * (6.0 if b["w"] == "shotgun" else 4.0)
+	var pt: Vector3 = v.hit_point
+	if part == "head":
+		fx.blood(pt, dir, 3.0)
+		fx.blood_mist(pt, dir)
+		if b["owner"] == player:
+			flash("ХЕДШОТ!", "red")
+			audio.tone("headshot", -2.0)
+		damage(v, 1000.0, b["owner"], "headshot")
+		return
+	fx.blood(pt, dir, 1.0)
+	audio.play3d("flesh", pt, -8.0, 12.0)
+	var mult := 1.0 if part == "torso" else 0.6
+	damage(v, W["dmg"] * mult, b["owner"], b["w"])
 
 
 func _update_bullets(dt: float) -> void:
@@ -887,7 +1039,13 @@ func _update_bullets(dt: float) -> void:
 			var W: Dictionary = b["W"]
 			var big: bool = b["w"] == "cannon"
 			var hit = _seg_hit(b["prev"], b["p"], b["owner"], 0.0)
-			if hit != null:
+			if hit != null and hit.cat == "inf":
+				dead = true
+				_hit_soldier(hit, b)
+				if W.has("splash"):
+					splash(b["p"], W["splash"], W["sdmg"], b["owner"], b["w"], hit)
+					explosion(b["p"], 1.4 if big else 0.35, big)
+			elif hit != null:
 				dead = true
 				damage(hit, W["dmg"], b["owner"], b["w"])
 				if W.has("splash"):
@@ -1070,6 +1228,108 @@ func _update_smokes(dt: float) -> void:
 
 
 # ---------------------------------------------------------------- bots
+## Infantry bot: advance on the enemy, take cover behind nothing in particular, fire short bursts,
+## shoot down aircraft with the Stinger, and stay away from tanks it cannot hurt.
+func _bot_inf(b, dt: float) -> void:
+	var inp: Dictionary = b.inp
+	var B: Dictionary = b.bot
+	var Df: Dictionary = D.DIFF[settings["diff"]]
+	inp["fire"] = false
+	inp["fire_pressed"] = false
+	inp["flare"] = false
+	B["think"] -= dt
+	var e: Vector3 = b.eye()
+	if B["think"] <= 0.0:
+		B["think"] = randf_range(0.5, 0.9)
+		var best = null
+		var bd := INF
+		var air = null
+		var ad := INF
+		for v in vehicles:
+			if v.dead or v.team == b.team:
+				continue
+			var d: float = v.pos.distance_to(b.pos)
+			if v.cat == "plane" or v.cat == "heli":
+				if d < 3800.0 and d < ad and has_los(e, v.pos):
+					ad = d
+					air = v
+			elif v.cat == "inf" and d < 420.0 and d < bd and has_los(e, v.pos + Vector3(0, 1.2, 0)):
+				bd = d
+				best = v
+		B["tgt"] = best
+		B["air"] = air
+		if best == null:
+			# nobody in sight: head for the nearest enemy soldier or the enemy side of the village
+			var goal = null
+			var gd := INF
+			for v in vehicles:
+				if not v.dead and v.team != b.team and v.cat == "inf":
+					var d: float = v.pos.distance_to(b.pos)
+					if d < gd:
+						gd = d
+						goal = v
+			var side: Vector2 = INF_SPAWN["red" if b.team == "blue" else "blue"]
+			B["wp"] = goal.pos if goal != null else Vector3(side.x, 0, side.y)
+	var t = B["tgt"] if B["tgt"] != null and is_instance_valid(B["tgt"]) and not B["tgt"].dead else null
+	var air = B.get("air") if B.get("air") != null and is_instance_valid(B.get("air")) and not B.get("air").dead else null
+	if t != B["last_t"]:
+		B["last_t"] = t
+		B["seen_t"] = 0.0
+	B["seen_t"] += dt
+	B["stuck"] = B.get("stuck", 0.0) - dt
+	var st_i: int = b.slot_of("stinger")
+	# aircraft overhead and a Stinger in hand: lock and fire
+	B["msl_t"] -= dt
+	if air != null and st_i >= 0 and b.ammo[st_i] > 0 and settings["shoot"] and B["msl_t"] <= 0.0 and air.pos.distance_to(b.pos) < 3000.0 and (t == null or t.pos.distance_to(b.pos) > 120.0):
+		b.slot = st_i
+		var dist: float = air.pos.distance_to(e)
+		inp["aim"] = (air.pos + air.vel * (dist / 600.0) - e).normalized()
+		inp["aim_point"] = air.pos
+		inp["move"] = Vector2.ZERO
+		if b.locked and b.lock_target == air and B["seen_t"] > Df["react"]:
+			if _bot_use(b, "stinger"):
+				B["msl_t"] = Df["msl"] * randf_range(0.8, 1.4)
+		return
+	if b.slot == st_i:
+		b.slot = 0
+	if t != null:
+		var tc: Vector3 = t.pos + Vector3(0, 1.25, 0)
+		var dist: float = tc.distance_to(e)
+		b.slot = b.slot_of("shotgun") if dist < 14.0 and b.ammo[b.slot_of("shotgun")] > 0 else 0
+		if randf() < dt * 1.5:
+			# the difficulty setting decides how well bots shoot at the player; bot-vs-bot fights resolve faster
+			B["aim_err"] = Vector3(randf_range(-1, 1), randf_range(-0.7, 0.9), randf_range(-1, 1)) * (Df["inf"] if t == player else 0.008)
+		var ap: Vector3 = tc + t.vel * (dist / 700.0) + B["aim_err"] * dist
+		inp["aim_point"] = ap
+		inp["aim"] = (ap - e).normalized()
+		# keep moving a little while fighting so they are not sitting ducks
+		if randf() < dt * 0.6:
+			B["strafe"] = randf_range(-0.35, 0.35)
+		inp["move"] = Vector2(B.get("strafe", 0.0), 0.8 if dist > 200.0 else (0.3 if dist > 120.0 else (-0.25 if dist < 20.0 else 0.0)))
+		if settings["shoot"] and B["seen_t"] > Df["react"] * 0.7 and dist < 220.0:
+			B["burst"] = B.get("burst_t", 0.0)
+			B["burst_t"] = B.get("burst_t", 0.0) + dt
+			var cycle := 1.6 / maxf(Df["gun"] * 2.0, 0.3)
+			if fmod(B["burst_t"], cycle) < 0.45 and b.aim_dir.angle_to(inp["aim"]) < 0.15:
+				_bot_use(b, b.weapon())
+		return
+	# march toward the goal
+	var wp: Vector3 = B["wp"] if B["wp"] != null else b.pos
+	var to := Vector3(wp.x - b.pos.x, 0, wp.z - b.pos.z)
+	if b.blocked > 0.4 and B["stuck"] <= 0.0:
+		B["stuck"] = 1.5
+		B["detour"] = 1.0 if randf() < 0.5 else -1.0
+	var dirv := to.normalized() if to.length() > 1.0 else Vehicle.dir_of(b.heading)
+	if B["stuck"] > 0.0:
+		dirv = dirv.rotated(Vector3.UP, B.get("detour", 1.0) * 1.3)
+	inp["aim"] = dirv
+	inp["aim_point"] = b.pos + dirv * 50.0 + Vector3(0, 1.4, 0)
+	inp["move"] = Vector2(0, 1.0 if to.length() > 200.0 else 0.8)
+	if b.mag[0] < 15:
+		b.start_reload()
+
+
+
 ## Air-defence bot (Pantsir): missiles at aircraft it has locked, 30 mm guns at anything close.
 func _bot_aa(b, t, piv: Vector3, fired: bool) -> void:
 	var inp: Dictionary = b.inp
@@ -1092,7 +1352,7 @@ func _bot_aa(b, t, piv: Vector3, fired: bool) -> void:
 		return
 	var dist: float = tgt.pos.distance_to(piv)
 	var tt: float = dist / D.WEAP["aa30"]["spd"]
-	var ap: Vector3 = tgt.pos + tgt.vel * tt + B["aim_err"] * dist
+	var ap: Vector3 = tgt.pos + Vector3(0, 1.0 if tgt.cat == "inf" else 0.0, 0) + tgt.vel * tt + B["aim_err"] * dist
 	ap.y += 0.5 * G * tt * tt
 	inp["aim_point"] = ap
 	if randf() < 0.02:
@@ -1111,7 +1371,7 @@ func _nearest_enemy(b):
 	var best = null
 	var bd := INF
 	for v in vehicles:
-		if v.dead or v.team == b.team:
+		if v.dead or v.team == b.team or (b.cat == "plane" and v.cat == "inf"):
 			continue
 		var d: float = v.pos.distance_squared_to(b.pos)
 		if d < bd:
@@ -1255,7 +1515,7 @@ func _bot_heli(b, t, threat, td: float, dt: float, fired: bool) -> void:
 		inp["aim"] = dir
 		if t.cat != "tank":
 			desired = maxf(desired, minf(t.pos.y, world.surf_h(b.pos.x, b.pos.z) + 400.0))
-		inp["aim_point"] = t.pos + t.vel * (dist / 850.0) + B["aim_err"] * dist
+		inp["aim_point"] = t.pos + Vector3(0, 1.0 if t.cat == "inf" else 0.0, 0) + t.vel * (dist / 850.0) + B["aim_err"] * dist
 		if randf() < dt * 0.7:
 			B["aim_err"] = Vector3(randf_range(-1, 1), randf_range(-0.5, 0.5), randf_range(-1, 1)) * Df["err"]
 		if B["can_launch"] and not fired:
@@ -1325,9 +1585,9 @@ func _bot_tank(b, t, dt: float, fired: bool) -> void:
 			else:
 				b.slot = b.slot_of("cannon")
 			if b.slot == mg_i:
-				inp["aim_point"] = t.pos + t.vel * (dist / 900.0)
+				inp["aim_point"] = t.pos + Vector3(0, 1.0 if t.cat == "inf" else 0.0, 0) + t.vel * (dist / 900.0)
 			else:
-				var ap: Vector3 = t.pos + t.vel * tt + B["aim_err"] * dist
+				var ap: Vector3 = t.pos + Vector3(0, 1.0 if t.cat == "inf" else 0.0, 0) + t.vel * tt + B["aim_err"] * dist
 				ap.y += 0.5 * G * tt * tt + 1.0
 				inp["aim_point"] = ap
 			if B["can_launch"] and not fired:

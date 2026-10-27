@@ -15,7 +15,7 @@ var hud: Control
 var ui: Control
 var loading: Label
 var post: ColorRect
-var settings := {"bp": 2, "bh": 2, "bt": 3, "diff": 0, "shoot": true, "ammo": false, "sens": 6.0, "vehicle": "su57", "gfx": "high", "nick": "", "ip": "", "servers": []}
+var settings := {"bp": 2, "bh": 2, "bt": 3, "bi": 6, "ba": 3, "vol": 0.8, "diff": 1, "shoot": true, "ammo": false, "sens": 6.0, "vehicle": "su57", "gfx": "high", "nick": "", "ip": "", "servers": []}
 
 
 func _ready() -> void:
@@ -79,7 +79,10 @@ func _ready() -> void:
 	ui.quality_changed.connect(_quality)
 	ui.settings_changed.connect(_save_settings)
 	hud.pause_pressed.connect(func(): _pause(true))
-	game.player_died.connect(func(a, w): if game.playing and game.player.dead: ui.show_death(true, a, w, game.player.type))
+	game.player_died.connect(func(a, w):
+		if game.playing and game.player.dead:
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+			ui.show_death(true, a, w, game.player.type))
 	net.connected.connect(func(): _start(true))
 	net.disconnected.connect(_to_menu)
 	get_tree().root.go_back_requested.connect(_back)
@@ -87,6 +90,18 @@ func _ready() -> void:
 		_shots(_arg(args, "out", "user://"))
 	elif args.has("play"):
 		_play_test(args)
+	elif args.has("menushot"):
+		var out := _arg(args, "out", "user://")
+		for page in [["home", ""], ["garage", "pantsir"], ["garage", "soldier"], ["settings", ""], ["online", ""]]:
+			if page[1] != "":
+				settings["vehicle"] = page[1]
+			ui.show_page(page[0])
+			for i in 12:
+				await get_tree().process_frame
+			get_viewport().get_texture().get_image().save_png(out.path_join("menu_%s_%s.png" % [page[0], page[1]]))
+			var pg: Control = ui.pages[page[0]]
+			print("page ", page[0], " size ", pg.size, " menu ", ui.menu.size, " ui ", ui.size, " child ", pg.get_child(0).size)
+		get_tree().quit()
 
 
 ## Dedicated server: ./BoevoyFront-Server.x86_64 --headless -- server name="Мой сервер" port=27015 max=10
@@ -175,6 +190,8 @@ func _respawn(t: String) -> void:
 
 
 func _pause(on: bool) -> void:
+	if on:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	game.paused = on and not net.active
 	ui.show_pause(on, net.active)
 	hud.active = not on
@@ -183,6 +200,7 @@ func _pause(on: bool) -> void:
 
 
 func _to_menu() -> void:
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	net.close()
 	game.playing = false
 	game.paused = false
@@ -243,6 +261,10 @@ func _shots(out: String) -> void:
 	get_tree().quit()
 
 
+func Vehicle_heading(d: Vector3) -> float:
+	return atan2(-d.x, -d.z)
+
+
 ## Starts a bot match with the given vehicle, flies/drives a little and saves screenshots.
 func _play_test(args: PackedStringArray) -> void:
 	var out := _arg(args, "out", "user://")
@@ -269,6 +291,57 @@ func _play_test(args: PackedStringArray) -> void:
 		p.heading = 0.6
 		p.turret_yaw = 0.6
 		game.cam_yaw = 0.6
+	if args.has("rag"):
+		# soldier close-up: walking pose, then a headshot on a second soldier and its collapse
+		settings["bi"] = 0
+		settings["ba"] = 0
+		game.clear()
+		_start(false)
+		p = game.player
+		var c := Vector3(1600, 0, 900)
+		p.place(Vector3(c.x, world.height(c.x, c.z), c.z), 0.0, 0.0)
+		game.cam_yaw = 0.0
+		game.cam_pitch = -0.05
+		var en = game._new_vehicle("soldier", "red", {"bot": true, "name": "Цель"})
+		game.spawn(en)
+		en.place(Vector3(c.x + 1.5, world.height(c.x + 1.5, c.z - 7), c.z - 7), PI * 0.75, 0.0)
+		en.bot["think"] = 999.0
+		game.ctrl["move"] = Vector2(0, 0.6)
+		for i in 40:
+			await get_tree().process_frame
+		get_viewport().get_texture().get_image().save_png(out.path_join("rag_walk.png"))
+		game.paused = true
+		for view in [["rag_side", Vector3(2.0, 1.4, -1.2)], ["rag_front", Vector3(0.3, 1.5, -2.6)]]:
+			cam.global_position = p.pos + view[1]
+			cam.look_at(p.pos + Vector3(0, 1.2, 0), Vector3.UP)
+			await get_tree().process_frame
+			await get_tree().process_frame
+			get_viewport().get_texture().get_image().save_png(out.path_join(view[0] + ".png"))
+		game.paused = false
+		game.ctrl["move"] = Vector2.ZERO
+		game.ctrl["zoom"] = true
+		for i in 20:
+			game.cam_yaw = Vehicle_heading(en.pos + Vector3(0, 1.6, 0) - game.cam.global_position)
+			await get_tree().process_frame
+		get_viewport().get_texture().get_image().save_png(out.path_join("rag_aim.png"))
+		en.hit_part = "head"
+		en.hit_point = en.jp[0]
+		en.last_impulse = Vector3(0, 0, -4)
+		game.fx.blood(en.jp[0], Vector3(0, 0, -1), 3.0)
+		game.fx.blood_mist(en.jp[0], Vector3(0, 0, -1))
+		game.damage(en, 1000.0, p, "headshot")
+		game.ctrl["zoom"] = false
+		for i in 50:
+			await get_tree().process_frame
+			if i in [3, 8, 15, 30, 49]:
+				game.paused = true
+				cam.global_position = en.pos + Vector3(2.5, 1.6, 2.0)
+				cam.look_at(en.pos + Vector3(0, 0.6, 0), Vector3.UP)
+				await get_tree().process_frame
+				get_viewport().get_texture().get_image().save_png(out.path_join("rag_%02d.png" % i))
+				game.paused = false
+		get_tree().quit()
+		return
 	if args.has("stall"):
 		# fly into a deep stall with thrust vectoring on, then let go and watch the recovery
 		game.ctrl["man"] = true
@@ -283,6 +356,15 @@ func _play_test(args: PackedStringArray) -> void:
 				print("stall t=%.1f spd=%d aoa=%d alt=%d pitch=%d stalled=%s dead=%s" % [i * 0.05, p.speed, rad_to_deg(p.aoa), p.pos.y, rad_to_deg(asin(clampf(p.fwd().y, -1, 1))), p.stalled, p.dead])
 		get_tree().quit()
 		return
+	if vt == "soldier":
+		game.ctrl["move"] = Vector2(0, 0.9)
+		game.cam_yaw = p.heading
+		if args.has("front"):
+			# start next to the enemy squad so the fight is in view
+			var c: Vector2 = game.INF_SPAWN["red"] + Vector2(-40, 140)
+			p.place(Vector3(c.x, world.height(c.x, c.y), c.y), 0.3, 0.0)
+			game.cam_yaw = 0.3
+			game.ctrl["move"] = Vector2(0, 0.3)
 	var frames := int(_arg(args, "frames", "240"))
 	var every := int(_arg(args, "every", "60"))
 	var t0 := Time.get_ticks_msec()
@@ -301,8 +383,19 @@ func _play_test(args: PackedStringArray) -> void:
 		if i == 150 and p.T.get("maneuver", false):
 			game.maneuver("cobra")
 		await get_tree().process_frame
+		if args.has("infstat") and i % 200 == 0:
+			var md := INF
+			var alive := 0
+			for a in game.vehicles:
+				if a.cat != "inf" or a.dead:
+					continue
+				alive += 1
+				for b in game.vehicles:
+					if b.cat == "inf" and not b.dead and b.team != a.team:
+						md = minf(md, a.pos.distance_to(b.pos))
+			print("inf t=%d alive=%d closest_enemy=%.0f bullets=%d" % [i / 20, alive, md, game.bullets.size()])
 		if i % every == every - 1:
 			get_viewport().get_texture().get_image().save_png(out.path_join("%s_%03d.png" % [vt, i]))
 			print("play shot ", i, " fps ", Engine.get_frames_per_second(), " vehicles ", game.vehicles.size(), " missiles ", game.missiles.size(), " bullets ", game.bullets.size(), " hp ", p.hp, " dead ", p.dead)
-	print("play test done in ", Time.get_ticks_msec() - t0, " ms; kills ", game.kills, " deaths ", game.deaths, " feed ", game.feed_log, " remotes ", net.remotes.keys(), " vehicles ", game.vehicles.size())
+	print("play test done in ", Time.get_ticks_msec() - t0, " ms; kills ", game.kills, " deaths ", game.deaths, " feed ", game.feed_log, " hits ", game.hit_stats, " remotes ", net.remotes.keys(), " vehicles ", game.vehicles.size())
 	get_tree().quit()
