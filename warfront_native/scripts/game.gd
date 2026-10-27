@@ -27,6 +27,7 @@ var missiles: Array = []
 var flares: Array = []
 var smokes: Array = []
 var killfeed: Array = []
+var feed_log: Array = []         # every kill message of the match (for tests)
 var kills := 0
 var deaths := 0
 var time := 0.0
@@ -86,6 +87,7 @@ func clear() -> void:
 	flares.clear()
 	smokes.clear()
 	killfeed.clear()
+	feed_log.clear()
 	player = null
 	kills = 0
 	deaths = 0
@@ -217,7 +219,7 @@ func _process(delta: float) -> void:
 					kill(v, null, "zone")
 			else:
 				v.zone_t = 0.0
-		elif v.is_bot and r > ZONE_KILL + 400.0:
+		elif v.is_bot and r > ZONE_KILL + 2000.0:
 			kill(v, null, "zone")
 		v.sync()
 	if net and net.active:
@@ -804,6 +806,7 @@ func add_feed(a, v, wname: String) -> void:
 	var wr: String = D.W_RU.get(wname, wname)
 	var txt: String = "%s ➜ %s (%s)" % [nm.call(a), nm.call(v), wr] if a != null and a != v else "%s: %s" % [nm.call(v), wr]
 	killfeed.append({"txt": txt, "t": 6.0})
+	feed_log.append(txt)
 	if killfeed.size() > 5:
 		killfeed.pop_front()
 
@@ -1131,7 +1134,7 @@ func _bot_plane(b, t, threat, td: float, dt: float, fired: bool) -> void:
 		aim.y = minf(aim.y, -0.1)
 		aim = aim.normalized()
 	var r := Vector2(b.pos.x, b.pos.z).length()
-	if r > 4300.0:
+	if r > 3400.0 and Vector2(b.vel.x, b.vel.z).dot(Vector2(b.pos.x, b.pos.z)) > 0.0:
 		aim = Vector3(-b.pos.x / r, 0.1, -b.pos.z / r).normalized()
 	if randf() < dt * 0.5:
 		B["aim_err"] = Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * Df["err"]

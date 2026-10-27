@@ -6,6 +6,7 @@ config_version=5
 config/name="Боевой Фронт"
 config/description="PvP: танки, вертолёты, самолёты на реальной карте Прохоровки"
 run/main_scene="res://main.tscn"
+config/icon="res://icon.png"
 config/features=PackedStringArray("4.3", "GL Compatibility")
 boot_splash/bg_color=Color(0.043, 0.059, 0.078, 1)
 

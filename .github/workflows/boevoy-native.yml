@@ -1,0 +1,77 @@
+name: boevoy-native
+on:
+  push:
+    branches: [claude/military-vehicles-pvp-game-wm8y3e]
+    paths: ['warfront_native/**', '.github/workflows/boevoy-native.yml']
+  workflow_dispatch:
+concurrency:
+  group: boevoy-native
+  cancel-in-progress: true
+permissions:
+  contents: write
+env:
+  GODOT: "4.3"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Install Godot and export templates
+        run: |
+          cd /tmp
+          curl -sSL -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT}-stable/Godot_v${GODOT}-stable_linux.x86_64.zip"
+          unzip -q godot.zip && mv "Godot_v${GODOT}-stable_linux.x86_64" /usr/local/bin/godot
+          curl -sSL -o tpl.tpz "https://github.com/godotengine/godot/releases/download/${GODOT}-stable/Godot_v${GODOT}-stable_export_templates.tpz"
+          T="$HOME/.local/share/godot/export_templates/${GODOT}.stable"
+          mkdir -p "$T"
+          unzip -q -j tpl.tpz templates/android_release.apk templates/android_debug.apk templates/windows_release_x86_64.exe templates/windows_debug_x86_64.exe templates/version.txt -d "$T"
+          rm tpl.tpz
+      # the signing key is kept between runs so new builds install over old ones
+      - uses: actions/cache@v4
+        with:
+          path: ~/boevoy.keystore
+          key: boevoy-keystore-v1
+      - name: Configure Android export
+        run: |
+          [ -f ~/boevoy.keystore ] || keytool -genkeypair -keystore ~/boevoy.keystore -alias boevoy -keyalg RSA -keysize 2048 \
+            -validity 10000 -storepass boevoyfront -keypass boevoyfront -dname "CN=Boevoy Front"
+          godot --headless --quit || true
+          S="$HOME/.config/godot/editor_settings-${GODOT}.tres"
+          ls "$HOME/.config/godot"
+          sed -i '/export\/android\/android_sdk_path/d;/export\/android\/java_sdk_path/d' "$S"
+          sed -i "/^\[resource\]/a export/android/android_sdk_path = \"$ANDROID_SDK_ROOT\"\nexport/android/java_sdk_path = \"$JAVA_HOME\"" "$S"
+          grep android "$S" || true
+          ls "$ANDROID_SDK_ROOT/build-tools"
+      - name: Import assets
+        run: cd warfront_native && godot --headless --import 2>&1 | tail -5
+      - name: Export
+        env:
+          GODOT_ANDROID_KEYSTORE_RELEASE_PATH: /home/runner/boevoy.keystore
+          GODOT_ANDROID_KEYSTORE_RELEASE_USER: boevoy
+          GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD: boevoyfront
+        run: |
+          cd warfront_native
+          mkdir -p build/windows
+          godot --headless --export-release "Android" build/BoevoyFront.apk 2>&1 | grep -vE '^ADDING|^\s*$' | tail -20
+          godot --headless --export-release "Windows" build/windows/BoevoyFront.exe 2>&1 | tail -5
+          test -s build/BoevoyFront.apk && test -s build/windows/BoevoyFront.exe
+          mkdir -p ../out
+          cp build/BoevoyFront.apk ../out/BoevoyFront.apk
+          cd build/windows && zip -q ../../../out/BoevoyFront-Windows.zip BoevoyFront.exe
+          ls -la ../../../out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BoevoyFront-native
+          path: out/*
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete boevoy-front-native -y --cleanup-tag || true
+          gh release create boevoy-front-native out/BoevoyFront.apk out/BoevoyFront-Windows.zip \
+            --target "$GITHUB_SHA" --title "Боевой Фронт 2.0 (полноценная версия)" \
+            --notes "Нативная версия на Godot 4: реальная карта Прохоровки, тени, небо, деревья, дома. BoevoyFront.apk — Android (разрешите установку из неизвестных источников). BoevoyFront-Windows.zip — для ПК, распакуйте и запустите BoevoyFront.exe."

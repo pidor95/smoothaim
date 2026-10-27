@@ -40,11 +40,11 @@ func _layout() -> void:
 	var cat: String = game.player.cat if game.player else "plane"
 	btn["thr"] = {"rect": Rect2(26 * u, s.y * 0.2, 74 * u, s.y * 0.52), "round": false}
 	if cat == "heli":
-		btn["a"] = {"rect": _circ(Vector2(175 * u, s.y - 235 * u), 50 * u), "round": true}
-		btn["b"] = {"rect": _circ(Vector2(175 * u, s.y - 115 * u), 50 * u), "round": true}
+		btn["a"] = {"rect": _circ(Vector2(205 * u, s.y - 235 * u), 50 * u), "round": true}
+		btn["b"] = {"rect": _circ(Vector2(205 * u, s.y - 115 * u), 50 * u), "round": true}
 	elif cat == "tank":
-		btn["a"] = {"rect": _circ(Vector2(175 * u, s.y - 105 * u), 52 * u), "round": true}
-		btn["b"] = {"rect": _circ(Vector2(295 * u, s.y - 105 * u), 52 * u), "round": true}
+		btn["a"] = {"rect": _circ(Vector2(195 * u, s.y - 105 * u), 52 * u), "round": true}
+		btn["b"] = {"rect": _circ(Vector2(315 * u, s.y - 105 * u), 52 * u), "round": true}
 	btn["fire"] = {"rect": _circ(Vector2(s.x - 150 * u, s.y - 165 * u), 88 * u), "round": true}
 	if cat != "tank":
 		btn["flare"] = {"rect": _circ(Vector2(s.x - 315 * u, s.y - 95 * u), 56 * u), "round": true}

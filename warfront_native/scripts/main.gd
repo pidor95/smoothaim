@@ -235,6 +235,10 @@ func _play_test(args: PackedStringArray) -> void:
 	var t0 := Time.get_ticks_msec()
 	for i in frames:
 		game.ctrl["fire"] = (i / 30) % 3 == 0
+		if i % 60 == 40:
+			game.ctrl["fire_pressed"] = true
+			if p.cat != "plane":
+				game.select_slot(1 if i % 120 == 40 else 0)
 		if i == 20 and p.cat == "plane":
 			game.select_slot(1)
 		if i % 50 == 25:
@@ -247,5 +251,5 @@ func _play_test(args: PackedStringArray) -> void:
 		if i % every == every - 1:
 			get_viewport().get_texture().get_image().save_png(out.path_join("%s_%03d.png" % [vt, i]))
 			print("play shot ", i, " fps ", Engine.get_frames_per_second(), " vehicles ", game.vehicles.size(), " missiles ", game.missiles.size(), " bullets ", game.bullets.size(), " hp ", p.hp, " dead ", p.dead)
-	print("play test done in ", Time.get_ticks_msec() - t0, " ms")
+	print("play test done in ", Time.get_ticks_msec() - t0, " ms; kills ", game.kills, " deaths ", game.deaths, " feed ", game.feed_log)
 	get_tree().quit()
