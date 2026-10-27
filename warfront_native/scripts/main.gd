@@ -14,17 +14,32 @@ var game: Node3D
 var hud: Control
 var ui: Control
 var loading: Label
-var settings := {"bp": 2, "bh": 2, "bt": 3, "diff": 0, "shoot": true, "ammo": false, "sens": 6.0, "vehicle": "su57", "gfx": "high", "nick": "", "ip": ""}
+var post: ColorRect
+var settings := {"bp": 2, "bh": 2, "bt": 3, "diff": 0, "shoot": true, "ammo": false, "sens": 6.0, "vehicle": "su57", "gfx": "high", "nick": "", "ip": "", "servers": []}
 
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
+	if args.has("server"):
+		_run_server(args)
+		return
 	_load_settings()
 	if OS.has_feature("mobile") and not FileAccess.file_exists(SETTINGS_PATH):
 		settings["gfx"] = "mid"
 	if _arg(args, "quality", "") != "":
 		settings["gfx"] = _arg(args, "quality", "")
+	post = ColorRect.new()
+	post.set_anchors_preset(Control.PRESET_FULL_RECT)
+	post.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var pm := ShaderMaterial.new()
+	pm.shader = preload("res://shaders/sharpen.gdshader")
+	post.material = pm
+	var post_layer := CanvasLayer.new()
+	post_layer.layer = 0
+	add_child(post_layer)
+	post_layer.add_child(post)
 	var layer := CanvasLayer.new()
+	layer.layer = 1
 	add_child(layer)
 	loading = Label.new()
 	loading.text = "Загрузка карты…"
@@ -44,6 +59,7 @@ func _ready() -> void:
 	audio = preload("res://scripts/audio.gd").new()
 	add_child(audio)
 	net = preload("res://scripts/net.gd").new()
+	net.name = "Net"
 	add_child(net)
 	game = preload("res://scripts/game.gd").new()
 	add_child(game)
@@ -73,6 +89,16 @@ func _ready() -> void:
 		_play_test(args)
 
 
+## Dedicated server: ./BoevoyFront-Server.x86_64 --headless -- server name="Мой сервер" port=27015 max=10
+func _run_server(args: PackedStringArray) -> void:
+	Engine.max_fps = 30
+	net = preload("res://scripts/net.gd").new()
+	net.name = "Net"
+	add_child(net)
+	if not net.start_server(_arg(args, "name", "Боевой Фронт"), int(_arg(args, "port", "27015")), int(_arg(args, "max", "10"))):
+		get_tree().quit(1)
+
+
 func _arg(args: PackedStringArray, key: String, def: String) -> String:
 	for a in args:
 		if a.begins_with(key + "="):
@@ -85,6 +111,8 @@ func _build_world() -> void:
 	add_child(world)
 	var t0 := Time.get_ticks_msec()
 	world.build(settings["gfx"])
+	if post:
+		post.visible = settings["gfx"] != "low"
 	print("world built in ", Time.get_ticks_msec() - t0, " ms")
 
 
@@ -193,7 +221,8 @@ func _shots(out: String) -> void:
 		["tank", Vector3(1960, 0, -1640), Vector3(1985, 0, -1660), 3.0],
 	]
 	var models := [["abrams", Vector3(1985, 0, -1660), Vector3(0, 0.6, 0)], ["apache", Vector3(2010, 18, -1700), Vector3.ZERO],
-		["su57", Vector3(1975, 26, -1720), Vector3(0.1, 2.2, 0.5)], ["mi24", Vector3(1940, 14, -1700), Vector3(0, -0.8, 0)]]
+		["su57", Vector3(1975, 26, -1720), Vector3(0.1, 2.2, 0.5)], ["mi24", Vector3(1940, 14, -1700), Vector3(0, -0.8, 0)],
+		["pantsir", Vector3(1972, 0, -1652), Vector3(0, 2.4, 0)]]
 	for m in models:
 		var n: Node3D = load("res://assets/models/%s.glb" % m[0]).instantiate()
 		add_child(n)
@@ -222,7 +251,17 @@ func _play_test(args: PackedStringArray) -> void:
 	settings["bp"] = int(_arg(args, "bp", "2"))
 	settings["bh"] = int(_arg(args, "bh", "2"))
 	settings["bt"] = int(_arg(args, "bt", "3"))
-	_start(false)
+	var join := _arg(args, "join", "")
+	if join != "":
+		net.refresh_servers([join])
+		for i in 30:
+			await get_tree().process_frame
+		print("servers: ", net.servers)
+		net.join(join)
+		await net.connected
+		print("connected as ", net.my_id())
+	else:
+		_start(false)
 	var p = game.player
 	if vt == "abrams":
 		p.pos = Vector3(2150, 0, 150)
@@ -230,6 +269,20 @@ func _play_test(args: PackedStringArray) -> void:
 		p.heading = 0.6
 		p.turret_yaw = 0.6
 		game.cam_yaw = 0.6
+	if args.has("stall"):
+		# fly into a deep stall with thrust vectoring on, then let go and watch the recovery
+		game.ctrl["man"] = true
+		game.ctrl["thr"] = float(_arg(args, "thr", "0.15"))
+		for i in 400:
+			game.cam_pitch = 1.4 if i < 160 else 0.0
+			if i == 160:
+				game.ctrl["man"] = false
+				game.ctrl["thr"] = 1.0
+			await get_tree().process_frame
+			if i % 20 == 0:
+				print("stall t=%.1f spd=%d aoa=%d alt=%d pitch=%d stalled=%s dead=%s" % [i * 0.05, p.speed, rad_to_deg(p.aoa), p.pos.y, rad_to_deg(asin(clampf(p.fwd().y, -1, 1))), p.stalled, p.dead])
+		get_tree().quit()
+		return
 	var frames := int(_arg(args, "frames", "240"))
 	var every := int(_arg(args, "every", "60"))
 	var t0 := Time.get_ticks_msec()
@@ -251,5 +304,5 @@ func _play_test(args: PackedStringArray) -> void:
 		if i % every == every - 1:
 			get_viewport().get_texture().get_image().save_png(out.path_join("%s_%03d.png" % [vt, i]))
 			print("play shot ", i, " fps ", Engine.get_frames_per_second(), " vehicles ", game.vehicles.size(), " missiles ", game.missiles.size(), " bullets ", game.bullets.size(), " hp ", p.hp, " dead ", p.dead)
-	print("play test done in ", Time.get_ticks_msec() - t0, " ms; kills ", game.kills, " deaths ", game.deaths, " feed ", game.feed_log)
+	print("play test done in ", Time.get_ticks_msec() - t0, " ms; kills ", game.kills, " deaths ", game.deaths, " feed ", game.feed_log, " remotes ", net.remotes.keys(), " vehicles ", game.vehicles.size())
 	get_tree().quit()

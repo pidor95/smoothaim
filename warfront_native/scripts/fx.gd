@@ -260,6 +260,33 @@ func smoke_screen(p: Vector3, r: float) -> void:
 	_free_later(e, 21.0)
 
 
+## Fire and a thick black smoke trail attached to a burning wreck; returns the emitters.
+func burning(parent: Node3D) -> Array:
+	var fire := _emitter(fire_mat, 40, 0.6, parent)
+	fire.direction = Vector3.UP
+	fire.spread = 25.0
+	fire.initial_velocity_min = 2.0
+	fire.initial_velocity_max = 5.0
+	fire.scale_amount_min = 2.5
+	fire.scale_amount_max = 4.5
+	fire.scale_amount_curve = _curve(1.0, 0.3)
+	fire.color_ramp = _ramp(Color(1, 0.85, 0.5, 1), Color(0.8, 0.2, 0.05, 0), Color(1, 0.5, 0.12, 0.9), 0.4)
+	fire.emitting = true
+	var sm := _emitter(smoke_mat, 70, 5.0, parent)
+	sm.position = Vector3(0, 1.0, 0)
+	sm.direction = Vector3.UP
+	sm.spread = 12.0
+	sm.initial_velocity_min = 3.0
+	sm.initial_velocity_max = 6.0
+	sm.gravity = Vector3(0, 0.8, 0)
+	sm.scale_amount_min = 3.0
+	sm.scale_amount_max = 5.0
+	sm.scale_amount_curve = _curve(0.6, 3.5)
+	sm.color_ramp = _ramp(Color(0.08, 0.07, 0.07, 0.85), Color(0.3, 0.3, 0.3, 0.0))
+	sm.emitting = true
+	return [fire, sm]
+
+
 ## Black smoke column over a wreck.
 func wreck(p: Vector3) -> void:
 	var e := _emitter(smoke_mat, 24, 6.0)

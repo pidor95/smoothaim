@@ -21,9 +21,19 @@ const TYPES := {
 	"abrams": {"cat": "tank", "name": "M1 Абрамс", "hp": 300.0, "r": 5.5, "vmax": 19.0, "model": "abrams",
 		"desc": "Основной танк. 120-мм пушка, пулемёт, дымовая завеса (в дыму ракеты не наводятся).",
 		"slots": [{"w": "cannon", "n": "120 мм", "a": 40}, {"w": "mg", "n": "Пулемёт", "a": 1500}, {"w": "smoke", "n": "Дым", "a": 4}]},
+	"pantsir": {"cat": "tank", "kind": "ЗРПК", "name": "Панцирь-С1", "hp": 180.0, "r": 5.5, "vmax": 23.0, "model": "pantsir",
+		"turn": 0.9, "turret_rate": 1.6, "pitch_rate": 1.1, "pitch_max": 1.45, "muzzle": 2.5, "aim_h": 3.6,
+		"desc": "Зенитный ракетно-пушечный комплекс на колёсах. 12 зенитных ракет с автонаводкой (только по воздушным целям) и спаренные 30-мм пушки во вращающейся башне.",
+		"slots": [{"w": "aa30", "n": "30-мм пушки", "a": 1400}, {"w": "sam", "n": "Ракеты ЗУР", "a": 12}, {"w": "smoke", "n": "Дым", "a": 2}]},
 }
-const ORDER := ["su57", "mig29", "ah64", "mi24", "abrams"]
+const ORDER := ["su57", "mig29", "ah64", "mi24", "abrams", "pantsir"]
+const AIR := ["su57", "mig29", "ah64", "mi24"]
+const GROUND := ["abrams", "pantsir"]
 const CAT_RU := {"plane": "Самолёт", "heli": "Вертолёт", "tank": "Танк"}
+
+
+static func kind_of(t: String) -> String:
+	return TYPES[t].get("kind", CAT_RU[TYPES[t]["cat"]])
 
 const WEAP := {
 	"gun": {"auto": true, "rate": 22.0, "dmg": 7.0, "spd": 1050.0, "spread": 0.005, "life": 1.6, "col": Color(1, 0.85, 0.4), "len": 0.022},
@@ -38,9 +48,12 @@ const WEAP := {
 		"gimbal": 0.8, "min_spd": 140.0, "life": 14.0, "prox": 9.0, "range": 4000.0, "cone": 0.42, "lock_t": 1.4},
 	"flare": {"auto": true, "rate": 12.0},
 	"smoke": {"auto": false, "rate": 0.5},
+	"aa30": {"auto": true, "rate": 25.0, "dmg": 9.0, "spd": 960.0, "spread": 0.004, "life": 3.2, "splash": 4.0, "sdmg": 6.0, "col": Color(1, 0.7, 0.3), "len": 0.024},
+	"sam": {"auto": false, "rate": 1.0, "homing": true, "air_only": true, "dmg": 140.0, "launch": 60.0, "burn": 2.4, "thrust": 420.0, "drag": 6e-5, "max_g": 35.0, "nav": 4.0,
+		"gimbal": 1.2, "min_spd": 250.0, "life": 16.0, "prox": 12.0, "range": 9000.0, "cone": 0.5, "lock_t": 1.4},
 }
 const W_RU := {"gun": "пушка", "gun360": "пушка", "sidegun": "пушки", "mg": "пулемёт", "cannon": "120 мм", "rkt": "НАР",
-	"aam": "ракета", "atgm": "ракета", "crash": "крушение", "zone": "вне зоны"}
+	"aam": "ракета", "atgm": "ракета", "aa30": "30 мм", "sam": "ЗУР", "crash": "крушение", "zone": "вне зоны"}
 
 ## Bot skill. err: aim error, msl: seconds between missiles, flare: chance to flare, lock: lock time factor,
 ## turn: share of the player's turn rate, react: seconds before opening fire, gun: share of time spent firing.

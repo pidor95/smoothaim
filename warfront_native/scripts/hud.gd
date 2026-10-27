@@ -253,7 +253,7 @@ func _draw() -> void:
 				draw_line(np + Vector2(-26, 0) * u, np + Vector2(-13, 0) * u, COL_GRN, 2.0 * u)
 				draw_line(np + Vector2(13, 0) * u, np + Vector2(26, 0) * u, COL_GRN, 2.0 * u)
 		elif not W.get("homing", false) and wname != "flare" and wname != "smoke":
-			var piv: Vector3 = p.pos + Vector3(0, 2.4, 0) if p.cat == "tank" else p.chin_pos()
+			var piv: Vector3 = p.pos + Vector3(0, T.get("aim_h", 2.4), 0) if p.cat == "tank" else p.chin_pos()
 			var dir: Vector3 = p.fixed_dir if wname == "rkt" else p.aim_dir
 			var dist := maxf(50.0, piv.distance_to(p.inp["aim_point"]))
 			var gp = _screen(piv + dir * dist)

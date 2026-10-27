@@ -76,8 +76,8 @@ func _environment() -> void:
 	env.fog_density = 0.00006
 	env.fog_sky_affect = 0.0
 	env.adjustment_enabled = true
-	env.adjustment_contrast = 1.06
-	env.adjustment_saturation = 0.98
+	env.adjustment_contrast = 1.1
+	env.adjustment_saturation = 1.06
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)

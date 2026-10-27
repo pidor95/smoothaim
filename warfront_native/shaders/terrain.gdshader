@@ -14,7 +14,7 @@ uniform sampler2D road_c : source_color, filter_linear_mipmap_anisotropic, repea
 uniform sampler2D road_n : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D gravel_c : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform float map_size = 10400.0;
-uniform float detail_dist = 900.0;
+uniform float detail_dist = 1400.0;
 
 varying vec3 wpos;
 

@@ -28,7 +28,7 @@ jobs:
           curl -sSL -o tpl.tpz "https://github.com/godotengine/godot/releases/download/${GODOT}-stable/Godot_v${GODOT}-stable_export_templates.tpz"
           T="$HOME/.local/share/godot/export_templates/${GODOT}.stable"
           mkdir -p "$T"
-          unzip -q -j tpl.tpz templates/android_release.apk templates/android_debug.apk templates/windows_release_x86_64.exe templates/windows_debug_x86_64.exe templates/version.txt -d "$T"
+          unzip -q -j tpl.tpz templates/android_release.apk templates/android_debug.apk templates/windows_release_x86_64.exe templates/windows_debug_x86_64.exe templates/linux_release.x86_64 templates/linux_release.arm64 templates/version.txt -d "$T"
           rm tpl.tpz
       # the signing key is kept between runs so new builds install over old ones
       - uses: actions/cache@v4
@@ -58,11 +58,21 @@ jobs:
           mkdir -p build/windows
           godot --headless --export-release "Android" build/BoevoyFront.apk 2>&1 | grep -vE '^ADDING|^\s*$' | tail -20
           godot --headless --export-release "Windows" build/windows/BoevoyFront.exe 2>&1 | tail -5
-          test -s build/BoevoyFront.apk && test -s build/windows/BoevoyFront.exe
+          mkdir -p build/server build/server-arm
+          godot --headless --export-release "Linux Server" build/server/BoevoyFront-Server.x86_64 2>&1 | tail -3
+          godot --headless --export-release "Linux Server ARM" build/server-arm/BoevoyFront-Server.arm64 2>&1 | tail -3
+          test -s build/BoevoyFront.apk && test -s build/windows/BoevoyFront.exe && test -s build/server/BoevoyFront-Server.x86_64
           mkdir -p ../out
           cp build/BoevoyFront.apk ../out/BoevoyFront.apk
-          cd build/windows && zip -q ../../../out/BoevoyFront-Windows.zip BoevoyFront.exe
-          ls -la ../../../out
+          (cd build/windows && zip -q ../../../out/BoevoyFront-Windows.zip BoevoyFront.exe)
+          cp SERVER.md build/server/ && cp SERVER.md build/server-arm/
+          (cd build/server && zip -q ../../../out/BoevoyFront-Server-Linux.zip BoevoyFront-Server.x86_64 SERVER.md)
+          (cd build/server-arm && zip -q ../../../out/BoevoyFront-Server-ARM.zip BoevoyFront-Server.arm64 SERVER.md)
+          # quick smoke test: the server must start and answer a status query
+          (timeout 8 build/server/BoevoyFront-Server.x86_64 --headless -- server name=CI > server.log 2>&1 &)
+          sleep 4
+          python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.settimeout(3);s.sendto(b'BOEVOY1?',('127.0.0.1',27016));print(s.recvfrom(256)[0].decode())"
+          ls -la ../out
       - uses: actions/upload-artifact@v4
         with:
           name: BoevoyFront-native
@@ -72,6 +82,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete boevoy-front-native -y --cleanup-tag || true
-          gh release create boevoy-front-native out/BoevoyFront.apk out/BoevoyFront-Windows.zip \
+          gh release create boevoy-front-native out/BoevoyFront.apk out/BoevoyFront-Windows.zip out/BoevoyFront-Server-Linux.zip out/BoevoyFront-Server-ARM.zip \
             --target "$GITHUB_SHA" --title "Боевой Фронт 2.0 (полноценная версия)" \
-            --notes "Нативная версия на Godot 4: реальная карта Прохоровки, тени, небо, деревья, дома. BoevoyFront.apk — Android (разрешите установку из неизвестных источников). BoevoyFront-Windows.zip — для ПК, распакуйте и запустите BoevoyFront.exe."
+            --notes "Нативная версия на Godot 4: реальная карта Прохоровки, тени, небо, деревья, дома. BoevoyFront.apk — Android (разрешите установку из неизвестных источников). BoevoyFront-Windows.zip — для ПК, распакуйте и запустите BoevoyFront.exe. BoevoyFront-Server-Linux.zip / -ARM.zip — выделенный сервер для онлайна (инструкция в SERVER.md внутри)."

@@ -21,6 +21,7 @@ var death_choice := ""
 var death_buttons := {}
 var vehicle_buttons := {}
 var hosts_box: VBoxContainer
+var servers_box: VBoxContainer
 var status_label: Label
 var ip_edit: LineEdit
 var nick_edit: LineEdit
@@ -40,6 +41,7 @@ func build(s: Dictionary, n: Node) -> void:
 	_build_death()
 	net.status.connect(func(t): status_label.text = t)
 	net.hosts_changed.connect(_refresh_hosts)
+	net.servers_changed.connect(_refresh_servers)
 
 
 # ---------------------------------------------------------------- look
@@ -123,24 +125,32 @@ func _build_menu() -> void:
 	left.add_child(lv)
 	lv.add_child(_label("БОЕВОЙ ФРОНТ", 40, Color(1, 0.8, 0.4)))
 	lv.add_child(_label("Прохоровка, Белгородская область — настоящая местность по спутниковым снимкам и картам", 16, Color(0.8, 0.85, 0.9)))
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 10)
-	grid.add_theme_constant_override("v_separation", 10)
-	grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	lv.add_child(grid)
-	for t in D.ORDER:
-		var T: Dictionary = D.TYPES[t]
-		var b := Button.new()
-		b.toggle_mode = true
-		b.text = "%s\n%s · %d HP" % [T["name"], D.CAT_RU[T["cat"]], int(T["hp"])]
-		b.tooltip_text = T["desc"]
-		b.custom_minimum_size = Vector2(0, 74)
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b.pressed.connect(_pick_vehicle.bind(t))
-		grid.add_child(b)
-		vehicle_buttons[t] = b
+	var vscroll := ScrollContainer.new()
+	vscroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vscroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	lv.add_child(vscroll)
+	var sections := VBoxContainer.new()
+	sections.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vscroll.add_child(sections)
+	for sec in [["ВОЗДУШНАЯ ТЕХНИКА", D.AIR], ["НАЗЕМНАЯ ТЕХНИКА", D.GROUND]]:
+		sections.add_child(_label(sec[0], 17, Color(1, 0.8, 0.4)))
+		var grid := GridContainer.new()
+		grid.columns = 2
+		grid.add_theme_constant_override("h_separation", 10)
+		grid.add_theme_constant_override("v_separation", 8)
+		sections.add_child(grid)
+		for t in sec[1]:
+			var T: Dictionary = D.TYPES[t]
+			var b := Button.new()
+			b.toggle_mode = true
+			b.text = "%s\n%s · %d HP" % [T["name"], D.kind_of(t), int(T["hp"])]
+			b.tooltip_text = T["desc"]
+			b.custom_minimum_size = Vector2(0, 64)
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			b.pressed.connect(_pick_vehicle.bind(t))
+			grid.add_child(b)
+			vehicle_buttons[t] = b
 	var desc := _label("", 15, Color(0.85, 0.88, 0.9))
 	desc.name = "Desc"
 	lv.add_child(desc)
@@ -154,7 +164,7 @@ func _build_menu() -> void:
 	var tabs := HBoxContainer.new()
 	rv.add_child(tabs)
 	for i in 2:
-		var tb := _button(["Бой с ботами", "По сети (Wi-Fi)"][i], _tab.bind(i), true)
+		var tb := _button(["Бой с ботами", "Онлайн"][i], _tab.bind(i), true)
 		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		tabs.add_child(tb)
 		tab_buttons.append(tb)
@@ -181,7 +191,6 @@ func _build_menu() -> void:
 	go.name = "Go"
 	tab_net = VBoxContainer.new()
 	pages.add_child(tab_net)
-	tab_net.add_child(_label("Игроки должны быть в одной Wi-Fi сети (или раздать точку доступа с телефона). Один создаёт игру, остальные подключаются.", 15, Color(0.8, 0.85, 0.9)))
 	var nr := HBoxContainer.new()
 	tab_net.add_child(nr)
 	nr.add_child(_label("Позывной", 18))
@@ -192,6 +201,29 @@ func _build_menu() -> void:
 	nick_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nick_edit.text_changed.connect(func(t): settings["nick"] = t.strip_edges(); settings_changed.emit())
 	nr.add_child(nick_edit)
+	var sh := HBoxContainer.new()
+	tab_net.add_child(sh)
+	var sl := _label("СЕРВЕРЫ", 18, Color(1, 0.8, 0.4))
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sh.add_child(sl)
+	sh.add_child(_button("Обновить", func(): net.refresh_servers(settings["servers"])))
+	servers_box = VBoxContainer.new()
+	tab_net.add_child(servers_box)
+	var ar := HBoxContainer.new()
+	tab_net.add_child(ar)
+	var add_edit := LineEdit.new()
+	add_edit.placeholder_text = "адрес сервера, напр. 185.10.20.30:27015"
+	add_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ar.add_child(add_edit)
+	ar.add_child(_button("Добавить", func():
+		var a := add_edit.text.strip_edges()
+		if a != "" and not settings["servers"].has(a):
+			settings["servers"].append(a)
+			settings_changed.emit()
+			net.refresh_servers(settings["servers"])
+		add_edit.text = ""))
+	tab_net.add_child(_label("ИГРА ПО WI-FI (без сервера)", 18, Color(1, 0.8, 0.4)))
+	tab_net.add_child(_label("Все в одной Wi-Fi сети или на точке доступа с телефона: один создаёт игру, остальные подключаются.", 14, Color(0.8, 0.85, 0.9)))
 	tab_net.add_child(_button("Создать игру", func(): start_online.emit()))
 	tab_net.add_child(_label("Найденные игры:", 17))
 	hosts_box = VBoxContainer.new()
@@ -277,6 +309,7 @@ func _tab(i: int) -> void:
 		go.visible = i == 0
 	if i == 1:
 		net.start_discovery()
+		net.refresh_servers(settings["servers"])
 	else:
 		net.stop_discovery()
 
@@ -297,6 +330,19 @@ func _refresh_hosts() -> void:
 		hosts_box.add_child(_button("%s  (%s)" % [net.hosts[ip]["name"], ip], func(): net.join(ip)))
 	if net.hosts.is_empty():
 		hosts_box.add_child(_label("— поиск игр в сети… —", 15, Color(0.6, 0.65, 0.7)))
+
+
+func _refresh_servers() -> void:
+	for c in servers_box.get_children():
+		c.queue_free()
+	for key in net.servers:
+		var e: Dictionary = net.servers[key]
+		var info := "нет ответа" if e["players"] < 0 else "%d/%d игроков · %d мс" % [e["players"], e["max"], e["ping"]]
+		var b := _button("%s   —   %s" % [e["name"], info], func(): net.join(e["host"], e["port"]))
+		b.disabled = e["players"] >= 0 and e["players"] >= e["max"]
+		servers_box.add_child(b)
+	if net.servers.is_empty():
+		servers_box.add_child(_label("Серверов пока нет — добавьте адрес своего сервера ниже (как запустить сервер: файл SERVER.md).", 14, Color(0.6, 0.65, 0.7)))
 
 
 func show_menu(on: bool) -> void:

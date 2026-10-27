@@ -46,6 +46,7 @@ var aoa := 0.0
 var gload := 1.0
 var mach := 0.0
 var stalled := false
+var stall_t := 0.0             # seconds spent stalled; the autopilot recovers after a moment
 var acc := Vector3.ZERO
 var aim_dir := Vector3.FORWARD
 var fixed_dir := Vector3.FORWARD
@@ -65,6 +66,11 @@ var blocked := 0.0
 
 # bot brain
 var bot := {}
+
+# shot down: the wreck keeps falling, burning and tumbling until it hits the ground
+var wreck := false
+var wreck_spin := Vector3.ZERO
+var wreck_fx: Array = []
 
 # model parts
 var model: Node3D
@@ -99,6 +105,15 @@ func _build_model() -> void:
 	add_child(hull)
 	model = load("res://assets/models/%s.glb" % T["model"]).instantiate()
 	hull.add_child(model)
+	if type == "pantsir":
+		for mi in model.find_children("*", "MeshInstance3D", true, false):
+			var m3 := mi as MeshInstance3D
+			for i in m3.mesh.get_surface_count():
+				var mat := m3.mesh.surface_get_material(i)
+				if mat is BaseMaterial3D:
+					mat = mat.duplicate()
+					mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+					m3.set_surface_override_material(i, mat)
 	turret = model.find_child("Turret", true, false)
 	gun = model.find_child("Gun", true, false)
 	rotor = model.find_child("Rotor", true, false)
@@ -169,6 +184,8 @@ func reset() -> void:
 	roll_v = 0.0
 	blocked = 0.0
 	stalled = false
+	stall_t = 0.0
+	end_wreck()
 
 
 func place(p: Vector3, h: float, spd: float) -> void:
@@ -278,6 +295,10 @@ func _plane(dt: float) -> void:
 	else:
 		# instructor: roll the target above the canopy for large corrections, keep wings level for small ones, then pull
 		var d: Vector3 = inp["aim"].normalized()
+		# stall recovery: after a moment in a stall the autopilot points the nose along the fall to regain speed
+		if stall_t > 0.8:
+			var k := clampf((stall_t - 0.8) / 0.8, 0.0, 1.0)
+			d = d.lerp((vel.normalized() + Vector3(0, -0.25, 0)).normalized(), k).normalized()
 		var dl := Vector3(-d.dot(r), d.dot(u), d.dot(f))   # left, up, forward
 		var off := acos(clampf(dl.z, -1.0, 1.0))
 		var bank := atan2(-Vector3.UP.dot(r), Vector3.UP.dot(u))
@@ -307,8 +328,16 @@ func _plane(dt: float) -> void:
 			wd.x = minf(wd.x, maxf(0.0, (alpha + 0.25) * 4.0))
 		if is_bot:
 			wd *= D.DIFF[game.settings["diff"]]["turn"]
-	w.x += (wd.x * auth - w.x) * (1.0 - exp(-dt / 0.22))
-	w.y += (wd.y * auth - w.y) * (1.0 - exp(-dt / 0.4))
+	# weathervane stability: past the stall angle the airflow itself swings the nose back into the wind,
+	# even when the controls have no authority left (this is what a falling plane does)
+	var st := Vector3.ZERO
+	if man == null:
+		var a_ok: float = 1.25 if tvc and speed > 60.0 else A["a_st"]
+		var ks := clampf(spd / 70.0, 0.35, 1.3)
+		st.x = signf(alpha) * maxf(0.0, absf(alpha) - a_ok) * 2.4 * ks
+		st.y = signf(beta) * maxf(0.0, absf(beta) - 0.15) * 2.0 * ks
+	w.x += (wd.x * auth + st.x - w.x) * (1.0 - exp(-dt / 0.22))
+	w.y += (wd.y * auth + st.y - w.y) * (1.0 - exp(-dt / 0.4))
 	w.z += (wd.z * maxf(auth, 0.3) - w.z) * (1.0 - exp(-dt / 0.12))
 	rot = (rot * Basis.from_euler(Vector3(-w.x * dt, w.y * dt, -w.z * dt))).orthonormalized()
 	# forces: thrust along the nose, lift normal to the airflow, drag, side force, gravity
@@ -334,7 +363,8 @@ func _plane(dt: float) -> void:
 	aoa = alpha
 	gload = L / W
 	mach = M
-	stalled = not tvc and man == null and absf(alpha) > A["a_st"] * 1.02
+	stalled = man == null and absf(alpha) > (1.3 if tvc else A["a_st"] * 1.02) or (man == null and spd < 45.0)
+	stall_t = stall_t + dt if stalled else maxf(0.0, stall_t - dt * 2.0)
 	aim_dir = f
 	var s := 3.4 + randf() * 1.2 if thr > 0.85 else 0.4 + thr * 1.2
 	for fl in flames:
@@ -405,7 +435,7 @@ func _terrain_basis() -> Basis:
 
 ## Tank: engine force against slope, sprung hull pitch, turret/gun drives, gun recoil.
 func _tank(dt: float) -> void:
-	heading += (inp["left"] - inp["right"]) * 0.7 * dt * (1.0 - minf(absf(fspd) / 40.0, 0.4))
+	heading += (inp["left"] - inp["right"]) * T.get("turn", 0.7) * dt * (1.0 - minf(absf(fspd) / 40.0, 0.4))
 	var f := dir_of(heading)
 	var grade: float = (world.height(pos.x + f.x * 3, pos.z + f.z * 3) - world.height(pos.x - f.x * 3, pos.z - f.z * 3)) / 6.0
 	var thr: float = inp["throttle"]
@@ -433,12 +463,14 @@ func _tank(dt: float) -> void:
 	sp += spv * dt
 	hull.rotation.x = -clampf(sp, -0.12, 0.12)
 	recoil = maxf(0.0, recoil - dt * 2.2)
-	var piv := pos + Vector3(0, 2.4, 0)
+	var piv := pos + Vector3(0, T.get("aim_h", 2.4), 0)
 	var ad: Vector3 = (inp["aim_point"] - piv).normalized()
 	var ty := heading_of(ad)
-	turret_yaw += clampf(angle_difference(turret_yaw, ty), -0.7 * dt, 0.7 * dt)
-	var gp := clampf(asin(clampf(ad.y, -1.0, 1.0)), -0.17, 0.35)
-	gun_pitch += clampf(gp - gun_pitch, -0.35 * dt, 0.35 * dt)
+	var tr: float = T.get("turret_rate", 0.7) * dt
+	turret_yaw += clampf(angle_difference(turret_yaw, ty), -tr, tr)
+	var gp := clampf(asin(clampf(ad.y, -1.0, 1.0)), -0.17, T.get("pitch_max", 0.35))
+	var pr: float = T.get("pitch_rate", 0.35) * dt
+	gun_pitch += clampf(gp - gun_pitch, -pr, pr)
 	if weapon() == "mg":
 		aim_dir = (inp["aim_point"] - mg_pos()).normalized()
 	else:
@@ -451,7 +483,7 @@ func mg_pos() -> Vector3:
 
 func muzzle_pos() -> Vector3:
 	if gun:
-		return gun.global_position + aim_dir * 6.0
+		return gun.global_position + aim_dir * T.get("muzzle", 6.0)
 	return pos + Vector3(0, 2.0, 0) + aim_dir * 6.0
 
 
@@ -463,7 +495,7 @@ func _animate(dt: float) -> void:
 		tail_rotor.rotate_x(dt * 60.0)
 	if cat == "tank" and turret:
 		turret.rotation.y = angle_difference(heading, turret_yaw)
-		if gun:
+		if gun and type == "abrams":
 			gun.rotation.x = gun_pitch
 			gun.position.z = -1.64 + 0.5 * sin(minf(recoil, 1.0) * PI / 2.0)
 	if muzzle.visible:
@@ -477,6 +509,37 @@ func flash_muzzle(p: Vector3, s: float) -> void:
 	muzzle.pixel_size = 0.006 * s * randf_range(0.8, 1.2)
 	muzzle.visible = true
 	muzzle_t = 0.05
+
+
+## Turn a destroyed aircraft into a falling, burning wreck.
+func start_wreck() -> void:
+	wreck = true
+	visible = true
+	vel += Vector3(randf_range(-8, 8), randf_range(-2, 6), randf_range(-8, 8))
+	if cat == "heli":
+		wreck_spin = Vector3(randf_range(-0.4, 0.4), randf_range(2.5, 4.0) * (1 if randf() < 0.5 else -1), randf_range(-0.4, 0.4))
+	else:
+		wreck_spin = Vector3(randf_range(-1.0, 1.0), randf_range(-0.6, 0.6), randf_range(2.0, 4.0) * (1 if randf() < 0.5 else -1))
+	wreck_fx = game.fx.burning(self)
+
+
+func end_wreck() -> void:
+	wreck = false
+	for e in wreck_fx:
+		game.fx.detach_trail(e)
+	wreck_fx.clear()
+
+
+## Returns true when the wreck hits the ground.
+func wreck_update(dt: float) -> bool:
+	vel.y -= G * dt
+	vel *= 1.0 - (0.12 if cat == "plane" else 0.35) * dt
+	pos += vel * dt
+	rot = (rot * Basis.from_euler(wreck_spin * dt)).orthonormalized()
+	if rotor:
+		rotor.rotate_y(dt * 4.0)
+	sync()
+	return pos.y < world.surf_h(pos.x, pos.z) + 1.0
 
 
 ## Network-driven vehicle: smooth towards the last received state.

@@ -105,7 +105,7 @@ func start(vehicle_type: String, online: bool) -> void:
 		for i in int(settings["bh"]):
 			list.append("mi24" if i % 2 else "ah64")
 		for i in int(settings["bt"]):
-			list.append("abrams")
+			list.append("pantsir" if i % 2 else "abrams")
 		for t in list:
 			var b = _new_vehicle(t, "red", {"bot": true, "name": "Бот " + D.TYPES[t]["name"]})
 			spawn(b)
@@ -194,6 +194,11 @@ func _process(delta: float) -> void:
 		player.inp["fire"] = false
 	_update_smokes(dt)
 	for v in vehicles:
+		if v.wreck and v.wreck_update(dt):
+			v.end_wreck()
+			v.visible = false
+			explosion(v.pos, 2.2)
+			fx.wreck(v.pos + Vector3(0, 2, 0))
 		if v.remote:
 			continue
 		if v.dead:
@@ -378,13 +383,13 @@ func _update_camera(dt: float) -> void:
 	if player and player.cat == "plane" and not ctrl["zoom"]:
 		fov += clampf((player.speed - 200.0) / 45.0, 0.0, 8.0)
 	cam.fov = lerpf(cam.fov, fov, 1.0 - exp(-6.0 * dt))
-	if player == null or player.dead:
+	if player == null or (player.dead and not player.wreck):
 		return
 	var c: Array = CAMC[player.cat]
-	var dist: float = c[0] * (0.7 if ctrl["zoom"] else 1.0)
+	var dist: float = c[0] * (0.7 if ctrl["zoom"] else 1.0) * (1.6 if player.dead else 1.0)
 	var up := cam.global_transform.basis.y
 	var ideal: Vector3 = player.pos - cam_fwd * dist + up * c[1]
-	if player.cat == "plane":
+	if player.cat == "plane" and not player.dead:
 		ideal -= player.acc * 0.012
 		if player.gload > 5.0:
 			cam_shake = maxf(cam_shake, (player.gload - 5.0) * 0.08)
@@ -486,7 +491,7 @@ func _find_lock(v, dir: Vector3, W: Dictionary):
 	var best = null
 	var ba: float = W["cone"]
 	for o in vehicles:
-		if o == v or o.dead or o.team == v.team or o.in_smoke:
+		if o == v or o.dead or o.team == v.team or o.in_smoke or (W.get("air_only", false) and o.cat == "tank"):
 			continue
 		var to: Vector3 = o.pos - v.pos
 		var d := to.length()
@@ -506,6 +511,8 @@ func _update_lock(v, wname: String, dt: float) -> void:
 		dir = v.inp["aim"]
 	elif v.cat == "plane":
 		dir = v.fwd()
+	elif v.cat == "tank":
+		dir = v.aim_dir
 	else:
 		dir = Vehicle.dir_of(v.heading).lerp(v.inp["aim"], 0.5).normalized()
 	var c = _find_lock(v, dir, W)
@@ -632,6 +639,27 @@ func _fire(v, wname: String) -> void:
 				net.event({"t": "m", "w": wname, "p": mp, "d": d, "tid": tg.peer if tg != null and tg.remote else (-1 if tg == null else 0)})
 			if v.is_bot:
 				v.lock_time = 0.0
+		"aa30":
+			# twin 30 mm guns on both sides of the turret
+			v.alt_side = not v.alt_side
+			var side := Vector3(-v.aim_dir.z, 0, v.aim_dir.x).normalized() * (1.0 if v.alt_side else -1.0)
+			var mp: Vector3 = v.muzzle_pos() + side
+			_bullet(v, mp, v.aim_dir, W, Vector3.ZERO, wname)
+			v.flash_muzzle(mp, 1.6)
+			if v.alt_side:
+				audio.play3d("gun", mp, -3.0 if pl else -7.0, 70.0, 0.6)
+		"sam":
+			v.alt_side = not v.alt_side
+			var side := Vector3(-v.aim_dir.z, 0, v.aim_dir.x).normalized() * (1.3 if v.alt_side else -1.3)
+			var mp: Vector3 = v.pos + Vector3(0, 3.8, 0) + side
+			var tg = v.lock_target if v.locked else null
+			var d: Vector3 = ((tg.pos - mp).normalized() if tg != null else v.aim_dir) + Vector3(0, 0.35, 0)
+			d = d.normalized()
+			spawn_missile(v, mp, d, wname, tg)
+			if pl and net and net.active:
+				net.event({"t": "m", "w": wname, "p": mp, "d": d, "tid": tg.peer if tg != null and tg.remote else (-1 if tg == null else 0)})
+			if v.is_bot:
+				v.lock_time = 0.0
 		"flare":
 			drop_flares(v)
 			if pl and net and net.active:
@@ -728,6 +756,20 @@ func remote_fire(v, dt: float) -> void:
 	_fire(v, wname)
 
 
+## A remote player was destroyed: show the same falling or burning wreck as for local vehicles.
+func remote_destroyed(v) -> void:
+	v.dead = true
+	for m in missiles:
+		if m["target"] == v:
+			m["target"] = null
+	if v.cat == "tank":
+		explosion(v.pos, 2.0)
+		v.wreck_fx = fx.burning(v)
+	else:
+		explosion(v.pos, 1.0)
+		v.start_wreck()
+
+
 func remote_cannon(v, p: Vector3, d: Vector3) -> void:
 	_bullet(v, p, d, D.WEAP["cannon"], Vector3.ZERO, "cannon")
 	v.flash_muzzle(p, 4.0)
@@ -776,12 +818,22 @@ func kill(v, attacker, wname: String) -> void:
 		return
 	v.dead = true
 	v.hp = 0.0
-	v.visible = false
 	v.respawn_t = 8.0
 	v.locked = false
 	v.lock_target = null
-	explosion(v.pos, 2.0 if v.cat == "tank" else 2.4)
-	fx.wreck(v.pos + Vector3(0, 2, 0))
+	if v.cat != "tank" and wname != "crash" and wname != "zone":
+		# shot down in the air: a small blast, then the burning wreck falls
+		explosion(v.pos, 1.0)
+		v.start_wreck()
+		v.respawn_t = 12.0
+	elif v.cat == "tank":
+		# a knocked-out vehicle stays on the field, burning, until it respawns
+		explosion(v.pos, 2.0)
+		v.wreck_fx = fx.burning(v)
+	else:
+		v.visible = false
+		explosion(v.pos, 2.4)
+		fx.wreck(v.pos + Vector3(0, 2, 0))
 	if attacker == null and v.last_hit_by != null and not v.last_hit_by.dead and (wname == "crash" or wname == "zone"):
 		attacker = v.last_hit_by
 	add_feed(attacker, v, wname)
@@ -1018,6 +1070,43 @@ func _update_smokes(dt: float) -> void:
 
 
 # ---------------------------------------------------------------- bots
+## Air-defence bot (Pantsir): missiles at aircraft it has locked, 30 mm guns at anything close.
+func _bot_aa(b, t, piv: Vector3, fired: bool) -> void:
+	var inp: Dictionary = b.inp
+	var B: Dictionary = b.bot
+	var Df: Dictionary = D.DIFF[settings["diff"]]
+	var air = null
+	var ad := INF
+	for v in vehicles:
+		if v.dead or v.team == b.team or v.cat == "tank":
+			continue
+		var d: float = v.pos.distance_to(b.pos)
+		if d < ad and d < 8000.0 and has_los(piv, v.pos):
+			ad = d
+			air = v
+	var tgt = air
+	if tgt == null and t != null and t.pos.distance_to(b.pos) < 1500.0 and has_los(piv, t.pos):
+		tgt = t
+	if tgt == null:
+		inp["aim_point"] = b.pos + Vehicle.dir_of(b.heading) * 100.0 + Vector3(0, 30, 0)
+		return
+	var dist: float = tgt.pos.distance_to(piv)
+	var tt: float = dist / D.WEAP["aa30"]["spd"]
+	var ap: Vector3 = tgt.pos + tgt.vel * tt + B["aim_err"] * dist
+	ap.y += 0.5 * G * tt * tt
+	inp["aim_point"] = ap
+	if randf() < 0.02:
+		B["aim_err"] = Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * Df["err"]
+	if not B["can_launch"] or fired:
+		return
+	if tgt == air and b.locked and b.lock_target == air and B["msl_t"] <= 0.0 and dist > 700.0:
+		if _bot_use(b, "sam"):
+			B["msl_t"] = Df["msl"] * randf_range(0.5, 0.9)
+	elif B["can_shoot"] and dist < (2500.0 if tgt == air else 1500.0) and b.aim_dir.angle_to((ap - piv).normalized()) < 0.05:
+		_bot_use(b, "aa30")
+
+
+
 func _nearest_enemy(b):
 	var best = null
 	var bd := INF
@@ -1221,7 +1310,10 @@ func _bot_tank(b, t, dt: float, fired: bool) -> void:
 	inp["left"] = 1.0 if dy > 0.08 else 0.0
 	inp["right"] = 1.0 if dy < -0.08 else 0.0
 	inp["throttle"] = 0.0 if B["stop_t"] > 0.0 else (0.25 if absf(dy) > 1.0 else 0.7)
-	var piv: Vector3 = b.pos + Vector3(0, 2.4, 0)
+	var piv: Vector3 = b.pos + Vector3(0, b.T.get("aim_h", 2.4), 0)
+	if b.type == "pantsir":
+		_bot_aa(b, t, piv, fired)
+		return
 	if t != null:
 		var dist: float = t.pos.distance_to(b.pos)
 		if dist < 2300.0 and has_los(piv, t.pos):
