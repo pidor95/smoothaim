@@ -16,6 +16,9 @@ const MODEL_LAYER := 2
 var accent := Color(1.0, 0.45, 0.08)
 ## Arm length multiplier; differs per drone type.
 var arm_scale := 1.0
+## Render layer. The pilot's own drone uses MODEL_LAYER so the FPV camera
+## skips it; other pilots' drones stay on layer 1.
+var render_layer := MODEL_LAYER
 
 var _props: Array[Node3D] = []
 var _prop_dirs: Array[float] = []
@@ -93,7 +96,7 @@ func _bounds(node: Node, xform: Transform3D) -> AABB:
 
 func _set_layer(node: Node) -> void:
 	if node is VisualInstance3D:
-		(node as VisualInstance3D).layers = MODEL_LAYER
+		(node as VisualInstance3D).layers = render_layer
 	for child in node.get_children():
 		_set_layer(child)
 

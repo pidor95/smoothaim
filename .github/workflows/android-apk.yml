@@ -33,7 +33,7 @@ jobs:
           path: |
             ~/godot
             ~/.local/share/godot/export_templates
-          key: godot-${{ env.GODOT_VERSION }}-android-v1
+          key: godot-${{ env.GODOT_VERSION }}-android-pc-v2
 
       - name: Download Godot and Android export templates
         if: steps.cache.outputs.cache-hit != 'true'
@@ -48,7 +48,8 @@ jobs:
           curl -sSL -o /tmp/templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
           dest=~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
           mkdir -p "$dest"
-          unzip -q -j /tmp/templates.tpz 'templates/android_*' 'templates/version.txt' -d "$dest"
+          unzip -q -j /tmp/templates.tpz 'templates/android_*' 'templates/version.txt' \
+            'templates/windows_release_x86_64.exe' 'templates/linux_release.x86_64' -d "$dest"
           ls -la "$dest"
 
       - name: Point Godot at the Android SDK
@@ -69,7 +70,7 @@ jobs:
           sudo apt-get install -y -qq xvfb libgl1-mesa-dri > /dev/null
           xvfb-run -a -s "-screen 0 1280x720x24" timeout 600 ~/godot/godot --path fpv-drone \
             --rendering-method gl_compatibility --rendering-driver opengl3 --resolution 1280x720 \
-            -- --smoke > smoke.log 2>&1 || true
+            -- --smoke --touch > smoke.log 2>&1 || true
           grep -v '^SHOT' smoke.log | tail -n 150
           if grep -E "SCRIPT ERROR|Parse Error|SHADER ERROR" smoke.log; then
             echo "::error::Godot reported script or shader errors"
@@ -80,6 +81,22 @@ jobs:
       - name: Print screenshots
         if: always()
         run: grep '^SHOT' smoke.log || true
+
+      - name: Multiplayer test (two copies of the game connect to each other)
+        run: |
+          timeout 150 ~/godot/godot --headless --path fpv-drone -- --net-host-test > host.log 2>&1 &
+          sleep 8
+          timeout 140 ~/godot/godot --headless --path fpv-drone -- --net-join-test > join.log 2>&1 || true
+          wait || true
+          grep -hE "NET|SCRIPT ERROR|Parse Error" host.log join.log || true
+          grep -q "NET OK" host.log
+          grep -q "NET OK" join.log
+
+      - name: Number this build
+        run: |
+          sed -i "s/^version\/code=.*/version\/code=${{ github.run_number }}/; s/^version\/name=.*/version\/name=\"1.${{ github.run_number }}\"/" fpv-drone/export_presets.cfg
+          sed -i "s/^application\/file_version=.*/application\/file_version=\"1.0.${{ github.run_number }}.0\"/; s/^application\/product_version=.*/application\/product_version=\"1.0.${{ github.run_number }}.0\"/" fpv-drone/export_presets.cfg
+          grep -E "version" fpv-drone/export_presets.cfg
 
       - name: Export APK
         env:
@@ -95,16 +112,31 @@ jobs:
           test -f build/DolinaFPV.apk
           ls -la build
 
+      - name: Export Windows and Linux
+        run: |
+          mkdir -p build/windows build/linux
+          ~/godot/godot --headless --path fpv-drone --export-release "Windows" "$GITHUB_WORKSPACE/build/windows/DolinaFPV.exe" 2>&1 | tail -n 20
+          ~/godot/godot --headless --path fpv-drone --export-release "Linux" "$GITHUB_WORKSPACE/build/linux/DolinaFPV.x86_64" 2>&1 | tail -n 20
+          test -f build/windows/DolinaFPV.exe
+          test -f build/linux/DolinaFPV.x86_64
+          (cd build/windows && zip -q ../DolinaFPV-Windows.zip DolinaFPV.exe)
+          (cd build/linux && chmod +x DolinaFPV.x86_64 && zip -q ../DolinaFPV-Linux.zip DolinaFPV.x86_64)
+          ls -la build
+
       - uses: actions/upload-artifact@v4
         with:
-          name: DolinaFPV-apk
-          path: build/DolinaFPV.apk
+          name: DolinaFPV
+          path: |
+            build/DolinaFPV.apk
+            build/DolinaFPV-Windows.zip
+            build/DolinaFPV-Linux.zip
 
       - name: Publish the APK as release "fpv-latest"
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete fpv-latest --yes --cleanup-tag || true
-          gh release create fpv-latest build/DolinaFPV.apk --prerelease --target "$GITHUB_SHA" \
-            --title "Долина FPV — свежая сборка" \
-            --notes "APK для Android собран из коммита $GITHUB_SHA. Скачайте DolinaFPV.apk на телефон и установите (разрешите установку из неизвестных источников)."
+          gh release create fpv-latest build/DolinaFPV.apk build/DolinaFPV-Windows.zip build/DolinaFPV-Linux.zip \
+            --prerelease --target "$GITHUB_SHA" \
+            --title "Долина FPV — сборка ${{ github.run_number }}" \
+            --notes "Android: DolinaFPV.apk. Windows: DolinaFPV-Windows.zip (распаковать и запустить DolinaFPV.exe). Linux: DolinaFPV-Linux.zip. Собрано из коммита $GITHUB_SHA."

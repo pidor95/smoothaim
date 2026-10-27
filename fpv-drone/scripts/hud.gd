@@ -18,6 +18,10 @@ var camera_tilt := 20.0
 var camera_fov := 80.0
 var throttle := 0.0
 var mode_text := "ANGLE"
+## Multiplayer scoreboard lines.
+var players := PackedStringArray()
+## On a PC: show the keyboard controls.
+var keyboard_hint := false
 
 var target_screen := Vector2.ZERO
 var target_behind := false
@@ -113,6 +117,16 @@ func _draw() -> void:
 
 	# Mode and throttle, bottom centre.
 	_text(_mono, Vector2(center.x - 200, size.y - 30), "%s  THR %3d%%" % [mode_text, roundi(throttle * 100.0)], 18, Color(1, 1, 1, 0.8), HORIZONTAL_ALIGNMENT_CENTER, 400)
+
+	# Multiplayer pilots, top right under the buttons.
+	for i in players.size():
+		_text(_mono, Vector2(right - 320, 120 + i * 24), players[i], 17, Color(0.75, 0.9, 1.0), HORIZONTAL_ALIGNMENT_RIGHT, 320)
+
+	if keyboard_hint:
+		var keys := "W/S газ · A/D поворот · стрелки наклон · мышь камера · C вид · Esc пауза · F11 экран"
+		if mode_text.begins_with("EASY"):
+			keys = "стрелки вперёд/назад · A/D или ←/→ поворот · W/S высота · мышь камера · C вид · Esc пауза"
+		_text(_mono, Vector2(0, size.y - 56), keys, 15, Color(1, 1, 1, 0.6), HORIZONTAL_ALIGNMENT_CENTER, size.x)
 
 	if fpv:
 		_draw_horizon(center)

@@ -1,7 +1,8 @@
 extends Control
 ## On-screen controls with real multitouch. Casual mode: left stick flies
-## forward/back and turns, right stick climbs and descends. Easy mode: arrow
-## buttons. In both modes a swipe on the free part of the screen turns the camera.
+## forward/back and turns, right stick climbs and descends. Acro mode: left
+## stick is throttle (stays where released) and yaw, right stick pitch and roll.
+## Easy mode: arrow buttons. A swipe on the free part of the screen turns the camera.
 
 signal pause_pressed
 signal view_pressed
@@ -45,6 +46,12 @@ func reset() -> void:
 	stick_r = Vector2.ZERO
 	for b: String in BUTTONS:
 		buttons[b] = false
+	queue_redraw()
+
+
+## Puts the acro throttle stick at a value (0..1), e.g. hover after a respawn.
+func set_throttle(value: float) -> void:
+	stick_l.y = clampf(value, 0.0, 1.0) * 2.0 - 1.0
 	queue_redraw()
 
 
@@ -117,7 +124,7 @@ func _hit(pos: Vector2) -> String:
 		return "pause"
 	if pos.distance_to(_view_center()) < 40.0:
 		return "view"
-	if mode == 1:
+	if mode >= 1:
 		var zone := _radius() * 1.7
 		if pos.distance_to(_home(true)) < zone:
 			return "lstick"
@@ -146,7 +153,8 @@ func _input(event: InputEvent) -> void:
 				_last[touch.index] = touch.position
 				if target == "lstick" or target == "rstick":
 					var home := _home(target == "lstick")
-					_origins[touch.index] = home if touch.position.distance_to(home) < _radius() * 1.2 else touch.position
+					var fixed := mode == 2 and target == "lstick" # throttle needs a fixed centre
+					_origins[touch.index] = home if fixed or touch.position.distance_to(home) < _radius() * 1.2 else touch.position
 				_apply(touch.index, touch.position)
 		else:
 			_release(touch.index)
@@ -166,7 +174,7 @@ func _apply(index: int, pos: Vector2) -> void:
 	if target == "lstick" or target == "rstick":
 		var origin: Vector2 = _origins[index]
 		var v := (pos - origin) / _radius()
-		if target == "rstick":
+		if target == "rstick" and mode == 1:
 			v.x = 0.0
 		if v.length() > 1.0:
 			v = v.normalized()
@@ -193,7 +201,8 @@ func _release(index: int) -> void:
 	_origins.erase(index)
 	_last.erase(index)
 	if target == "lstick":
-		stick_l = Vector2.ZERO
+		# In acro the throttle stays where the finger left it.
+		stick_l = Vector2(0.0, stick_l.y) if mode == 2 else Vector2.ZERO
 	elif target == "rstick":
 		stick_r = Vector2.ZERO
 	elif target in BUTTONS:
@@ -211,7 +220,10 @@ func _origin_for(target: String) -> Vector2:
 
 
 func _draw() -> void:
-	if mode == 1:
+	if mode == 2:
+		_draw_stick(_origin_for("lstick"), stick_l, "ГАЗ %d%% · ПОВОРОТ" % roundi((stick_l.y + 1.0) * 50.0), false)
+		_draw_stick(_origin_for("rstick"), stick_r, "НАКЛОН · КРЕН", false)
+	elif mode == 1:
 		_draw_stick(_origin_for("lstick"), stick_l, "ВПЕРЁД · ПОВОРОТ", false)
 		_draw_stick(_origin_for("rstick"), stick_r, "ВВЕРХ · ВНИЗ", true)
 	else:

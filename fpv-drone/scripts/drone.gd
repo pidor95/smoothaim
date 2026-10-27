@@ -3,6 +3,8 @@ extends CharacterBody3D
 ## EASY: arrow buttons; the drone holds altitude and flies like an arcade game.
 ## CASUAL: two sticks in self-levelling angle mode with a hover-centred throttle,
 ## so it handles like a real quad without having to manage hover by hand.
+## ACRO: like a real FPV quad in rate mode. Sticks set rotation speed, nothing
+## levels the drone, throttle is absolute and flips are possible.
 
 signal crashed(reason: String)
 
@@ -51,6 +53,8 @@ var in_throttle := 0.0
 var in_yaw := 0.0
 var in_pitch := 0.0
 var in_roll := 0.0
+# Acro throttle, 0..1 (0 = motors idle).
+var in_throttle_abs := 0.0
 # Easy inputs, each -1..1.
 var in_forward := 0.0
 var in_turn := 0.0
@@ -120,6 +124,7 @@ func reset_to(pos: Vector3, heading: float) -> void:
 	in_forward = 0.0
 	in_turn = 0.0
 	in_lift = 0.0
+	in_throttle_abs = acro_hover_throttle()
 	look_pitch = 0.0
 	_apply_rotation()
 	var back := Vector3(sin(yaw), 0.0, cos(yaw))
@@ -141,11 +146,14 @@ func _process(delta: float) -> void:
 		_update_cameras(delta)
 		return
 	delta = minf(delta, 0.05)
-	if mode == 0:
+	if mode == 2:
+		_fly_acro(delta)
+	elif mode == 0:
 		_fly_easy(delta)
+		_apply_rotation()
 	else:
 		_fly_casual(delta)
-	_apply_rotation()
+		_apply_rotation()
 	var before := velocity
 	move_and_slide()
 	if _handle_collisions(before, delta):
@@ -178,6 +186,47 @@ func _fly_casual(delta: float) -> void:
 	acc -= hv * (_drag_lin + hv.length() * _drag_quad)
 	acc.y -= velocity.y * 0.9
 	velocity += acc * delta
+
+
+## Thrust of a full acro throttle, in m/s².
+func acro_max_thrust() -> float:
+	return G * (2.6 + climb)
+
+
+## Acro throttle (0..1) that holds a level drone in the air.
+func acro_hover_throttle() -> float:
+	return G / acro_max_thrust()
+
+
+func _fly_acro(delta: float) -> void:
+	var rate := deg_to_rad(540.0) * Settings.sensitivity
+	var b := basis
+	b = b * Basis(Vector3.RIGHT, -_expo(in_pitch) * rate * delta)
+	b = b * Basis(Vector3.UP, -_expo(in_yaw) * rate * 0.6 * delta)
+	b = b * Basis(Vector3.BACK, -_expo(in_roll) * rate * delta)
+	b = b.orthonormalized()
+	basis = b
+	var e := b.get_euler()
+	pitch = e.x
+	yaw = e.y
+	roll = e.z
+
+	throttle_level = clampf(in_throttle_abs, 0.0, 1.0)
+	var acc := b.y * throttle_level * acro_max_thrust() + Vector3.DOWN * G
+	acc -= velocity * (_drag_lin + velocity.length() * _drag_quad)
+	velocity += acc * delta
+
+
+## Turns the drone around the vertical axis (camera swipes).
+func add_yaw(angle: float) -> void:
+	if mode == 2:
+		basis = (Basis(Vector3.UP, angle) * basis).orthonormalized()
+		var e := basis.get_euler()
+		pitch = e.x
+		yaw = e.y
+		roll = e.z
+	else:
+		yaw = wrapf(yaw + angle, -PI, PI)
 
 
 func _fly_easy(delta: float) -> void:

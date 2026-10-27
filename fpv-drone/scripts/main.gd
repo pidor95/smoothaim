@@ -7,6 +7,7 @@ const HudScript := preload("res://scripts/hud.gd")
 const TouchScript := preload("res://scripts/touch_controls.gd")
 const MenuScript := preload("res://scripts/menu.gd")
 const AudioScript := preload("res://scripts/drone_audio.gd")
+const NetScript := preload("res://scripts/net.gd")
 
 enum State { LOADING, MENU, PLAYING, PAUSED, CRASHED }
 
@@ -20,6 +21,7 @@ var hud: HudScript
 var touch: TouchScript
 var menu: MenuScript
 var audio: AudioScript
+var net: NetScript
 var env: Environment
 var sun: DirectionalLight3D
 var menu_cam: Camera3D
@@ -38,12 +40,26 @@ var _prev_pos := Vector3.ZERO
 var _time := 0.0
 var _applied_quality := -1
 var _smoke := false
+## True on phones and tablets; on a PC the on-screen controls are hidden and
+## the mouse turns the camera.
+var _touch_ui := true
+var _kb_throttle := 0.5
+var _mouse_look := Vector2.ZERO
+var _net_test := ""
+var _net_test_t := 0.0
+var _net_seen_t := -1.0
 var _smoke_t := 0.0
 var _smoke_step := 0
 
 
 func _ready() -> void:
-	_smoke = OS.get_cmdline_user_args().has("--smoke")
+	var args := OS.get_cmdline_user_args()
+	_smoke = args.has("--smoke")
+	_touch_ui = DisplayServer.is_touchscreen_available() or args.has("--touch")
+	if args.has("--net-host-test"):
+		_net_test = "host"
+	elif args.has("--net-join-test"):
+		_net_test = "join"
 	get_tree().quit_on_go_back = false
 	_setup_environment()
 	var ui := CanvasLayer.new()
@@ -83,6 +99,10 @@ func _ready() -> void:
 	menu_cam.far = 5000.0
 	add_child(menu_cam)
 
+	net = NetScript.new()
+	net.name = "Net"
+	add_child(net)
+
 	_setup_ui(ui)
 	loading_bg.queue_free()
 
@@ -93,6 +113,8 @@ func _ready() -> void:
 	if _smoke:
 		print("SMOKE: world ready, gates=%d" % world.gates.size())
 		_start_flight()
+	if _net_test != "":
+		_start_net_test()
 
 
 func _setup_environment() -> void:
@@ -160,7 +182,10 @@ func _setup_ui(ui: CanvasLayer) -> void:
 	static_rect.visible = false
 	ui.add_child(static_rect)
 
+	net.lap_announced.connect(func(text: String) -> void: hud.show_message(text, "", Color(0.6, 0.85, 1.0), 3.0))
+
 	menu = MenuScript.new()
+	menu.net = net
 	ui.add_child(menu)
 	menu.play_pressed.connect(_start_flight)
 	menu.resume_pressed.connect(_resume)
@@ -189,6 +214,7 @@ func _apply_settings() -> void:
 	if drone.mode != Settings.control_mode:
 		drone.mode = Settings.control_mode
 		touch.set_mode(Settings.control_mode)
+		_sync_throttle()
 	audio.enabled = Settings.sound
 	audio.set_running(Settings.sound and state == State.PLAYING)
 	_update_camera()
@@ -218,6 +244,7 @@ func _enter_menu() -> void:
 	touch.reset()
 	static_rect.visible = false
 	audio.set_running(false)
+	_capture_mouse(false)
 	_update_camera()
 
 
@@ -225,7 +252,7 @@ func _start_flight() -> void:
 	state = State.PLAYING
 	menu.hide_all()
 	hud.visible = true
-	touch.visible = true
+	touch.visible = _touch_ui
 	touch.reset()
 	static_rect.visible = false
 	next_gate = 0
@@ -237,8 +264,10 @@ func _start_flight() -> void:
 	_place_at_start()
 	drone.mode = Settings.control_mode
 	touch.set_mode(Settings.control_mode)
+	_sync_throttle()
 	drone.active = true
 	audio.set_running(Settings.sound)
+	_capture_mouse(true)
 	_update_camera()
 
 
@@ -250,6 +279,7 @@ func _pause() -> void:
 	touch.visible = false
 	touch.reset()
 	audio.set_running(false)
+	_capture_mouse(false)
 	menu.show_pause()
 
 
@@ -258,10 +288,12 @@ func _resume() -> void:
 		return
 	state = State.PLAYING
 	menu.hide_all()
-	touch.visible = true
+	touch.visible = _touch_ui
+	_sync_throttle()
 	drone.active = true
 	_prev_pos = drone.global_position
 	audio.set_running(Settings.sound)
+	_capture_mouse(true)
 	_update_camera()
 
 
@@ -286,9 +318,24 @@ func _respawn() -> void:
 	else:
 		_place_at_start()
 	_prev_pos = drone.global_position
+	_sync_throttle()
 	state = State.PLAYING
 	drone.active = true
 	audio.set_running(Settings.sound)
+
+
+## Puts the acro throttle at hover so the drone does not drop after a reset.
+func _sync_throttle() -> void:
+	var hover := drone.acro_hover_throttle()
+	drone.in_throttle_abs = hover
+	_kb_throttle = hover
+	touch.set_throttle(hover)
+
+
+func _capture_mouse(on: bool) -> void:
+	if _touch_ui or _smoke:
+		return
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if on else Input.MOUSE_MODE_VISIBLE
 
 
 func _place_at_start() -> void:
@@ -316,8 +363,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			_pause()
 		elif state == State.PAUSED:
 			_resume()
-	elif event is InputEventKey and event.is_pressed() and (event as InputEventKey).keycode == KEY_C:
-		Settings.put("third_person", not Settings.third_person)
+	elif event is InputEventKey and event.is_pressed() and not event.is_echo():
+		var key := (event as InputEventKey).keycode
+		if key == KEY_C:
+			Settings.put("third_person", not Settings.third_person)
+		elif key == KEY_F11:
+			var fs := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if fs else DisplayServer.WINDOW_MODE_FULLSCREEN)
+	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		_mouse_look += (event as InputEventMouseMotion).relative
+	elif event is InputEventMouseButton and event.is_pressed() and state == State.PLAYING and not _touch_ui:
+		_capture_mouse(true)
 
 
 # --- Per frame ---------------------------------------------------------------
@@ -345,6 +401,13 @@ func _process(delta: float) -> void:
 			if crash_timer <= 0.0:
 				_respawn()
 	world.update_grass(drone.global_position)
+	net.local_pos = drone.global_position
+	net.local_rot = drone.quaternion
+	net.local_type = drone.drone_type
+	net.local_gate = next_gate
+	net.local_flying = state == State.PLAYING or state == State.CRASHED
+	if _net_test != "":
+		_net_test_update(delta)
 	if hud.visible:
 		_update_hud()
 	if _smoke:
@@ -369,21 +432,37 @@ static func _deadzone(v: Vector2) -> Vector2:
 
 
 func _gather_input() -> void:
+	var delta := get_process_delta_time()
 	var jl := _deadzone(Vector2(Input.get_joy_axis(0, JOY_AXIS_LEFT_X), -Input.get_joy_axis(0, JOY_AXIS_LEFT_Y)))
 	var jr := _deadzone(Vector2(Input.get_joy_axis(0, JOY_AXIS_RIGHT_X), -Input.get_joy_axis(0, JOY_AXIS_RIGHT_Y)))
-	# Swiping the free part of the screen turns the drone and tilts the camera.
-	var look := touch.consume_look() * Settings.sensitivity
-	drone.yaw = wrapf(drone.yaw - look.x * 0.006, -PI, PI)
+	var pad := not Input.get_connected_joypads().is_empty()
+	# Swiping the screen or moving the mouse turns the drone and tilts the camera.
+	var look := (touch.consume_look() + _mouse_look * 0.6) * Settings.sensitivity
+	_mouse_look = Vector2.ZERO
+	drone.add_yaw(-look.x * 0.006)
 	drone.look_pitch = clampf(drone.look_pitch - look.y * 0.004, -0.8, 0.8)
-	if drone.mode == Settings.Controls.CASUAL:
-		drone.in_pitch = clampf(touch.stick_l.y + _axis(KEY_UP, KEY_DOWN) + jl.y, -1.0, 1.0)
-		drone.in_yaw = clampf(touch.stick_l.x + _axis(KEY_D, KEY_A) + jl.x, -1.0, 1.0)
-		drone.in_throttle = clampf(touch.stick_r.y + _axis(KEY_W, KEY_S) + jr.y, -1.0, 1.0)
-		drone.in_roll = clampf(_axis(KEY_RIGHT, KEY_LEFT) + jr.x, -1.0, 1.0)
-	else:
-		drone.in_forward = clampf(touch.is_down("fwd") - touch.is_down("back") + _axis(KEY_UP, KEY_DOWN) + jl.y, -1.0, 1.0)
-		drone.in_turn = clampf(_axis(KEY_RIGHT, KEY_LEFT) + jl.x, -1.0, 1.0)
-		drone.in_lift = clampf(touch.is_down("up") - touch.is_down("down") + _axis(KEY_W, KEY_S) + jr.y, -1.0, 1.0)
+	match drone.mode:
+		Settings.Controls.CASUAL:
+			drone.in_pitch = clampf(touch.stick_l.y + _axis(KEY_UP, KEY_DOWN) + jl.y, -1.0, 1.0)
+			drone.in_yaw = clampf(touch.stick_l.x + _axis(KEY_D, KEY_A) + jl.x, -1.0, 1.0)
+			drone.in_throttle = clampf(touch.stick_r.y + _axis(KEY_W, KEY_S) + jr.y, -1.0, 1.0)
+			drone.in_roll = clampf(_axis(KEY_RIGHT, KEY_LEFT) + jr.x, -1.0, 1.0)
+		Settings.Controls.ACRO:
+			# Mode 2 like a real radio: left stick throttle + yaw, right stick pitch + roll.
+			_kb_throttle = clampf(_kb_throttle + _axis(KEY_W, KEY_S) * 0.7 * delta, 0.0, 1.0)
+			if pad:
+				drone.in_throttle_abs = (jl.y + 1.0) * 0.5
+			elif _touch_ui:
+				drone.in_throttle_abs = (touch.stick_l.y + 1.0) * 0.5
+			else:
+				drone.in_throttle_abs = _kb_throttle
+			drone.in_yaw = clampf(touch.stick_l.x + _axis(KEY_D, KEY_A) + jl.x, -1.0, 1.0)
+			drone.in_pitch = clampf(touch.stick_r.y + _axis(KEY_UP, KEY_DOWN) + jr.y, -1.0, 1.0)
+			drone.in_roll = clampf(touch.stick_r.x + _axis(KEY_RIGHT, KEY_LEFT) + jr.x, -1.0, 1.0)
+		_:
+			drone.in_forward = clampf(touch.is_down("fwd") - touch.is_down("back") + _axis(KEY_UP, KEY_DOWN) + jl.y, -1.0, 1.0)
+			drone.in_turn = clampf(_axis(KEY_RIGHT, KEY_LEFT) + _axis(KEY_D, KEY_A) + jl.x, -1.0, 1.0)
+			drone.in_lift = clampf(touch.is_down("up") - touch.is_down("down") + _axis(KEY_W, KEY_S) + jr.y, -1.0, 1.0)
 
 
 func _check_gate() -> void:
@@ -408,6 +487,7 @@ func _gate_passed() -> void:
 	if next_gate >= world.gates.size():
 		lap_running = false
 		var best: float = Settings.best_lap
+		net.announce_lap(lap_time, best <= 0.0 or lap_time < best)
 		if best <= 0.0 or lap_time < best:
 			Settings.put("best_lap", lap_time)
 			hud.show_message("НОВЫЙ РЕКОРД", HudScript.format_time(lap_time), Color(0.45, 1.0, 0.55), 3.5)
@@ -433,7 +513,9 @@ func _update_hud() -> void:
 	hud.pitch = drone.pitch + drone.look_pitch
 	hud.roll = drone.roll
 	hud.throttle = drone.throttle_level
-	hud.mode_text = ("ANGLE · " if drone.mode == Settings.Controls.CASUAL else "EASY · ") + str(DroneScript.TYPES[drone.drone_type]["name"])
+	hud.mode_text = ["EASY", "ANGLE", "ACRO"][drone.mode] + " · " + str(DroneScript.TYPES[drone.drone_type]["name"])
+	hud.players = net.scoreboard()
+	hud.keyboard_hint = not _touch_ui
 	hud.camera_fov = drone.fpv_cam.fov
 	var cam := get_viewport().get_camera_3d()
 	if cam and next_gate < world.gates.size():
@@ -458,9 +540,12 @@ func _smoke_update(delta: float) -> void:
 				print("SMOKE: rocket speed after 3 s = %d km/h" % roundi(drone.velocity.length() * 3.6))
 				_shot("fpv_casual")
 				Settings.put("third_person", true)
+				Settings.put("control_mode", Settings.Controls.ACRO)
 				_smoke_step = 1
 		1:
+			touch.stick_r = Vector2(0.5, 0.2)
 			if t > 5.0:
+				print("SMOKE: acro roll=%.2f pitch=%.2f alt=%d" % [drone.roll, drone.pitch, roundi(drone.altitude())])
 				_shot("chase")
 				Settings.put("third_person", false)
 				Settings.put("control_mode", Settings.Controls.EASY)
@@ -524,3 +609,33 @@ func _shot(label: String) -> void:
 	var parts := ceili(b64.length() / 3000.0)
 	for i in parts:
 		print("SHOT %s %d/%d %s" % [label, i + 1, parts, b64.substr(i * 3000, 3000)])
+
+
+# --- Automated multiplayer check used by CI ------------------------------------
+# One process runs with --net-host-test, another with --net-join-test; both must
+# see each other's drone.
+
+func _start_net_test() -> void:
+	Settings.player_name = "CI-" + _net_test
+	if _net_test == "host":
+		net.host()
+	else:
+		net.join("127.0.0.1")
+	_start_flight()
+
+
+func _net_test_update(delta: float) -> void:
+	_net_test_t += delta
+	if net.pilots.size() > 0:
+		var r: Node = net.pilots.values()[0]
+		if r.get("pilot_name") != "":
+			if _net_seen_t < 0.0:
+				_net_seen_t = _net_test_t
+				print("NET OK: %s sees %s" % [Settings.player_name, r.get("pilot_name")])
+			# Keep sending a while longer so the other side sees us too.
+			if _net_test_t - _net_seen_t > 4.0:
+				get_tree().quit()
+			return
+	if _net_test_t > 60.0:
+		print("NET FAIL: %s saw nobody (%s)" % [Settings.player_name, net.status])
+		get_tree().quit()

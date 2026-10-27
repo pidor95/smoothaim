@@ -5,7 +5,7 @@ signal changed
 
 const PATH := "user://settings.cfg"
 
-enum Controls { EASY, CASUAL }
+enum Controls { EASY, CASUAL, ACRO }
 enum Quality { LOW, MEDIUM, HIGH }
 
 var shadows := true
@@ -18,16 +18,19 @@ var sound := true
 var third_person := false
 var best_lap := 0.0
 var drone_type := 0
+var player_name := "Пилот %d" % (randi() % 900 + 100)
 
 const _KEYS := [
 	"shadows", "bloom", "control_mode", "quality", "camera_tilt",
 	"sensitivity", "sound", "third_person", "best_lap", "drone_type",
+	"player_name",
 ]
 
 
 func _ready() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(PATH) != OK:
+		save() # keeps the generated pilot name
 		return
 	for key: String in _KEYS:
 		if cfg.has_section_key("game", key):

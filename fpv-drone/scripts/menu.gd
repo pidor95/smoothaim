@@ -16,6 +16,13 @@ var _main_box: VBoxContainer
 var _pause_box: VBoxContainer
 var _settings_panel: PanelContainer
 var _drones_panel: PanelContainer
+var _net_panel: PanelContainer
+var _net_status: Label
+var _net_hosts: VBoxContainer
+var _net_leave: Button
+var _net_ip: LineEdit
+## Multiplayer node (scripts/net.gd), set by the game before the menu is added.
+var net: Node
 var _drone_cards: Array[Button] = []
 var _title: Label
 var _tagline: Label
@@ -44,6 +51,7 @@ func show_main() -> void:
 	_pause_box.visible = false
 	_settings_panel.visible = false
 	_drones_panel.visible = false
+	_net_panel.visible = false
 	_title.text = "ДОЛИНА"
 	_tagline.text = "FPV · СИМУЛЯТОР ДРОНА"
 	_refresh()
@@ -56,6 +64,7 @@ func show_pause() -> void:
 	_pause_box.visible = true
 	_settings_panel.visible = false
 	_drones_panel.visible = false
+	_net_panel.visible = false
 	_title.text = "ПАУЗА"
 	_tagline.text = "ДРОН ЗАВИС И ЖДЁТ"
 	_refresh()
@@ -198,6 +207,7 @@ func _build() -> void:
 
 	_main_box = _button_list(column, [
 		["ЛЕТАТЬ", func() -> void: play_pressed.emit()],
+		["МУЛЬТИПЛЕЕР", _toggle_net],
 		["ДРОН", _toggle_drones],
 		["НАСТРОЙКИ", _toggle_settings],
 		["ВЫХОД", func() -> void: get_tree().quit()],
@@ -222,6 +232,7 @@ func _build() -> void:
 
 	_build_settings()
 	_build_drones()
+	_build_net()
 
 
 func _button_list(parent: Control, items: Array) -> VBoxContainer:
@@ -259,7 +270,7 @@ func _build_settings() -> void:
 	_choice(list, "Качество", "quality", ["Низкое", "Среднее", "Высокое"])
 
 	_section(list, "УПРАВЛЕНИЕ")
-	_choice(list, "Схема", "control_mode", ["Лёгкое · стрелки", "Казуальное · стики"])
+	_choice(list, "Схема", "control_mode", ["Лёгкое", "Казуальное", "Акро"])
 	_help = Label.new()
 	_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_help.add_theme_font_size_override("font_size", 19)
@@ -388,6 +399,122 @@ func _build_drones() -> void:
 	list.add_child(note)
 
 
+func _build_net() -> void:
+	_net_panel = _side_panel()
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_net_panel.add_child(scroll)
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_theme_constant_override("separation", 14)
+	scroll.add_child(list)
+	_panel_header(list, "МУЛЬТИПЛЕЕР", _toggle_net)
+
+	var intro := Label.new()
+	intro.text = "Играйте вместе в одной Wi-Fi сети: на телефонах и на ПК. Один создаёт игру, остальные подключаются."
+	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	intro.add_theme_font_size_override("font_size", 18)
+	intro.add_theme_color_override("font_color", Color(1, 1, 1, 0.7))
+	list.add_child(intro)
+
+	var name_label := Label.new()
+	name_label.text = "Имя пилота"
+	list.add_child(name_label)
+	var name_edit := LineEdit.new()
+	name_edit.text = Settings.player_name
+	name_edit.max_length = 20
+	name_edit.custom_minimum_size = Vector2(0, 54)
+	name_edit.text_changed.connect(_on_name_changed)
+	name_edit.focus_exited.connect(Settings.save)
+	list.add_child(name_edit)
+
+	var host := Button.new()
+	host.text = "СОЗДАТЬ ИГРУ"
+	host.custom_minimum_size = Vector2(0, 58)
+	host.pressed.connect(_on_host)
+	list.add_child(host)
+
+	_section(list, "НАЙДЕННЫЕ ИГРЫ")
+	_net_hosts = VBoxContainer.new()
+	_net_hosts.add_theme_constant_override("separation", 8)
+	list.add_child(_net_hosts)
+
+	_section(list, "ПОДКЛЮЧИТЬСЯ ПО АДРЕСУ")
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	list.add_child(row)
+	_net_ip = LineEdit.new()
+	_net_ip.placeholder_text = "192.168.0.5"
+	_net_ip.custom_minimum_size = Vector2(0, 54)
+	_net_ip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(_net_ip)
+	var join := Button.new()
+	join.text = "ВОЙТИ"
+	join.custom_minimum_size = Vector2(130, 54)
+	join.pressed.connect(_on_join_address)
+	row.add_child(join)
+
+	_net_status = Label.new()
+	_net_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_net_status.add_theme_font_override("font", _font("res://fonts/JetBrainsMono.ttf", 600))
+	_net_status.add_theme_font_size_override("font_size", 17)
+	_net_status.add_theme_color_override("font_color", ACCENT)
+	list.add_child(_net_status)
+
+	_net_leave = Button.new()
+	_net_leave.text = "ОТКЛЮЧИТЬСЯ"
+	_net_leave.custom_minimum_size = Vector2(0, 54)
+	_net_leave.pressed.connect(func() -> void: net.leave())
+	list.add_child(_net_leave)
+
+	if net != null:
+		net.status_changed.connect(_refresh_net)
+	_refresh_net()
+
+
+func _on_name_changed(text: String) -> void:
+	if text.strip_edges() != "":
+		Settings.player_name = text.strip_edges()
+
+
+func _on_host() -> void:
+	Settings.save()
+	net.host()
+
+
+func _on_join_address() -> void:
+	_on_join(_net_ip.text)
+
+
+func _on_join(address: String) -> void:
+	Settings.save()
+	net.join(address)
+
+
+func _refresh_net() -> void:
+	if net == null or _net_status == null:
+		return
+	_net_status.text = net.status
+	_net_leave.visible = net.is_online()
+	for child in _net_hosts.get_children():
+		child.queue_free()
+	if net.hosts.is_empty():
+		var none := Label.new()
+		none.text = "Ищу игры в сети…" if not net.is_online() else "Ты уже в игре"
+		none.add_theme_font_size_override("font_size", 18)
+		none.add_theme_color_override("font_color", Color(1, 1, 1, 0.55))
+		_net_hosts.add_child(none)
+		return
+	for ip: String in net.hosts:
+		var info: Dictionary = net.hosts[ip]
+		var b := Button.new()
+		b.text = "%s · игроков %d · %s" % [info["name"], int(info["players"]), ip]
+		b.custom_minimum_size = Vector2(0, 54)
+		b.add_theme_font_size_override("font_size", 19)
+		b.pressed.connect(_on_join.bind(ip))
+		_net_hosts.add_child(b)
+
+
 func _section(parent: Control, text: String) -> void:
 	var l := Label.new()
 	l.text = text
@@ -458,12 +585,22 @@ func _toggle_drones() -> void:
 	_toggle_panel(_drones_panel)
 
 
+func _toggle_net() -> void:
+	_toggle_panel(_net_panel)
+
+
 ## Opens one side panel (closing the other one) or closes it if it is open.
 func _toggle_panel(panel: PanelContainer) -> void:
 	var open := not panel.visible
 	_settings_panel.visible = false
 	_drones_panel.visible = false
+	_net_panel.visible = false
 	panel.visible = open
+	if net != null:
+		if _net_panel.visible:
+			net.start_discovery()
+		else:
+			net.stop_discovery()
 	# On narrow screens the panel would cover the buttons, so hide them meanwhile.
 	var room := size.x - 640.0 > 64.0 + 440.0
 	_main_box.visible = not _paused and (room or not open)
@@ -499,7 +636,9 @@ func _refresh() -> void:
 		var s: HSlider = _sliders[key]
 		s.set_value_no_signal(float(Settings.get(key)))
 		_on_slider(s.value, key)
-	if Settings.control_mode == Settings.Controls.EASY:
+	if Settings.control_mode == Settings.Controls.ACRO:
+		_help.text = "Как настоящий FPV-дрон. Левый стик: газ (остаётся там, где отпустил) и поворот. Правый стик: наклон и крен. Дрон сам не выравнивается, можно делать флипы. Газ сам не держит высоту."
+	elif Settings.control_mode == Settings.Controls.EASY:
 		_help.text = "Слева: вперёд и назад. Справа: вверх и вниз. Поворот: проведи пальцем по экрану. Дрон сам держит высоту."
 	else:
 		_help.text = "Левый стик: вперёд, назад и поворот. Правый стик: вверх и вниз (центр = зависание). Пальцем по экрану тоже можно поворачивать камеру."
