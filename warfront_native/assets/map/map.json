@@ -1,0 +1,8 @@
+{
+ "lat": 51.03,
+ "lon": 36.7,
+ "size": 10400.0,
+ "n": 513,
+ "base_elevation": 182.94720458984375,
+ "credits": "Elevation: AWS Terrain Tiles (SRTM and others). Imagery: Sentinel-2 cloudless 2020 by EOX IT Services GmbH (contains modified Copernicus Sentinel data), CC BY-NC-SA 4.0. Map data: (c) OpenStreetMap contributors, ODbL."
+}

@@ -1,0 +1,37 @@
+[
+ {
+  "size": 24.12152816772461,
+  "tree_height": 23.193777084350586,
+  "crown_width": 19.6947021484375,
+  "base_offset": 0.0,
+  "name": "birch"
+ },
+ {
+  "size": 23.686027374267578,
+  "tree_height": 22.775026321411133,
+  "crown_width": 15.684661865234375,
+  "base_offset": 0.0,
+  "name": "aspen"
+ },
+ {
+  "size": 18.937811889648437,
+  "tree_height": 18.209434509277344,
+  "crown_width": 17.637401580810547,
+  "base_offset": 0.0,
+  "name": "maple"
+ },
+ {
+  "size": 19.66698699951172,
+  "tree_height": 17.44374656677246,
+  "crown_width": 18.910564422607422,
+  "base_offset": 0.0,
+  "name": "oak"
+ },
+ {
+  "size": 38.80456756591797,
+  "tree_height": 37.31208419799805,
+  "crown_width": 33.857608795166016,
+  "base_offset": 0.0,
+  "name": "poplar"
+ }
+]
