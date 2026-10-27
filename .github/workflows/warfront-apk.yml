@@ -4,6 +4,9 @@ on:
     branches: [claude/military-vehicles-pvp-game-wm8y3e]
     paths: ['warfront/**', '.github/workflows/warfront-apk.yml']
   workflow_dispatch:
+concurrency:
+  group: warfront-apk
+  cancel-in-progress: true
 permissions:
   contents: write
 jobs:
@@ -20,16 +23,17 @@ jobs:
           gradle-version: 8.7
       - name: Copy game into APK assets
         run: |
-          mkdir -p warfront/android/app/src/main/assets/lib
+          mkdir -p warfront/android/app/src/main/assets/lib warfront/android/app/src/main/assets/models
           cp warfront/index.html warfront/android/app/src/main/assets/
           cp warfront/lib/*.js warfront/android/app/src/main/assets/lib/
+          cp warfront/models/*.js warfront/android/app/src/main/assets/models/
       - name: Build APK
         run: cd warfront/android && gradle assembleDebug --no-daemon
       - name: Package
         run: |
           mkdir out
           cp warfront/android/app/build/outputs/apk/debug/app-debug.apk out/BoevoyFront.apk
-          cd warfront && zip -r ../out/BoevoyFront-web.zip index.html lib
+          cd warfront && zip -r ../out/BoevoyFront-web.zip index.html lib models
       - uses: actions/upload-artifact@v4
         with:
           name: BoevoyFront
