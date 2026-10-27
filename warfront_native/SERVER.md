@@ -11,7 +11,17 @@
 - Бесплатно навсегда: Oracle Cloud Free Tier — https://www.oracle.com/cloud/free/ (ARM-сервер, нужна карта для регистрации;
   для него качайте сборку `BoevoyFront-Server-ARM.zip`)
 
-## Установка (5 минут)
+## Установка одной командой (можно с телефона)
+
+Откройте консоль сервера (в панели хостинга кнопка «Консоль», или приложение Termius на телефоне) и вставьте:
+
+```bash
+curl -sL https://raw.githubusercontent.com/pidor95/smoothaim/claude/military-vehicles-pvp-game-wm8y3e/warfront_native/server/install.sh | bash
+```
+
+В конце будет написан адрес сервера для игры.
+
+## Установка вручную (5 минут)
 
 Подключитесь к серверу по SSH (`ssh root@IP-сервера`) и выполните:
 
