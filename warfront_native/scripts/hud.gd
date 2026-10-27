@@ -59,6 +59,7 @@ func _layout() -> void:
 		btn["flare"] = {"rect": _circ(Vector2(s.x - 315 * u, s.y - 95 * u), 56 * u), "round": true}
 	btn["zoom"] = {"rect": _circ(Vector2(s.x - 300 * u, s.y - 240 * u), 44 * u), "round": true}
 	btn["pause"] = {"rect": Rect2(s.x - 66 * u, 12 * u, 54 * u, 54 * u), "round": false}
+	btn["view"] = {"rect": Rect2(s.x - 160 * u, 12 * u, 84 * u, 54 * u), "round": false}
 	if game.player and game.player.T.get("maneuver", false):
 		var names := ["man", "cobra", "kulbit", "flat"]
 		for i in names.size():
@@ -180,6 +181,9 @@ func _press(i: int, p: Vector2) -> void:
 		match k:
 			"pause":
 				pause_pressed.emit()
+				role = "none"
+			"view":
+				game.toggle_view()
 				role = "none"
 			"zoom":
 				c["zoom"] = not c["zoom"]
@@ -370,6 +374,7 @@ func _draw() -> void:
 		y += 20.0
 	_radar(Rect2(s.x - 188 * u, 76 * u, 170 * u, 170 * u))
 	_button("pause", "II")
+	_button("view", "1 ЛИЦО" if not game.fp else "3 ЛИЦО")
 	# warnings
 	var warns: Array = []
 	if game.flash_t > 0.0:

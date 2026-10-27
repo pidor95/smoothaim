@@ -316,7 +316,12 @@ func _pose(dt: float, snap: bool) -> void:
 		a = (f * 0.7 - UP * 0.5 + right * 0.3).normalized()
 	var wb := Basis.looking_at(a, UP)
 	var grip: Vector3
-	if w == "stinger":
+	var ads: bool = is_player and game.fp and game.ctrl["zoom"] and not sprinting and reload_t <= 0.0
+	if ads:
+		# first-person aiming: bring the sights up to the eye
+		var eye_p: Vector3 = jp[NECK].lerp(jp[HEAD], 0.6) + game.cam_fwd * 0.1
+		grip = eye_p + a * (0.42 if w == "stinger" else 0.3) - wb.y * (0.17 if w == "stinger" else 0.062) - wb.x * (0.05 if w == "stinger" else 0.0)
+	elif w == "stinger":
 		grip = jp[SR] + a * 0.3 - wb.y * 0.16 + wb.x * 0.02
 	else:
 		grip = jp[SR] + a * (0.24 - recoil_kick * 0.06) - wb.y * 0.07 - wb.x * 0.03
@@ -342,8 +347,12 @@ func _render() -> void:
 	var up := jp[NECK] - jp[PELVIS]
 	var right := jp[SR] - jp[SL]
 	var fwd := up.cross(right).normalized()
+	# in first person our own head would fill the screen: keep only its shadow
+	var hide_head: bool = is_player and game.fp and not dead
 	for prt in parts:
 		var mi: MeshInstance3D = prt[0]
+		if prt[2] == HEAD and prt[1] == NECK:
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY if hide_head else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		var a: int = prt[1]
 		var b: int = prt[2]
 		var y: Vector3

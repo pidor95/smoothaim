@@ -15,7 +15,7 @@ var hud: Control
 var ui: Control
 var loading: Label
 var post: ColorRect
-var settings := {"bp": 2, "bh": 2, "bt": 3, "bi": 6, "ba": 3, "vol": 0.8, "diff": 1, "shoot": true, "ammo": false, "sens": 6.0, "vehicle": "su57", "gfx": "high", "nick": "", "ip": "", "servers": []}
+var settings := {"bp": 2, "bh": 2, "bt": 3, "bi": 6, "ba": 3, "vol": 0.8, "diff": 1, "shoot": true, "ammo": false, "sens": 6.0, "vehicle": "su57", "gfx": "high", "nick": "", "ip": "", "servers": [], "fp": false}
 
 
 func _ready() -> void:
@@ -367,9 +367,14 @@ func _play_test(args: PackedStringArray) -> void:
 			game.ctrl["move"] = Vector2(0, 0.3)
 	var frames := int(_arg(args, "frames", "240"))
 	var every := int(_arg(args, "every", "60"))
+	if args.has("fp"):
+		game.fp = true
 	var t0 := Time.get_ticks_msec()
 	for i in frames:
 		game.ctrl["fire"] = (i / 30) % 3 == 0
+		if args.has("fp") and vt == "soldier":
+			game.ctrl["zoom"] = i >= frames / 2
+			game.ctrl["fire"] = false
 		if i % 60 == 40:
 			game.ctrl["fire_pressed"] = true
 			if p.cat != "plane":
