@@ -1,0 +1,44 @@
+name: warfront-apk
+on:
+  push:
+    branches: [claude/military-vehicles-pvp-game-wm8y3e]
+    paths: ['warfront/**', '.github/workflows/warfront-apk.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+      - name: Copy game into APK assets
+        run: |
+          mkdir -p warfront/android/app/src/main/assets/lib
+          cp warfront/index.html warfront/android/app/src/main/assets/
+          cp warfront/lib/*.js warfront/android/app/src/main/assets/lib/
+      - name: Build APK
+        run: cd warfront/android && gradle assembleDebug --no-daemon
+      - name: Package
+        run: |
+          mkdir out
+          cp warfront/android/app/build/outputs/apk/debug/app-debug.apk out/BoevoyFront.apk
+          cd warfront && zip -r ../out/BoevoyFront-web.zip index.html lib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BoevoyFront
+          path: out/*
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete warfront-latest -y --cleanup-tag || true
+          gh release create warfront-latest out/BoevoyFront.apk out/BoevoyFront-web.zip \
+            --target "$GITHUB_SHA" --title "Боевой Фронт: последняя сборка" \
+            --notes "BoevoyFront.apk: игра для Android (разрешите установку из неизвестных источников). BoevoyFront-web.zip: версия для браузера, распакуйте и откройте index.html."
