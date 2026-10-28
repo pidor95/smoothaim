@@ -10,6 +10,7 @@ permissions:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       GODOT_VERSION: 4.5.1
     steps:
@@ -47,7 +48,8 @@ jobs:
           GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD: android
         run: |
           mkdir -p build
-          ../godot --headless --import
+          # headless import occasionally hangs on exit; the export re-scans anyway
+          timeout 300 ../godot --headless --import || true
           ../godot --headless --export-release "Android" build/PhysicsBox.apk
           test -f build/PhysicsBox.apk
       - uses: actions/upload-artifact@v4
