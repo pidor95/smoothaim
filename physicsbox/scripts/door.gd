@@ -93,5 +93,5 @@ func shatter(pos: Vector3, dir: Vector3) -> void:
 		b.angular_velocity = Vector3(randf_range(-6, 6), randf_range(-6, 6), randf_range(-6, 6))
 	for i in 5:
 		Blood.dust(pos + Vector3(randf_range(-0.3, 0.3), randf_range(-0.6, 0.6), 0), dir, Color(0.75, 0.6, 0.4))
-	Sfx.play_3d("wood_hit", pos, 4.0, 0.2)
+	Sfx.play_3d("wood_break", pos, 2.0, 0.1)
 	queue_free()

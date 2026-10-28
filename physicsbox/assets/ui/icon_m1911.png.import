@@ -2,22 +2,20 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bpjyt0be2anck"
-path.s3tc="res://.godot/imported/splat_4.png-7d996cafab573040344553b580f9bc24.s3tc.ctex"
-path.etc2="res://.godot/imported/splat_4.png-7d996cafab573040344553b580f9bc24.etc2.ctex"
+uid="uid://bqu40mf70n74o"
+path="res://.godot/imported/icon_m1911.png-e994830ac6288e16a0f0fc952bc6bd1b.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc", "etc2_astc"],
-"vram_texture": true
+"vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/textures/splat_4.png"
-dest_files=["res://.godot/imported/splat_4.png-7d996cafab573040344553b580f9bc24.s3tc.ctex", "res://.godot/imported/splat_4.png-7d996cafab573040344553b580f9bc24.etc2.ctex"]
+source_file="res://assets/ui/icon_m1911.png"
+dest_files=["res://.godot/imported/icon_m1911.png-e994830ac6288e16a0f0fc952bc6bd1b.ctex"]
 
 [params]
 
-compress/mode=2
+compress/mode=0
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -25,7 +23,7 @@ compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=true
+mipmaps/generate=false
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""

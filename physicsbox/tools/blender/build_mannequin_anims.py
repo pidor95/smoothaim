@@ -313,6 +313,30 @@ def staggers(arm):
     ], mirror_to="spin_r")
 
 
+def clutches(arm):
+    """Single poses: a hand (or both) pressed on the wound. The game blends
+    them in after a hit (over whatever else he is doing) and lets go later."""
+    # arm angles solved so the hand lands on the wound (FK search, see git history)
+    poses = {
+        "clutch_chest_l": ({"chest": (-10, 0, 0), "head": (-12, 0, 0), "uarm_r": (20, 45, -30), "farm_r": (90, 0, 0)}, (0, 0, 0)),
+        "clutch_belly": ({"chest": (-25, 0, 0), "head": (-15, 0, 0), "uarm_l": (0, -30, 10), "farm_l": (80, 0, 0),
+                          "uarm_r": (0, 30, -10), "farm_r": (80, 0, 0), "thigh_l": (12, 0, 0), "thigh_r": (12, 0, 0),
+                          "shin_l": (-18, 0, 0), "shin_r": (-18, 0, 0)}, (0, -0.04, 0)),
+        "clutch_arm_l": ({"chest": (-6, 18, 0), "head": (-10, 15, 0), "uarm_r": (20, 15, -60), "farm_r": (40, 0, 0),
+                          "uarm_l": (6, 0, -4), "farm_l": (8, 0, 0)}, (0, 0, 0)),
+        "clutch_thigh_l": ({"chest": (-35, 0, 8), "head": (-10, 0, 0), "uarm_l": (10, 45, 30), "farm_l": (2, 0, 0),
+                            "uarm_r": (10, 0, 30), "thigh_l": (20, 0, 0), "shin_l": (-25, 0, 0), "thigh_r": (5, 0, 0)},
+                           (0, -0.07, 0)),
+        "clutch_neck": ({"chest": (-5, 0, 0), "head": (10, 0, 0), "uarm_l": (40, -60, 30), "farm_l": (130, 0, 0),
+                         "uarm_r": (40, 60, -30), "farm_r": (130, 0, 0)}, (0, 0, 0)),
+        "clutch_head": ({"chest": (-10, 0, 0), "head": (-20, 0, 0), "uarm_l": (70, -45, 30), "farm_l": (110, 0, 0),
+                         "uarm_r": (70, 45, -30), "farm_r": (110, 0, 0)}, (0, 0, 0)),
+    }
+    mirrored = {"clutch_chest_l": "clutch_chest_r", "clutch_arm_l": "clutch_arm_r", "clutch_thigh_l": "clutch_thigh_r"}
+    for name, (rots, loc) in poses.items():
+        reaction(arm, name, [(0, rots, loc), (1, rots, loc)], mirror_to=mirrored.get(name))
+
+
 # ---------------------------------------------------------------- get up
 
 def getups(arm):
@@ -355,6 +379,7 @@ def main():
     cycle(arm, "walk", 30, stride=30, knee=50, arm_swing=24, lean=2, bob=0.035)
     cycle(arm, "panic_run", 20, stride=42, knee=85, arm_swing=0, lean=12, bob=0.05, arms_up=1.0)
     staggers(arm)
+    clutches(arm)
     getups(arm)
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     bpy.ops.export_scene.gltf(filepath=OUT, export_format="GLB", export_yup=True, export_animations=True,

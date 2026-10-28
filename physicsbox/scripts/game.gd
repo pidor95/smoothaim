@@ -20,6 +20,10 @@ var _pause_panel: Control
 var _slowmo_button: Button
 var _auto_button: Button
 var _ai_button: Button
+var _weapon_layer := CanvasLayer.new()
+var _weapon_panel: Control
+var _weapon_cards: Array = [] # [button, slot index]
+var weapon_menu_open := false
 
 
 func _ready() -> void:
@@ -30,7 +34,7 @@ func _ready() -> void:
 	AudioServer.playback_speed_scale = 1.0
 	_build_environment()
 
-	house = House.new()
+	house = ShopLevel.new() if Settings.level == "shop" else House.new()
 	add_child(house)
 
 	player = Player.new()
@@ -44,6 +48,7 @@ func _ready() -> void:
 	hud.game = self
 	hud_layer.add_child(hud)
 	_build_pause_menu()
+	_build_weapon_menu()
 	player.capture_mouse()
 
 	# let the navigation map sync before NPCs start pathing
@@ -181,6 +186,8 @@ func _process(_delta: float) -> void:
 			toggle_slowmo()
 		if Input.is_action_just_pressed("toggle_ai"):
 			toggle_ai()
+		if Input.is_action_just_pressed("weapon_menu"):
+			toggle_weapon_menu()
 
 
 ## AI on/off: with AI off mannequins stand still (they still react to hits).
@@ -206,12 +213,21 @@ class PauseWatcher extends Node:
 
 	func _unhandled_input(event: InputEvent) -> void:
 		if event.is_action_pressed("pause"):
-			game.toggle_pause()
+			_back()
 			get_viewport().set_input_as_handled()
+		elif event.is_action_pressed("weapon_menu") and game.weapon_menu_open:
+			game.toggle_weapon_menu()
+			get_viewport().set_input_as_handled()
+
+	func _back() -> void:
+		if game.weapon_menu_open:
+			game.toggle_weapon_menu()
+		else:
+			game.toggle_pause()
 
 	func _notification(what: int) -> void:
 		if what == NOTIFICATION_WM_GO_BACK_REQUEST:
-			game.toggle_pause()
+			_back()
 		elif what == NOTIFICATION_APPLICATION_FOCUS_OUT and game.player and game.player.touch_mode and not get_tree().paused:
 			game.toggle_pause()
 
@@ -259,6 +275,9 @@ func _build_pause_menu() -> void:
 	cols.add_child(left)
 	left.add_child(UiKit.label("ПАУЗА", 44, Color(1, 0.2, 0.2)))
 	left.add_child(UiKit.button("Продолжить", toggle_pause))
+	left.add_child(UiKit.button("Оружие", func():
+		toggle_pause()
+		toggle_weapon_menu()))
 	left.add_child(UiKit.button("+1 манекен", func(): spawn_in_front()))
 	left.add_child(UiKit.button("+5 манекенов", func():
 		for i in 5:
@@ -275,7 +294,7 @@ func _build_pause_menu() -> void:
 	left.add_child(UiKit.button("Главное меню", _to_menu))
 	for b in left.get_children():
 		if b is Button:
-			b.custom_minimum_size.y = 50
+			b.custom_minimum_size.y = 44
 
 	var right := VBoxContainer.new()
 	right.custom_minimum_size.x = 560
@@ -283,6 +302,80 @@ func _build_pause_menu() -> void:
 	cols.add_child(right)
 	right.add_child(UiKit.label("НАСТРОЙКИ", 34))
 	right.add_child(UiKit.settings_box())
+	root.visible = false
+
+
+# ------------------------------------------------------------------ weapon menu
+
+func toggle_weapon_menu() -> void:
+	weapon_menu_open = not weapon_menu_open
+	get_tree().paused = weapon_menu_open
+	_weapon_panel.visible = weapon_menu_open
+	hud.reset_touches()
+	if weapon_menu_open:
+		_refresh_weapon_cards()
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	else:
+		player.capture_mouse()
+
+
+func _refresh_weapon_cards() -> void:
+	for c in _weapon_cards:
+		var b: Button = c[0]
+		var held: bool = player.weapon.slots[c[1]] == player.weapon.current
+		b.text = "В РУКАХ" if held else "ВЗЯТЬ"
+		b.disabled = held
+
+
+func _build_weapon_menu() -> void:
+	_weapon_layer.layer = 11
+	_weapon_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_weapon_layer)
+	var root := Control.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.theme = UiKit.make_theme()
+	_weapon_layer.add_child(root)
+	_weapon_panel = root
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.6)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.add_child(center)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 16)
+	center.add_child(col)
+	col.add_child(UiKit.label("ОРУЖИЕ", 44, Color(1, 0.2, 0.2)))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 24)
+	col.add_child(row)
+	for i in player.weapon.slots.size():
+		var d: Dictionary = player.weapon.slots[i].def
+		var card := PanelContainer.new()
+		row.add_child(card)
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 6)
+		card.add_child(v)
+		var icon := TextureRect.new()
+		icon.texture = load("res://assets/ui/icon_%s.png" % d.id)
+		icon.custom_minimum_size = Vector2(380, 190)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		v.add_child(icon)
+		v.add_child(UiKit.label(d.title, 34, Color(1, 1, 1)))
+		v.add_child(UiKit.label(d.desc, 20, Color(0.75, 0.75, 0.75)))
+		for line in d.stats:
+			v.add_child(UiKit.label(line, 22, Color(0.9, 0.85, 0.7)))
+		var idx := i
+		var b := UiKit.button("ВЗЯТЬ", func():
+			player.weapon.select(idx)
+			toggle_weapon_menu(), 380)
+		v.add_child(b)
+		_weapon_cards.append([b, i])
+	var close := UiKit.button("ЗАКРЫТЬ", toggle_weapon_menu, 300)
+	close.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	col.add_child(close)
 	root.visible = false
 
 

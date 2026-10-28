@@ -184,14 +184,13 @@ func _build_ui() -> void:
 	_play_box.add_theme_constant_override("separation", 12)
 	col.add_child(_play_box)
 	_play_box.add_child(UiKit.label("ВЫБОР ЛОКАЦИИ", 34, Color(1, 0.25, 0.2)))
-	var house_btn := UiKit.button("ДОМ   ·   M1911 + M500", _start_house, 480)
-	house_btn.custom_minimum_size.y = 84
-	house_btn.add_theme_font_size_override("font_size", 36)
-	_play_box.add_child(house_btn)
-	_play_box.add_child(UiKit.label("Пять комнат, двор и крыша. Двери, окна и мебель — на физике.", 22, Color(0.7, 0.7, 0.7)))
-	var soon := UiKit.button("СКОРО: НОВЫЕ ЛОКАЦИИ И ОРУЖИЕ", func(): pass, 480)
-	soon.disabled = true
-	_play_box.add_child(soon)
+	for loc in [["ДОМ", "house", "Пять комнат, двор и крыша. Двери, окна и мебель — на физике."],
+			["МАГАЗИН", "shop", "Супермаркет: ряды полок с товарами, кассы, холодильники, тележки, склад."]]:
+		var b := UiKit.button(loc[0], _start_level.bind(loc[1]), 480)
+		b.custom_minimum_size.y = 74
+		b.add_theme_font_size_override("font_size", 36)
+		_play_box.add_child(b)
+		_play_box.add_child(UiKit.label(loc[2], 20, Color(0.7, 0.7, 0.7)))
 	_play_box.add_child(UiKit.button("НАЗАД", func(): _show(_main_box)))
 
 	_settings_box = VBoxContainer.new()
@@ -222,7 +221,8 @@ func _show(box: Control) -> void:
 		b.visible = b == box
 
 
-func _start_house() -> void:
+func _start_level(level: String) -> void:
+	Settings.level = level
 	_main_box.get_parent().visible = false
 	_loading.visible = true
 	await get_tree().process_frame

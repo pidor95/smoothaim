@@ -183,11 +183,7 @@ def save_rgb(name, rgb):
 
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
-    for i in range(6):
-        a = splat(128, streak=i >= 3)
-        save_rgba(f"splat_{i}", blood_rgb(128, a), a)
-    a = pool(128)
-    save_rgba("pool", blood_rgb(128, a), a)
+    # blood splats now come from tools/blender/build_blood_atlas.py
     rgb, a = bullet_hole(64)
     save_rgba("bullet_hole", rgb, a)
     rgb, a = muzzle_flash(128)

@@ -2,10 +2,20 @@ extends Node
 ## Blood / impact effects manager (autoload "Blood").
 ## Simulates flying droplets, leaves splats where they land, spawns wounds,
 ## pools, mist bursts, dust and bullet holes.
+## Marks on the static world go into big MultiMeshes (one draw call each) so
+## blood stays for the whole round; marks on moving bodies are separate nodes.
 
 const MAX_DROPS := 420
-const MAX_SPLATS := 200
-const MAX_HOLES := 60
+const MAX_WORLD_SPLATS := 6000
+const MAX_BODY_SPLATS := 300
+const MAX_WORLD_HOLES := 2000
+const MAX_BODY_HOLES := 120
+# atlas cells (tools/blender/build_blood_atlas.py)
+const CELL_DROPS := [0, 1]
+const CELL_SPLASH := [2, 3]
+const CELL_SPRAY := 4
+const CELL_SMEAR := 5
+const CELL_POOLS := [6, 7]
 const DROP_MASK := 1 | 2
 const GRAVITY := Vector3(0.0, -9.8, 0.0)
 const DROP_LIFETIME := 3.5
@@ -21,17 +31,18 @@ var _mm_node: MultiMeshInstance3D
 var _ray := PhysicsRayQueryParameters3D.new()
 
 var _quad := QuadMesh.new()
-var _splat_mats: Array[StandardMaterial3D] = []
-var _wound_mat: StandardMaterial3D
-var _pool_mat: StandardMaterial3D
+var _world_mat := ShaderMaterial.new()
+var _body_mat := ShaderMaterial.new()
 var _hole_mat: StandardMaterial3D
+var _splat_mm := MultiMesh.new()
+var _splat_n := 0
+var _hole_mm := MultiMesh.new()
+var _hole_n := 0
 var _puff_mesh := SphereMesh.new()
 var _shrink_curve := Curve.new()
 
-var _splats: Array = []
-var _splat_i := 0
-var _holes: Array = []
-var _hole_i := 0
+var _body_splats: Array = []
+var _body_holes: Array = []
 
 
 func _ready() -> void:
@@ -63,13 +74,27 @@ func _ready() -> void:
 	add_child(_mm_node)
 
 	_quad.size = Vector2.ONE
-	for i in 6:
-		_splat_mats.append(_decal_material("res://assets/textures/splat_%d.png" % i, Color(1, 1, 1)))
-	_wound_mat = _decal_material("res://assets/textures/splat_0.png", Color(0.6, 0.6, 0.6))
-	_pool_mat = _decal_material("res://assets/textures/pool.png", Color(0.9, 0.9, 0.9))
-	_pool_mat.roughness = 0.05
-	_hole_mat = _decal_material("res://assets/textures/bullet_hole.png", Color(1, 1, 1))
+	var atlas := load("res://assets/textures/blood_atlas.png")
+	_world_mat.shader = load("res://assets/shaders/blood_decal_mm.gdshader")
+	_world_mat.set_shader_parameter("atlas", atlas)
+	_body_mat.shader = load("res://assets/shaders/blood_decal_node.gdshader")
+	_body_mat.set_shader_parameter("atlas", atlas)
+	_hole_mat = StandardMaterial3D.new()
+	_hole_mat.albedo_texture = load("res://assets/textures/bullet_hole.png")
+	_hole_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_hole_mat.roughness = 0.9
+	_hole_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	_splat_mm.transform_format = MultiMesh.TRANSFORM_3D
+	_splat_mm.use_custom_data = true
+	_splat_mm.mesh = _quad
+	_splat_mm.instance_count = MAX_WORLD_SPLATS
+	_splat_mm.visible_instance_count = 0
+	_add_mm_node(_splat_mm, _world_mat)
+	_hole_mm.transform_format = MultiMesh.TRANSFORM_3D
+	_hole_mm.mesh = _quad
+	_hole_mm.instance_count = MAX_WORLD_HOLES
+	_hole_mm.visible_instance_count = 0
+	_add_mm_node(_hole_mm, _hole_mat)
 
 	# burst particles are tiny low-poly droplets/chips that shrink away
 	_puff_mesh.radius = 0.5
@@ -85,28 +110,38 @@ func _ready() -> void:
 	_shrink_curve.add_point(Vector2(1, 0.0))
 
 
-func _decal_material(path: String, tint: Color) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_texture = load(path)
-	m.albedo_color = tint
-	# alpha blending: alpha scissor rendered decals black on some Vulkan drivers
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.roughness = 0.18
-	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-	return m
+func _add_mm_node(mm: MultiMesh, mat: Material) -> void:
+	var node := MultiMeshInstance3D.new()
+	node.multimesh = mm
+	node.material_override = mat
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	node.custom_aabb = AABB(Vector3(-1000, -1000, -1000), Vector3(2000, 2000, 2000))
+	add_child(node)
 
 
-## Removes every effect (called when leaving a level).
+func _now() -> float:
+	return Time.get_ticks_msec() / 1000.0
+
+
+func _process(_delta: float) -> void:
+	var t := _now()
+	_world_mat.set_shader_parameter("now", t)
+	_body_mat.set_shader_parameter("now", t)
+
+
+## Removes every effect (new round / "clear bodies and blood").
 func clear() -> void:
 	_count = 0
 	_mm.visible_instance_count = 0
-	for n in _splats + _holes:
+	_splat_n = 0
+	_splat_mm.visible_instance_count = 0
+	_hole_n = 0
+	_hole_mm.visible_instance_count = 0
+	for n in _body_splats + _body_holes:
 		if is_instance_valid(n):
 			n.queue_free()
-	_splats.clear()
-	_holes.clear()
-	_splat_i = 0
-	_hole_i = 0
+	_body_splats.clear()
+	_body_holes.clear()
 
 
 func _scene_root() -> Node:
@@ -161,7 +196,7 @@ func _physics_process(delta: float) -> void:
 			if not hit.is_empty():
 				var s := _size[i] * randf_range(14.0, 24.0)
 				var parent: Node3D = hit.collider if hit.collider is RigidBody3D else null
-				splat(hit.position, hit.normal, s, parent)
+				splat(hit.position, hit.normal, s, parent, _vel[i])
 			_count -= 1
 			_pos[i] = _pos[_count]
 			_vel[i] = _vel[_count]
@@ -185,78 +220,102 @@ func _physics_process(delta: float) -> void:
 
 # ---------------------------------------------------------------- surface marks
 
-func _surface_basis(normal: Vector3, size: float) -> Basis:
-	var up := Vector3.UP if absf(normal.y) < 0.95 else Vector3.FORWARD
-	var b := Basis.looking_at(-normal, up)
-	b = b * Basis(Vector3(0, 0, 1), randf() * TAU)
-	return b * Basis.from_scale(Vector3(size, size, 1.0))
+## Basis for a quad lying on a surface; its +X follows `along` when given.
+func _surface_basis(normal: Vector3, size: float, along := Vector3.ZERO, spin := 0.0) -> Basis:
+	var x := along - normal * along.dot(normal)
+	if x.length() < 0.05:
+		var up := Vector3.UP if absf(normal.y) < 0.95 else Vector3.FORWARD
+		x = up.cross(normal).rotated(normal, randf() * TAU)
+	x = x.normalized().rotated(normal, spin)
+	var y := normal.cross(x).normalized()
+	return Basis(x * size, y * size, normal)
 
 
-func _place(node: MeshInstance3D, pos: Vector3, normal: Vector3, size: float, parent: Node3D) -> void:
-	var root := _scene_root()
-	if root == null:
-		node.free()
-		return
-	if parent != null and is_instance_valid(parent):
-		parent.add_child(node)
-	else:
-		root.add_child(node)
-	node.global_transform = Transform3D(_surface_basis(normal, size), pos + normal * randf_range(0.003, 0.009))
+func _mark_xform(pos: Vector3, normal: Vector3, size: float, along := Vector3.ZERO, spin := 0.0) -> Transform3D:
+	return Transform3D(_surface_basis(normal, size, along, spin), pos + normal * randf_range(0.003, 0.009))
 
 
-func _push_splat(node: MeshInstance3D) -> void:
-	if _splats.size() < MAX_SPLATS:
-		_splats.append(node)
-	else:
-		var old = _splats[_splat_i]
-		if is_instance_valid(old):
-			old.queue_free()
-		_splats[_splat_i] = node
-		_splat_i = (_splat_i + 1) % MAX_SPLATS
+func _add_world(xform: Transform3D, cell: int, tint: float, grow := 0.0) -> void:
+	var i := _splat_n % MAX_WORLD_SPLATS
+	_splat_mm.set_instance_transform(i, xform)
+	_splat_mm.set_instance_custom_data(i, Color(cell, _now(), tint, grow))
+	_splat_n += 1
+	_splat_mm.visible_instance_count = mini(_splat_n, MAX_WORLD_SPLATS)
 
 
-func _new_quad(mat: Material) -> MeshInstance3D:
+func _add_body(parent: Node3D, xform: Transform3D, cell: int, tint: float) -> void:
 	var m := MeshInstance3D.new()
 	m.mesh = _quad
-	m.material_override = mat
+	m.material_override = _body_mat
 	m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	return m
+	parent.add_child(m)
+	m.global_transform = xform
+	m.set_instance_shader_parameter("decal", Vector4(cell, _now(), tint, 0.0))
+	_body_splats.append(m)
+	while _body_splats.size() > MAX_BODY_SPLATS:
+		var old = _body_splats.pop_front()
+		if is_instance_valid(old):
+			old.queue_free()
 
 
-## Flat blood mark on a surface.
-func splat(pos: Vector3, normal: Vector3, size: float, parent: Node3D = null) -> void:
-	var m := _new_quad(_splat_mats[randi() % _splat_mats.size()])
-	_place(m, pos, normal, size, parent)
-	_push_splat(m)
+## Blood mark where a drop landed. The shape follows how it hit: slow drops
+## leave round crowns, fast slanted ones splash along their travel, specks
+## become fine spray.
+func splat(pos: Vector3, normal: Vector3, size: float, parent: Node3D = null, vel := Vector3.ZERO) -> void:
+	var cell: int = CELL_DROPS[randi() % 2]
+	var along := Vector3.ZERO
+	var spin := 0.0
+	var tangential := vel - normal * vel.dot(normal)
+	if size < 0.2 and randf() < 0.35:
+		cell = CELL_SPRAY
+	elif tangential.length() > 1.6:
+		cell = CELL_SPLASH[randi() % 2]
+		along = tangential
+		spin = -0.5 if cell == 3 else 0.0
+		size *= 1.35
+	var xform := _mark_xform(pos, normal, size * 1.15, along, spin)
+	var tint := randf_range(0.8, 1.15)
+	if parent != null and is_instance_valid(parent):
+		_add_body(parent, xform, cell, tint)
+	else:
+		_add_world(xform, cell, tint)
 
 
 ## Wound mark glued to a body part.
 func wound(part: Node3D, pos: Vector3, normal: Vector3) -> void:
-	var m := _new_quad(_wound_mat)
-	_place(m, pos, normal, randf_range(0.07, 0.12), part)
-	_push_splat(m)
+	_add_body(part, _mark_xform(pos, normal, randf_range(0.08, 0.12)), CELL_DROPS[randi() % 2], 0.7)
 
 
-## Growing pool under a body. Returns the node so the caller can grow it.
-func pool(pos: Vector3, normal: Vector3) -> MeshInstance3D:
-	var m := _new_quad(_pool_mat)
-	_place(m, pos, normal, 1.0, null)
-	m.global_position = pos + normal * 0.004
-	_push_splat(m)
-	return m
+## Pool spreading under a body over `grow` seconds (stays for the round).
+func pool(pos: Vector3, normal: Vector3, size: float, grow := 10.0) -> void:
+	var xform := _mark_xform(pos, normal, size)
+	xform.origin = pos + normal * 0.004
+	_add_world(xform, CELL_POOLS[randi() % 2], randf_range(0.8, 1.0), grow)
+
+
+## Smear left when something bloody slides along a surface.
+func smear(pos: Vector3, normal: Vector3, along: Vector3, size: float) -> void:
+	_add_world(_mark_xform(pos, normal, size, along), CELL_SMEAR, 0.9)
 
 
 func bullet_hole(pos: Vector3, normal: Vector3, parent: Node3D = null) -> void:
-	var m := _new_quad(_hole_mat)
-	_place(m, pos, normal, randf_range(0.05, 0.07), parent)
-	if _holes.size() < MAX_HOLES:
-		_holes.append(m)
-	else:
-		var old = _holes[_hole_i]
-		if is_instance_valid(old):
-			old.queue_free()
-		_holes[_hole_i] = m
-		_hole_i = (_hole_i + 1) % MAX_HOLES
+	var xform := _mark_xform(pos, normal, randf_range(0.05, 0.07))
+	if parent != null and is_instance_valid(parent) and not parent is StaticBody3D:
+		var m := MeshInstance3D.new()
+		m.mesh = _quad
+		m.material_override = _hole_mat
+		m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		parent.add_child(m)
+		m.global_transform = xform
+		_body_holes.append(m)
+		while _body_holes.size() > MAX_BODY_HOLES:
+			var old = _body_holes.pop_front()
+			if is_instance_valid(old):
+				old.queue_free()
+		return
+	_hole_mm.set_instance_transform(_hole_n % MAX_WORLD_HOLES, xform)
+	_hole_n += 1
+	_hole_mm.visible_instance_count = mini(_hole_n, MAX_WORLD_HOLES)
 
 
 # ---------------------------------------------------------------- particle bursts

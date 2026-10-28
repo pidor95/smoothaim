@@ -108,6 +108,11 @@ var _getup: MannequinAnims.Clip
 var _getup_t := 0.0
 var _blend_from: Array[Transform3D] = []
 var _blend_w := 1.0
+var _clutch: MannequinAnims.Clip # hand pressed on the latest wound
+var _clutch_mask := PackedFloat32Array()
+var _clutch_w := 0.0
+var _clutch_delay := 0.0
+var _clutch_hold := 0.0
 var _stagger: MannequinAnims.Clip
 var _stagger_t := 0.0
 var _stagger_prev := Vector3.ZERO
@@ -116,7 +121,6 @@ var _fall_args: Array = []
 var _wounds: Array = []
 var _bleed_left := 0.0
 var _bleed_cd := 0.0
-var _pool: MeshInstance3D
 var _pool_done := false
 var _dead_time := 0.0
 var _guts_spilled := false
@@ -349,6 +353,12 @@ func _compute_pose() -> Array[Transform3D]:
 				q = q.slerp(L.rot(_c_panic, i, _t_panic), _w_panic)
 				if i == 0:
 					p = p.lerp(L.pelvis_pos(_c_panic, _t_panic), _w_panic)
+		# hand on the wound: overrides the bones that pose touches
+		if _clutch_w > 0.001 and _clutch_mask[i] > 0.0:
+			var cw := _clutch_w * _clutch_mask[i]
+			q = q.slerp(L.rot(_clutch, i, 0.0), cw)
+			if i == 0:
+				p.y += (L.pelvis_pos(_clutch, 0.0).y - L.rest_local[0].origin.y) * cw
 		# hit reactions, additive relative to the rest pose
 		for r in _reacts:
 			var d: Quaternion = L.rest_rot[i].inverse() * L.rot(r.clip, i, r.t)
@@ -396,6 +406,7 @@ func _update_layers(delta: float, hspeed: float) -> void:
 		_spring_vel[i] += (-_spring[i] * 140.0 - _spring_vel[i] * 13.0) * delta
 		_spring[i] += _spring_vel[i] * delta
 	balance = minf(balance + delta * 0.3, 1.0)
+	_update_clutch(delta)
 
 
 # ------------------------------------------------------------------ AI
@@ -613,9 +624,76 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 	elif frame != _hit_frame and not falling_on_knee:
 		_start_stagger(_pick_stagger(part_name, dir), false, part, pos, dir, impulse)
 	_hit_frame = frame
+	_start_clutch(_clutch_for(part_name, local))
 	if not display_only:
 		alert(pos - dir)
 	return 0
+
+
+func _clutch_for(part_name: String, local: Vector3) -> String:
+	match part_name:
+		"head":
+			return "clutch_neck" if local.y < -0.065 else "clutch_head"
+		"chest":
+			return "clutch_chest_l" if local.x < 0.0 else "clutch_chest_r"
+		"pelvis":
+			return "clutch_belly"
+		"uarm_l", "farm_l":
+			return "clutch_arm_l"
+		"uarm_r", "farm_r":
+			return "clutch_arm_r"
+		"thigh_l", "shin_l":
+			return "clutch_thigh_l"
+	return "clutch_thigh_r"
+
+
+## After the first jolt a hand goes to the wound, presses it for a while,
+## then lets go.
+func _start_clutch(clip_name: String) -> void:
+	var c := _lib.clip(clip_name)
+	if c != _clutch:
+		_clutch_w = minf(_clutch_w, 0.3)
+		_clutch = c
+		_clutch_mask = _mask_of(c)
+	_clutch_delay = 0.22
+	_clutch_hold = randf_range(1.8, 3.2)
+
+
+static var _masks := {}
+
+
+## Which bones a pose actually moves (chest / head / legs only partly).
+func _mask_of(c: MannequinAnims.Clip) -> PackedFloat32Array:
+	if _masks.has(c):
+		return _masks[c]
+	var m := PackedFloat32Array()
+	m.resize(CENTERS.size())
+	for i in CENTERS.size():
+		var moved := _lib.rot(c, i, 0.0).angle_to(_lib.rest_rot[i]) > 0.03
+		if i == 0:
+			moved = moved or absf(_lib.pelvis_pos(c, 0.0).y - _lib.rest_local[0].origin.y) > 0.005
+		var weight := 1.0
+		if i <= 2:
+			weight = 0.8
+		elif i >= 7:
+			weight = 0.7
+		m[i] = weight if moved else 0.0
+	_masks[c] = m
+	return m
+
+
+func _update_clutch(delta: float) -> void:
+	if _clutch == null:
+		return
+	var target := 0.0
+	if _clutch_delay > 0.0:
+		_clutch_delay -= delta
+	elif _clutch_hold > 0.0:
+		_clutch_hold -= delta
+		target = 1.0
+	_clutch_w = move_toward(_clutch_w, target, delta * (3.5 if target > _clutch_w else 1.4))
+	if _clutch_w <= 0.0 and _clutch_hold <= 0.0 and _clutch_delay <= 0.0:
+		_clutch = null
 
 
 func _pick_stagger(part_name: String, dir: Vector3) -> String:
@@ -717,6 +795,8 @@ func _bleed(delta: float, cd_min: float, cd_max: float) -> void:
 # ------------------------------------------------------------------ ragdoll
 
 func _go_limp(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> void:
+	_clutch = null
+	_clutch_w = 0.0
 	collision_layer = 0
 	collision_mask = 0
 	var vel := velocity
@@ -890,11 +970,7 @@ func _dead_process(delta: float) -> void:
 		var q := PhysicsRayQueryParameters3D.create(from, from + Vector3.DOWN * 1.5, LAYER_WORLD | LAYER_PROPS)
 		var hit := get_world_3d().direct_space_state.intersect_ray(q)
 		if not hit.is_empty() and hit.normal.y > 0.7:
-			_pool = Blood.pool(hit.position, hit.normal)
-			var target := randf_range(1.0, 1.6) * Settings.blood_amount
-			_pool.scale = Vector3(0.1, 0.1, 1.0)
-			var tw := _pool.create_tween()
-			tw.tween_property(_pool, "scale", Vector3(target, target, 1.0), 10.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+			Blood.pool(hit.position, hit.normal, randf_range(1.6, 2.4) * Settings.blood_amount, randf_range(8.0, 14.0))
 
 
 # ------------------------------------------------------------------ guts

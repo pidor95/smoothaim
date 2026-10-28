@@ -7,6 +7,7 @@ const SOUNDS := {
 	"shotgun_shot": ["shotgun_shot"],
 	"wall_hit": ["wall_hit_0", "wall_hit_1"],
 	"wood_hit": ["wood_hit"],
+	"wood_break": ["wood_break"],
 	"metal_hit": ["metal_hit"],
 	"glass_break": ["glass_break"],
 	"footstep": ["footstep_0", "footstep_1", "footstep_2"],

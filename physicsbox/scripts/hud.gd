@@ -64,6 +64,7 @@ func _buttons() -> Dictionary:
 		"spawn": {"pos": Vector2(s.x - 130, 50), "r": 32.0, "text": "+"},
 		"slowmo": {"pos": Vector2(s.x - 210, 50), "r": 32.0, "text": "x0.3"},
 		"ai": {"pos": Vector2(s.x - 290, 50), "r": 32.0, "text": "ИИ"},
+		"weapons": {"pos": Vector2(s.x - 375, 50), "r": 36.0, "text": "ОРУЖ."},
 		"switch": {"pos": Vector2(s.x - 320, s.y - 250), "r": 42.0, "text": "СМЕНА"},
 	}
 
@@ -110,6 +111,8 @@ func _touch_down(i: int, p: Vector2) -> void:
 					game.toggle_ai()
 				"switch":
 					player.weapon.next_weapon()
+				"weapons":
+					game.toggle_weapon_menu()
 			return
 	if p.x < size.x * 0.42 and p.y > size.y * 0.25 and _joy_index == -1:
 		_joy_index = i
@@ -208,7 +211,7 @@ func _draw() -> void:
 	_text(ammo_pos, ammo_text, 30, Color(1, 1, 1, 0.9) if _ammo > 0 else Color(1, 0.3, 0.25, 0.95))
 	if not player.touch_mode:
 		_text(Vector2(24, size.y - 50), "WASD — ходьба, ЛКМ — огонь, ПКМ — прицел, R — перезарядка", 18, Color(1, 1, 1, 0.55))
-		_text(Vector2(24, size.y - 26), "1/2/F — оружие, E — манекен, Q — замедление, T — ИИ, Esc — пауза", 18, Color(1, 1, 1, 0.55))
+		_text(Vector2(24, size.y - 26), "1/2/F — оружие, B — меню оружия, E — манекен, Q — замедление, T — ИИ, Esc — пауза", 18, Color(1, 1, 1, 0.55))
 		return
 
 	# joystick

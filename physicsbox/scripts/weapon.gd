@@ -15,6 +15,8 @@ const MAX_SHELLS := 24
 const DEFS := [
 	{
 		"id": "m1911", "name": "M1911", "scene": "res://assets/weapons/m1911_fp.glb",
+		"title": "Colt M1911", "desc": "Пистолет .45 ACP. Точный, быстрый.",
+		"stats": ["Урон: 40 (голова — насмерть)", "Магазин: 7+1", "Пробитие: высокое"],
 		"capacity": 8, "pellets": 1, "impulse": 11.0, "cooldown": 0.12, "power": 1.0,
 		"damage": {"head": 100.0, "chest": 40.0, "pelvis": 34.0, "uarm_l": 22.0, "uarm_r": 22.0, "farm_l": 18.0,
 				"farm_r": 18.0, "thigh_l": 28.0, "thigh_r": 28.0, "shin_l": 20.0, "shin_r": 20.0},
@@ -25,6 +27,8 @@ const DEFS := [
 	},
 	{
 		"id": "m500", "name": "M500", "scene": "res://assets/weapons/m500_fp.glb",
+		"title": "Mossberg 500", "desc": "Помповый дробовик с глушителем.",
+		"stats": ["Урон: 8 дробин × 16", "Магазин: 5+1", "Вблизи рвёт на части"],
 		"capacity": 6, "pellets": 8, "impulse": 5.5, "cooldown": 0.95, "power": 0.55,
 		"damage": {"head": 45.0, "chest": 16.0, "pelvis": 15.0, "uarm_l": 9.0, "uarm_r": 9.0, "farm_l": 8.0,
 				"farm_r": 8.0, "thigh_l": 11.0, "thigh_r": 11.0, "shin_l": 9.0, "shin_r": 9.0},

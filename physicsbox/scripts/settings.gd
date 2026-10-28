@@ -10,6 +10,8 @@ var shadows := true
 var blood_amount := 1.0
 var volume := 0.8
 var show_fps := false
+## Level chosen in the main menu ("house" / "shop"); not saved.
+var level := "house"
 
 
 func _ready() -> void:
@@ -67,6 +69,7 @@ func _setup_input() -> void:
 	_key_action("weapon_2", [KEY_2])
 	_key_action("weapon_next", [KEY_F])
 	_key_action("toggle_ai", [KEY_T])
+	_key_action("weapon_menu", [KEY_B, KEY_TAB])
 	_mouse_action("fire", MOUSE_BUTTON_LEFT)
 	_mouse_action("aim", MOUSE_BUTTON_RIGHT)
 

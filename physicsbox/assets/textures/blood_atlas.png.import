@@ -2,22 +2,20 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dl531vit03l5p"
-path.s3tc="res://.godot/imported/splat_5.png-6ca7e89a59d599cbd1b52859582093c1.s3tc.ctex"
-path.etc2="res://.godot/imported/splat_5.png-6ca7e89a59d599cbd1b52859582093c1.etc2.ctex"
+uid="uid://b8mqve241w0qr"
+path="res://.godot/imported/blood_atlas.png-1d4eaa8dff86fd3387977ea5b04bdffe.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc", "etc2_astc"],
-"vram_texture": true
+"vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/textures/splat_5.png"
-dest_files=["res://.godot/imported/splat_5.png-6ca7e89a59d599cbd1b52859582093c1.s3tc.ctex", "res://.godot/imported/splat_5.png-6ca7e89a59d599cbd1b52859582093c1.etc2.ctex"]
+source_file="res://assets/textures/blood_atlas.png"
+dest_files=["res://.godot/imported/blood_atlas.png-1d4eaa8dff86fd3387977ea5b04bdffe.ctex"]
 
 [params]
 
-compress/mode=2
+compress/mode=0
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -25,7 +23,7 @@ compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=true
+mipmaps/generate=false
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""
