@@ -43,7 +43,6 @@ var cam_pitch := 0.0
 var cam_fwd := Vector3.FORWARD
 var cam_shake := 0.0
 var recoil_p := 0.0
-var fp := false                  # first-person view
 var cam_sm := Vector3.ZERO
 var cam_sm_init := false
 var menu_t := 0.0
@@ -63,7 +62,6 @@ var _msl_mat: StandardMaterial3D
 
 
 func setup(w: Node3D, f: Node3D, a: Node, c: Camera3D, n: Node, s: Dictionary) -> void:
-	fp = s.get("fp", false)
 	world = w
 	fx = f
 	audio = a
@@ -297,6 +295,7 @@ func _run_over(t) -> void:
 	for v in vehicles:
 		if v.cat == "inf" and not v.dead and can_hit(t, v) and v.pos.distance_to(t.pos) < 3.2:
 			v.hit_part = "torso"
+			v.hit_point = v.centre()
 			v.last_impulse = t.vel * 1.5 + Vector3(0, 2, 0)
 			fx.blood(v.centre(), t.vel.normalized(), 2.0)
 			kill(v, t, "crash")
@@ -343,8 +342,6 @@ func _unhandled_key_input(e: InputEvent) -> void:
 			KEY_R:
 				if player.cat == "inf":
 					player.start_reload()
-			KEY_T:
-				toggle_view()
 			KEY_M:
 				if player.T.get("maneuver", false):
 					ctrl["man"] = not ctrl["man"]
@@ -444,9 +441,10 @@ func _update_camera(dt: float) -> void:
 	cam_shake *= exp(-4.0 * dt)
 	var sk := cam_shake * cam_shake * 0.02
 	cam.rotation = Vector3(cp + randf_range(-1, 1) * sk, cam_yaw + randf_range(-1, 1) * sk, randf_range(-1, 1) * sk * 0.5)
-	var first: bool = fp and player != null and not player.dead
-	var fov := (38.0 if player and player.cat == "inf" else 24.0) if ctrl["zoom"] else (72.0 if first else 65.0)
-	if first and ctrl["zoom"] and player.cat == "inf":
+	# soldiers are always played in first person, vehicles from behind
+	var first: bool = player != null and player.cat == "inf"
+	var fov := 24.0 if ctrl["zoom"] else (72.0 if first else 65.0)
+	if first and ctrl["zoom"]:
 		fov = 48.0
 	if player and player.cat == "plane" and not ctrl["zoom"]:
 		fov += clampf((player.speed - 200.0) / 45.0, 0.0, 8.0)
@@ -454,6 +452,15 @@ func _update_camera(dt: float) -> void:
 	if player == null or (player.dead and not player.wreck):
 		return
 	cam.near = 0.03 if first else 0.1
+	if first and player.dead:
+		# death: the view stays in the head and goes down with the body
+		var h: Vector3 = player.jp[0] + Vector3(0, 0.1, 0)
+		var p0 := cam.global_position.lerp(h, 1.0 - exp(-12.0 * dt))
+		p0.y = maxf(p0.y, world.height(p0.x, p0.z) + 0.15)
+		cam.global_position = p0
+		var flat := Vector3(cam_fwd.x, 0, cam_fwd.z).normalized()
+		cam.look_at(p0 + flat * 2.0 + Vector3(0, -0.4 - minf(player.rag_t, 1.5) * 0.5, 0), Vector3.UP)
+		return
 	if first:
 		cam.global_position = eye_pos()
 		return
@@ -487,22 +494,9 @@ func _update_camera(dt: float) -> void:
 	cam.global_position = ideal
 
 
-## Where the first-person camera sits: the soldier's eyes, the pilot's seat or the tank's sight.
+## The soldier's eyes, where the first-person camera sits.
 func eye_pos() -> Vector3:
-	var p = player
-	if p.cat == "inf":
-		return p.jp[1].lerp(p.jp[0], 0.6) + cam_fwd * 0.1
-	var e: Array = p.T.get("eye", [0.0, 2.0, 0.0])
-	if p.cat == "tank":
-		var d: Vector3 = Vehicle.dir_of(p.turret_yaw)
-		return p.pos + Vector3(0, e[1], 0) + d * e[2]
-	return p.lw(e[0], e[1], e[2])
-
-
-func toggle_view() -> void:
-	fp = not fp
-	settings["fp"] = fp
-	audio.tone("click", -10.0, 1.2)
+	return player.jp[1].lerp(player.jp[0], 0.6) + cam_fwd * 0.1
 
 
 func flash(t: String, cls := "grn") -> void:
@@ -667,6 +661,12 @@ func _handle_weapons(v, dt: float) -> void:
 		return
 	if v.ammo[v.slot] <= 0 and not infinite_ammo(v):
 		if v.is_player and v.inp["fire_pressed"]:
+			audio.tone("click", -6.0, 0.5)
+		return
+	if W.get("air_only", false) and v.cat == "inf" and not v.locked:
+		# the Stinger only launches at a locked aircraft
+		if v.is_player and v.inp["fire_pressed"]:
+			flash("Стингер: наведите на самолёт или вертолёт и дождитесь захвата", "org")
 			audio.tone("click", -6.0, 0.5)
 		return
 	if W.has("mag") and not infinite_ammo(v):
@@ -948,6 +948,7 @@ func splash(p: Vector3, r: float, dmg: float, attacker, wname: String, except = 
 		if d < r:
 			if v.cat == "inf":
 				v.hit_part = "torso"
+				v.hit_point = p
 				v.last_impulse = (c - p).normalized() * 9.0 * (1.0 - d / r) + Vector3(0, 4, 0)
 			damage(v, dmg * (1.0 - d / r), attacker, wname)
 
@@ -1206,6 +1207,14 @@ func _update_missiles(dt: float) -> void:
 
 func _boom(m: Dictionary, hit) -> void:
 	var W: Dictionary = m["W"]
+	if W.get("air_only", false):
+		if hit != null and (hit.cat == "plane" or hit.cat == "heli"):
+			damage(hit, W["dmg"], m["owner"], m["w"])
+		for v in vehicles:
+			if not v.dead and v != hit and (v.cat == "plane" or v.cat == "heli") and can_hit(m["owner"], v) and v.pos.distance_to(m["p"]) < 14.0:
+				damage(v, W["dmg"] * 0.4, m["owner"], m["w"])
+		explosion(m["p"], 1.0)
+		return
 	if hit != null:
 		damage(hit, W["dmg"], m["owner"], m["w"])
 	splash(m["p"], W.get("splash", 14.0), W.get("sdmg", W["dmg"] * 0.35), m["owner"], m["w"], hit)

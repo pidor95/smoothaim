@@ -15,7 +15,7 @@ var hud: Control
 var ui: Control
 var loading: Label
 var post: ColorRect
-var settings := {"bp": 2, "bh": 2, "bt": 3, "bi": 6, "ba": 3, "vol": 0.8, "diff": 1, "shoot": true, "ammo": false, "sens": 6.0, "vehicle": "su57", "gfx": "high", "nick": "", "ip": "", "servers": [], "fp": false}
+var settings := {"bp": 2, "bh": 2, "bt": 3, "bi": 6, "ba": 3, "vol": 0.8, "diff": 1, "shoot": true, "ammo": false, "sens": 6.0, "vehicle": "su57", "gfx": "high", "nick": "", "ip": "", "servers": []}
 
 
 func _ready() -> void:
@@ -292,54 +292,47 @@ func _play_test(args: PackedStringArray) -> void:
 		p.turret_yaw = 0.6
 		game.cam_yaw = 0.6
 	if args.has("rag"):
-		# soldier close-up: walking pose, then a headshot on a second soldier and its collapse
+		# three soldiers killed at once: headshot, chest shot, nearby explosion; filmed from the side
 		settings["bi"] = 0
 		settings["ba"] = 0
 		game.clear()
 		_start(false)
 		p = game.player
 		var c := Vector3(1600, 0, 900)
-		p.place(Vector3(c.x, world.height(c.x, c.z), c.z), 0.0, 0.0)
-		game.cam_yaw = 0.0
-		game.cam_pitch = -0.05
-		var en = game._new_vehicle("soldier", "red", {"bot": true, "name": "Цель"})
-		game.spawn(en)
-		en.place(Vector3(c.x + 1.5, world.height(c.x + 1.5, c.z - 7), c.z - 7), PI * 0.75, 0.0)
-		en.bot["think"] = 999.0
-		game.ctrl["move"] = Vector2(0, 0.6)
-		for i in 40:
-			await get_tree().process_frame
-		get_viewport().get_texture().get_image().save_png(out.path_join("rag_walk.png"))
-		game.paused = true
-		for view in [["rag_side", Vector3(2.0, 1.4, -1.2)], ["rag_front", Vector3(0.3, 1.5, -2.6)]]:
-			cam.global_position = p.pos + view[1]
-			cam.look_at(p.pos + Vector3(0, 1.2, 0), Vector3.UP)
-			await get_tree().process_frame
-			await get_tree().process_frame
-			get_viewport().get_texture().get_image().save_png(out.path_join(view[0] + ".png"))
-		game.paused = false
-		game.ctrl["move"] = Vector2.ZERO
-		game.ctrl["zoom"] = true
+		p.place(Vector3(c.x, world.height(c.x, c.z), c.z + 30), 0.0, 0.0)
+		var targets := []
+		for k in 3:
+			var en = game._new_vehicle("soldier", "red", {"bot": true, "name": "Цель"})
+			game.spawn(en)
+			var q := Vector3(c.x - 4 + k * 4, 0, c.z)
+			en.place(Vector3(q.x, world.height(q.x, q.z), q.z), 0.0, 0.0)
+			en.bot["think"] = 999.0
+			en.inp["move"] = Vector2(0, 0.6 if k == 1 else 0.0)
+			en.bot["wp"] = en.pos
+			targets.append(en)
 		for i in 20:
-			game.cam_yaw = Vehicle_heading(en.pos + Vector3(0, 1.6, 0) - game.cam.global_position)
 			await get_tree().process_frame
-		get_viewport().get_texture().get_image().save_png(out.path_join("rag_aim.png"))
-		en.hit_part = "head"
-		en.hit_point = en.jp[0]
-		en.last_impulse = Vector3(0, 0, -4)
-		game.fx.blood(en.jp[0], Vector3(0, 0, -1), 3.0)
-		game.fx.blood_mist(en.jp[0], Vector3(0, 0, -1))
-		game.damage(en, 1000.0, p, "headshot")
-		game.ctrl["zoom"] = false
-		for i in 50:
+		var shot := Vector3(0, 0, -1)
+		targets[0].hit_part = "head"
+		targets[0].last_impulse = shot * 4.0
+		game.damage(targets[0], 1000.0, p, "headshot")
+		targets[1].hit_part = "torso"
+		targets[1].hit_point = targets[1].jp[1].lerp(targets[1].jp[2], 0.3)
+		targets[1].last_impulse = shot * 4.0
+		game.damage(targets[1], 1000.0, p, "ak")
+		game.splash(targets[2].pos + Vector3(1.5, 0.3, 0.5), 8.0, 300.0, p, "rkt")
+		print("after kill: ", targets.map(func(t): return [t.dead, t.ragdoll, t.hp]))
+		for i in 160:
+			game.paused = false
 			await get_tree().process_frame
-			if i in [3, 8, 15, 30, 49]:
+			if i % 10 == 0:
+				print("i=", i, " ", targets.map(func(t): return [t.dead, t.ragdoll, snappedf(t.jp[0].y - world.height(t.jp[0].x, t.jp[0].z), 0.01)]))
+			if i in [2, 6, 12, 24, 50, 159]:
 				game.paused = true
-				cam.global_position = en.pos + Vector3(2.5, 1.6, 2.0)
-				cam.look_at(en.pos + Vector3(0, 0.6, 0), Vector3.UP)
+				cam.global_position = c + Vector3(6.5, world.height(c.x, c.z) + 1.5, 4.5)
+				cam.look_at(c + Vector3(0, world.height(c.x, c.z) + 0.6, -0.5), Vector3.UP)
 				await get_tree().process_frame
-				get_viewport().get_texture().get_image().save_png(out.path_join("rag_%02d.png" % i))
-				game.paused = false
+				get_viewport().get_texture().get_image().save_png(out.path_join("rag_%03d.png" % i))
 		get_tree().quit()
 		return
 	if args.has("stall"):
@@ -367,12 +360,10 @@ func _play_test(args: PackedStringArray) -> void:
 			game.ctrl["move"] = Vector2(0, 0.3)
 	var frames := int(_arg(args, "frames", "240"))
 	var every := int(_arg(args, "every", "60"))
-	if args.has("fp"):
-		game.fp = true
 	var t0 := Time.get_ticks_msec()
 	for i in frames:
 		game.ctrl["fire"] = (i / 30) % 3 == 0
-		if args.has("fp") and vt == "soldier":
+		if args.has("ads") and vt == "soldier":
 			game.ctrl["zoom"] = i >= frames / 2
 			game.ctrl["fire"] = false
 		if i % 60 == 40:
