@@ -70,7 +70,7 @@ func _process(_delta: float) -> bool:
 			_aim_at(npc.chest.global_position)
 			_shot("01_pistol_idle")
 			_fire()
-			print("pistol chest hit: health=", npc.health, " balance=", snappedf(npc.balance, 0.01), " reacts=", npc._reacts.size(), " state=", npc.state)
+			print("pistol chest hit: health=", npc.health, " balance=", snappedf(npc.balance, 0.01), " state=", npc.state, " (3=STAGGER)")
 			_wait = 6
 		2:
 			_shot("02_reaction")
@@ -92,7 +92,7 @@ func _process(_delta: float) -> bool:
 			print("after 3 hits: health=", npc.health, " balance=", snappedf(npc.balance, 0.01), " state=", npc.state)
 			_wait = 20
 		7:
-			print("state (3=KNOCKED): ", npc.state, " dead=", npc.dead)
+			print("state (4=KNOCKED): ", npc.state, " dead=", npc.dead)
 			_shot("05_knocked")
 			_wait = 1
 		8:

@@ -13,8 +13,8 @@ with these conventions (degrees):
   chest -X leans forward, head +X tilts back, pelvis rotates the whole body.
 Clips:
   idle, walk, panic_run                      - loops
-  react_back/fwd/left/right, react_head,     - hit reactions (start and end in
-  react_leg_l/r, react_arm_l/r                 the rest pose; used additively)
+  stagger_back/fwd/left/right, stagger_head,  - balance recoveries after a hit,
+  limp_l/r, spin_l/r, knee_fall_l/r            full body, with root motion
   getup_back, getup_front                    - standing up from the floor
 """
 import math
@@ -188,67 +188,129 @@ def reaction(arm, name, keys, mirror_to=None):
 REST = ({}, (0, 0, 0))
 
 
-def reactions(arm):
-    # pushed backwards (shot from the front): staggers back, arms flail, regains balance
-    reaction(arm, "react_back", [
+def staggers(arm):
+    """Full-body balance recoveries. The pelvis location carries root motion:
+    the game moves the NPC by its horizontal travel so the steps are real."""
+    # shot in the chest from the front: thrown back, three stumbling steps
+    # backwards with windmilling arms, leans forward and catches himself
+    reaction(arm, "stagger_back", [
         (0, *REST),
-        (3, {"chest": (20, 0, 0), "head": (22, 0, 0), "uarm_l": (-30, 0, -40), "uarm_r": (-25, 0, 45),
-             "farm_l": (45, 0, 0), "farm_r": (35, 0, 0), "thigh_r": (-22, 0, 0), "shin_r": (-25, 0, 0),
-             "thigh_l": (10, 0, 0)}, (0, -0.02, 0.04)),
-        (9, {"chest": (9, 0, 0), "head": (6, 0, 0), "uarm_l": (45, 0, -65), "uarm_r": (-35, 0, 55),
-             "farm_l": (30, 0, 0), "farm_r": (50, 0, 0), "thigh_r": (-28, 0, 0), "shin_r": (-8, 0, 0),
-             "thigh_l": (14, 0, 0), "shin_l": (-12, 0, 0)}, (0, -0.04, 0.05)),
-        (16, {"chest": (-7, 0, 0), "uarm_l": (25, 0, -30), "uarm_r": (20, 0, 28), "farm_l": (25, 0, 0),
-              "farm_r": (25, 0, 0), "thigh_r": (-10, 0, 0), "thigh_l": (6, 0, 0), "shin_l": (-5, 0, 0)}, (0, -0.02, 0.03)),
-        (28, *REST),
+        (3, {"chest": (24, 0, 0), "head": (26, 0, 0), "uarm_l": (45, 0, -20), "uarm_r": (40, 0, 22),
+             "farm_l": (25, 0, 0), "farm_r": (25, 0, 0), "thigh_r": (-14, 0, 0), "thigh_l": (8, 0, 0)}, (0, -0.02, 0.06)),
+        (8, {"chest": (20, -6, 0), "head": (14, 0, 0), "uarm_l": (85, 0, -40), "uarm_r": (-20, 0, 65),
+             "farm_l": (30, 0, 0), "farm_r": (45, 0, 0), "thigh_r": (-32, 0, 0), "shin_r": (-45, 0, 0),
+             "thigh_l": (16, 0, 0), "shin_l": (-6, 0, 0)}, (0, -0.03, 0.17)),
+        (13, {"chest": (15, 0, 0), "head": (8, 0, 0), "uarm_l": (30, 0, -85), "uarm_r": (65, 0, 40),
+              "farm_l": (40, 0, 0), "farm_r": (20, 0, 0), "thigh_r": (-18, 0, 0), "shin_r": (-6, 0, 0),
+              "thigh_l": (24, 0, 0), "shin_l": (-12, 0, 0)}, (0, -0.02, 0.31)),
+        (18, {"chest": (12, 6, 0), "head": (5, 0, 0), "uarm_l": (-30, 0, -65), "uarm_r": (100, 0, 30),
+              "farm_l": (50, 0, 0), "farm_r": (30, 0, 0), "thigh_l": (-32, 0, 0), "shin_l": (-48, 0, 0),
+              "thigh_r": (12, 0, 0), "shin_r": (-14, 0, 0)}, (0, -0.04, 0.46)),
+        (23, {"chest": (5, 0, 0), "uarm_l": (55, 0, -50), "uarm_r": (20, 0, 75), "farm_l": (30, 0, 0),
+              "farm_r": (40, 0, 0), "thigh_l": (-16, 0, 0), "shin_l": (-5, 0, 0), "thigh_r": (20, 0, 0),
+              "shin_r": (-10, 0, 0)}, (0, -0.03, 0.6)),
+        (28, {"chest": (-6, 0, 0), "head": (-4, 0, 0), "uarm_l": (20, 0, -55), "uarm_r": (25, 0, 55),
+              "farm_l": (35, 0, 0), "farm_r": (35, 0, 0), "thigh_r": (-22, 0, 0), "shin_r": (-32, 0, 0),
+              "thigh_l": (8, 0, 0), "shin_l": (-8, 0, 0)}, (0, -0.05, 0.7)),
+        (33, {"chest": (-14, 0, 0), "head": (-10, 0, 0), "uarm_l": (10, 0, -35), "uarm_r": (10, 0, 35),
+              "farm_l": (35, 0, 0), "farm_r": (35, 0, 0), "thigh_r": (-8, 0, 0), "thigh_l": (6, 0, 0),
+              "shin_l": (-14, 0, 0), "shin_r": (-14, 0, 0)}, (0, -0.07, 0.76)),
+        (41, {"chest": (-6, 0, 0), "uarm_l": (5, 0, -15), "uarm_r": (5, 0, 15), "farm_l": (20, 0, 0),
+              "farm_r": (20, 0, 0)}, (0, -0.025, 0.79)),
+        (50, {}, (0, 0, 0.8)),
     ])
-    # pushed forwards (shot in the back)
-    reaction(arm, "react_fwd", [
+    # shot in the back: stumbles forward, almost falls on his face
+    reaction(arm, "stagger_fwd", [
         (0, *REST),
-        (3, {"chest": (-26, 0, 0), "head": (-18, 0, 0), "uarm_l": (35, 0, -30), "uarm_r": (40, 0, 30),
-             "farm_l": (30, 0, 0), "farm_r": (30, 0, 0), "thigh_l": (28, 0, 0), "shin_l": (-35, 0, 0)}, (0, -0.03, -0.04)),
-        (10, {"chest": (-12, 0, 0), "head": (-5, 0, 0), "uarm_l": (60, 0, -45), "uarm_r": (20, 0, 50),
-              "farm_l": (20, 0, 0), "farm_r": (40, 0, 0), "thigh_l": (30, 0, 0), "shin_l": (-10, 0, 0),
-              "thigh_r": (-10, 0, 0)}, (0, -0.05, -0.06)),
-        (17, {"chest": (6, 0, 0), "uarm_l": (15, 0, -25), "uarm_r": (10, 0, 25), "thigh_l": (10, 0, 0)}, (0, -0.02, -0.03)),
-        (28, *REST),
+        (3, {"chest": (-28, 0, 0), "head": (-20, 0, 0), "uarm_l": (-35, 0, -30), "uarm_r": (-35, 0, 30),
+             "farm_l": (20, 0, 0), "farm_r": (20, 0, 0), "thigh_l": (14, 0, 0)}, (0, -0.03, -0.06)),
+        (8, {"chest": (-32, 0, 0), "head": (-12, 0, 0), "uarm_l": (60, 0, -50), "uarm_r": (-20, 0, 55),
+             "farm_l": (30, 0, 0), "farm_r": (50, 0, 0), "thigh_l": (45, 0, 0), "shin_l": (-55, 0, 0),
+             "thigh_r": (-12, 0, 0)}, (0, -0.06, -0.2)),
+        (13, {"chest": (-24, 0, 0), "uarm_l": (20, 0, -75), "uarm_r": (70, 0, 45), "thigh_l": (25, 0, 0),
+              "shin_l": (-10, 0, 0), "thigh_r": (-22, 0, 0), "shin_r": (-15, 0, 0)}, (0, -0.07, -0.36)),
+        (18, {"chest": (-20, 0, 0), "uarm_l": (90, 0, -30), "uarm_r": (10, 0, 70), "thigh_r": (45, 0, 0),
+              "shin_r": (-55, 0, 0), "thigh_l": (-12, 0, 0), "shin_l": (-12, 0, 0)}, (0, -0.08, -0.52)),
+        (23, {"chest": (-10, 0, 0), "uarm_l": (40, 0, -45), "uarm_r": (40, 0, 45), "thigh_r": (25, 0, 0),
+              "shin_r": (-12, 0, 0), "thigh_l": (-15, 0, 0)}, (0, -0.06, -0.66)),
+        (30, {"chest": (4, 0, 0), "head": (6, 0, 0), "uarm_l": (15, 0, -25), "uarm_r": (15, 0, 25),
+              "thigh_r": (10, 0, 0), "thigh_l": (-6, 0, 0)}, (0, -0.03, -0.72)),
+        (40, {}, (0, 0, -0.74)),
     ])
-    # pushed to its right (+X), mirrored for the left
-    reaction(arm, "react_right", [
+    # pushed to his right: cross-over side steps, torso leaning against the fall
+    reaction(arm, "stagger_right", [
         (0, *REST),
-        (3, {"chest": (0, 12, -20), "head": (0, 10, -15), "uarm_l": (10, 0, -55), "uarm_r": (-15, 0, 35),
-             "farm_l": (40, 0, 0), "thigh_r": (0, 0, 16), "thigh_l": (0, 0, 6)}, (0.04, -0.02, 0)),
-        (10, {"chest": (0, 5, -8), "uarm_l": (30, 0, -70), "uarm_r": (-10, 0, 45), "farm_l": (25, 0, 0),
-              "thigh_r": (0, 0, 20), "shin_r": (-15, 0, 0), "thigh_l": (0, 0, -4)}, (0.06, -0.03, 0)),
-        (17, {"chest": (0, -2, 6), "uarm_l": (10, 0, -25), "uarm_r": (0, 0, 25), "thigh_r": (0, 0, 6)}, (0.03, -0.01, 0)),
-        (28, *REST),
-    ], mirror_to="react_left")
-    # head shot that did not kill (or a graze): head snaps, hands go to the face
-    reaction(arm, "react_head", [
+        (3, {"chest": (0, 15, -22), "head": (0, 12, -18), "uarm_l": (10, 0, -60), "uarm_r": (-15, 0, 40),
+             "farm_l": (40, 0, 0), "thigh_r": (0, 0, 14), "thigh_l": (0, 0, 8)}, (0.07, -0.02, 0)),
+        (9, {"chest": (0, 8, -14), "uarm_l": (40, 0, -85), "uarm_r": (-10, 0, 60), "farm_l": (30, 0, 0),
+             "thigh_r": (8, 0, 28), "shin_r": (-35, 0, 0), "thigh_l": (0, 0, -6)}, (0.22, -0.04, 0)),
+        (15, {"chest": (0, 2, -6), "uarm_l": (10, 0, -60), "uarm_r": (20, 0, 80), "thigh_r": (0, 0, 10),
+              "thigh_l": (12, 0, 22), "shin_l": (-35, 0, 0)}, (0.38, -0.05, 0)),
+        (21, {"chest": (0, -4, 6), "uarm_l": (20, 0, -45), "uarm_r": (10, 0, 55), "thigh_r": (6, 0, 20),
+              "shin_r": (-25, 0, 0), "thigh_l": (0, 0, 4)}, (0.52, -0.04, 0)),
+        (28, {"chest": (0, -2, 8), "head": (0, 0, 6), "uarm_l": (5, 0, -25), "uarm_r": (5, 0, 25),
+              "thigh_r": (0, 0, 6)}, (0.6, -0.02, 0)),
+        (38, {}, (0.62, 0, 0)),
+    ], mirror_to="stagger_left")
+    # head (non-lethal: neck / graze): reels back clutching his face
+    reaction(arm, "stagger_head", [
         (0, *REST),
-        (2, {"chest": (12, 0, 0), "head": (38, 18, 10), "uarm_l": (-10, 0, -20), "uarm_r": (-10, 0, 20)}, (0, -0.02, 0.03)),
-        (10, {"chest": (-10, 0, 0), "head": (-15, 6, 0), "uarm_l": (75, 0, -22), "uarm_r": (70, 0, 22),
-              "farm_l": (115, 0, 0), "farm_r": (115, 0, 0), "thigh_l": (8, 0, 0), "shin_l": (-15, 0, 0)}, (0, -0.06, 0.02)),
-        (24, {"chest": (-6, 0, 0), "head": (-10, 0, 0), "uarm_l": (65, 0, -20), "uarm_r": (60, 0, 20),
-              "farm_l": (110, 0, 0), "farm_r": (110, 0, 0)}, (0, -0.03, 0)),
-        (36, *REST),
+        (2, {"chest": (16, 0, 0), "head": (42, 18, 12), "uarm_l": (-15, 0, -25), "uarm_r": (-15, 0, 25)}, (0, -0.02, 0.06)),
+        (9, {"chest": (6, 0, 0), "head": (-12, 8, 0), "uarm_l": (75, 0, -22), "uarm_r": (70, 0, 22),
+             "farm_l": (115, 0, 0), "farm_r": (115, 0, 0), "thigh_r": (-28, 0, 0), "shin_r": (-40, 0, 0),
+             "thigh_l": (12, 0, 0)}, (0, -0.05, 0.2)),
+        (16, {"chest": (-8, 0, 6), "head": (-18, 0, 0), "uarm_l": (65, 0, -20), "uarm_r": (60, 0, 20),
+              "farm_l": (110, 0, 0), "farm_r": (110, 0, 0), "thigh_r": (-10, 0, 0), "thigh_l": (-25, 0, 0),
+              "shin_l": (-40, 0, 0)}, (0, -0.07, 0.36)),
+        (26, {"chest": (-12, 0, -6), "head": (-15, 0, 0), "uarm_l": (60, 0, -18), "uarm_r": (55, 0, 18),
+              "farm_l": (105, 0, 0), "farm_r": (105, 0, 0), "thigh_l": (-6, 0, 0), "shin_l": (-10, 0, 0),
+              "thigh_r": (8, 0, 0), "shin_r": (-12, 0, 0)}, (0, -0.08, 0.44)),
+        (40, {"chest": (-5, 0, 0), "uarm_l": (20, 0, -10), "uarm_r": (20, 0, 10), "farm_l": (40, 0, 0),
+              "farm_r": (40, 0, 0)}, (0, -0.02, 0.46)),
+        (52, {}, (0, 0, 0.46)),
     ])
-    # leg hit: the knee buckles, he catches himself
-    reaction(arm, "react_leg_l", [
+    # thigh hit: the leg gives, he limps a step on the good leg and straightens
+    reaction(arm, "limp_l", [
         (0, *REST),
-        (4, {"thigh_l": (25, 0, 0), "shin_l": (-65, 0, 0), "thigh_r": (-8, 0, 0), "shin_r": (-15, 0, 0),
-             "chest": (-14, 0, 10), "uarm_l": (20, 0, -50), "uarm_r": (-10, 0, 40), "farm_l": (40, 0, 0)}, (0, -0.16, 0)),
-        (12, {"thigh_l": (15, 0, 0), "shin_l": (-40, 0, 0), "chest": (-8, 0, 6), "uarm_l": (35, 0, -30),
-              "uarm_r": (0, 0, 30), "farm_l": (60, 0, 0)}, (0, -0.09, 0)),
-        (30, *REST),
-    ], mirror_to="react_leg_r")
-    # arm hit: arm thrown back, torso twists
-    reaction(arm, "react_arm_l", [
+        (3, {"thigh_l": (22, 0, 0), "shin_l": (-60, 0, 0), "thigh_r": (-6, 0, 0), "shin_r": (-18, 0, 0),
+             "chest": (-16, 0, 12), "uarm_l": (20, 0, -55), "uarm_r": (-10, 0, 45), "farm_l": (45, 0, 0)}, (0, -0.17, 0.04)),
+        (10, {"thigh_l": (10, 0, 0), "shin_l": (-35, 0, 0), "thigh_r": (-25, 0, 0), "shin_r": (-35, 0, 0),
+              "chest": (-10, 0, 9), "uarm_l": (40, 0, -40), "uarm_r": (10, 0, 50), "farm_l": (70, 0, 0)}, (0, -0.12, 0.12)),
+        (17, {"thigh_l": (14, 0, 0), "shin_l": (-30, 0, 0), "thigh_r": (-8, 0, 0), "shin_r": (-8, 0, 0),
+              "chest": (-8, 0, 6), "uarm_l": (35, 0, -25), "uarm_r": (5, 0, 30), "farm_l": (80, 0, 0)}, (0, -0.08, 0.2)),
+        (30, {"thigh_l": (4, 0, 0), "shin_l": (-12, 0, 0), "chest": (-4, 0, 3), "uarm_l": (25, 0, -12),
+              "farm_l": (60, 0, 0)}, (0, -0.03, 0.22)),
+        (40, {}, (0, 0, 0.22)),
+    ], mirror_to="limp_r")
+    # knee hit: the knee folds, he drops onto it, tries to hold himself up and
+    # topples (the game turns him into a ragdoll when the clip ends)
+    reaction(arm, "knee_fall_l", [
         (0, *REST),
-        (3, {"uarm_l": (-55, 0, -35), "farm_l": (5, 0, 0), "chest": (4, 22, 4), "head": (0, -10, 0)}, (0, 0, 0.02)),
-        (10, {"uarm_l": (30, 0, -15), "farm_l": (90, 0, 0), "chest": (-6, 10, 0)}, (0, -0.02, 0)),
-        (22, *REST),
-    ], mirror_to="react_arm_r")
+        (3, {"thigh_l": (12, 0, 0), "shin_l": (-75, 0, 0), "chest": (-14, 0, 12), "uarm_l": (25, 0, -60),
+             "uarm_r": (-10, 0, 55), "farm_l": (30, 0, 0)}, (0, -0.22, 0.02)),
+        (9, {"thigh_l": (0, 0, 0), "shin_l": (-92, 0, 0), "thigh_r": (65, 0, 0), "shin_r": (-75, 0, 0),
+             "chest": (-22, 0, 14), "head": (-10, 0, 0), "uarm_l": (35, 0, -20), "farm_l": (10, 0, 0),
+             "uarm_r": (10, 0, 65), "farm_r": (30, 0, 0)}, (0, -0.44, 0.05)),
+        (15, {"thigh_l": (-4, 0, 0), "shin_l": (-92, 0, 0), "thigh_r": (70, 0, 0), "shin_r": (-80, 0, 0),
+              "chest": (-30, 0, 20), "head": (-15, 0, 0), "uarm_l": (50, 0, -15), "farm_l": (5, 0, 0),
+              "uarm_r": (30, 0, 50), "farm_r": (20, 0, 0)}, (0, -0.47, 0.05)),
+        (20, {"thigh_l": (-8, 0, 0), "shin_l": (-90, 0, 0), "thigh_r": (55, 0, 0), "shin_r": (-70, 0, 0),
+              "chest": (-42, 0, 26), "head": (-20, 0, 0), "uarm_l": (70, 0, -20), "uarm_r": (60, 0, 35),
+              "farm_l": (10, 0, 0), "farm_r": (10, 0, 0)}, (0, -0.5, 0.0)),
+    ], mirror_to="knee_fall_r")
+    # arm hit: the shoulder is knocked back, the body twists and he steps to catch it
+    reaction(arm, "spin_l", [
+        (0, *REST),
+        (3, {"pelvis": (0, 12, 0), "chest": (6, 28, 6), "head": (0, -12, 0), "uarm_l": (-60, 0, -40),
+             "farm_l": (5, 0, 0), "uarm_r": (30, 0, 30)}, (-0.03, -0.02, 0.04)),
+        (10, {"pelvis": (0, 22, 0), "chest": (0, 22, 4), "uarm_l": (-20, 0, -70), "farm_l": (60, 0, 0),
+              "uarm_r": (50, 0, 40), "thigh_l": (-25, 0, 0), "shin_l": (-35, 0, 0), "thigh_r": (10, 0, 0)},
+         (-0.08, -0.04, 0.14)),
+        (17, {"pelvis": (0, 14, 0), "chest": (-4, 8, 0), "uarm_l": (30, 0, -30), "farm_l": (90, 0, 0),
+              "uarm_r": (15, 0, 25), "thigh_l": (-10, 0, 0), "thigh_r": (6, 0, 0)}, (-0.1, -0.03, 0.2)),
+        (30, {"pelvis": (0, 4, 0), "uarm_l": (35, 0, -15), "farm_l": (80, 0, 0)}, (-0.1, 0, 0.22)),
+        (40, {}, (-0.1, 0, 0.22)),
+    ], mirror_to="spin_r")
 
 
 # ---------------------------------------------------------------- get up
@@ -292,7 +354,7 @@ def main():
     idle(arm)
     cycle(arm, "walk", 30, stride=30, knee=50, arm_swing=24, lean=2, bob=0.035)
     cycle(arm, "panic_run", 20, stride=42, knee=85, arm_swing=0, lean=12, bob=0.05, arms_up=1.0)
-    reactions(arm)
+    staggers(arm)
     getups(arm)
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     bpy.ops.export_scene.gltf(filepath=OUT, export_format="GLB", export_yup=True, export_animations=True,

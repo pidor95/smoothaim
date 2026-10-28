@@ -11,8 +11,6 @@ var game: Node
 var _font: Font
 var _hit_t := 0.0
 var _hit_kind := 0
-var _popup_t := 0.0
-var _popup_text := ""
 var _ammo := 8
 var _mag := 7
 var _kills := 0
@@ -47,16 +45,10 @@ func set_stats(kills: int, alive: int, slowmo: bool) -> void:
 	_slowmo = slowmo
 
 
-func popup(text: String) -> void:
-	_popup_text = text
-	_popup_t = 1.2
-
-
 func _on_hit(kind: int) -> void:
 	_hit_kind = kind
 	_hit_t = 0.28 if kind == 0 else 0.45
-	if kind >= 1:
-		popup("УБИТ")
+
 
 
 func _buttons() -> Dictionary:
@@ -169,7 +161,6 @@ func reset_touches() -> void:
 
 func _process(delta: float) -> void:
 	_hit_t = maxf(_hit_t - delta, 0.0)
-	_popup_t = maxf(_popup_t - delta, 0.0)
 	_fire_flash = maxf(_fire_flash - delta * 6.0, 0.0)
 	queue_redraw()
 
@@ -198,15 +189,6 @@ func _draw() -> void:
 		for d in [Vector2(1, 1), Vector2(-1, 1), Vector2(1, -1), Vector2(-1, -1)]:
 			var n: Vector2 = d.normalized()
 			_line_outlined(c + n * g, c + n * (g + l), col, 2.5)
-
-	# popup text (HEADSHOT)
-	if _popup_t > 0.0:
-		var a := clampf(_popup_t / 0.4, 0.0, 1.0)
-		var fs := 44
-		var w := _font.get_string_size(_popup_text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		var pos := c + Vector2(-w * 0.5, 90 - (1.2 - _popup_t) * 20.0)
-		draw_string_outline(_font, pos, _popup_text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 6, Color(0, 0, 0, 0.6 * a))
-		draw_string(_font, pos, _popup_text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 0.12, 0.08, a))
 
 	# counters
 	_text(Vector2(24, 44), "УБИЙСТВ: %d" % _kills, 28, Color(1, 1, 1, 0.9))

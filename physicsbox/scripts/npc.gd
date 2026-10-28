@@ -9,7 +9,7 @@ extends CharacterBody3D
 
 signal died(npc: Npc, headshot: bool)
 
-enum State { IDLE, WANDER, PANIC, KNOCKED, GETUP, DEAD }
+enum State { IDLE, WANDER, PANIC, STAGGER, KNOCKED, GETUP, DEAD }
 
 ## Global AI switch (pause menu / HUD). When off NPCs just stand and take hits.
 static var ai_enabled := true
@@ -107,6 +107,11 @@ var _getup: MannequinAnims.Clip
 var _getup_t := 0.0
 var _blend_from: Array[Transform3D] = []
 var _blend_w := 1.0
+var _stagger: MannequinAnims.Clip
+var _stagger_t := 0.0
+var _stagger_prev := Vector3.ZERO
+var _stagger_fall := false
+var _fall_args: Array = []
 var _wounds: Array = []
 var _bleed_left := 0.0
 var _bleed_cd := 0.0
@@ -326,6 +331,12 @@ func _compute_pose() -> Array[Transform3D]:
 		if state == State.GETUP:
 			q = L.rot(_getup, i, _getup_t)
 			p = L.pelvis_pos(_getup, _getup_t) if i == 0 else L.rest_local[i].origin
+		elif state == State.STAGGER:
+			q = L.rot(_stagger, i, _stagger_t)
+			p = L.rest_local[i].origin
+			if i == 0:
+				# horizontal travel is root motion (the body itself is moved)
+				p.y = L.pelvis_pos(_stagger, _stagger_t).y
 		else:
 			q = L.rot(_c_idle, i, _t_idle)
 			p = L.pelvis_pos(_c_idle, _t_idle) if i == 0 else L.rest_local[i].origin
@@ -404,6 +415,9 @@ func _physics_process(delta: float) -> void:
 		State.GETUP:
 			_getup_process(delta)
 			return
+		State.STAGGER:
+			_stagger_process(delta)
+			return
 
 	var ai := ai_enabled and not display_only
 	if not ai and state != State.IDLE:
@@ -473,6 +487,7 @@ func _physics_process(delta: float) -> void:
 
 	_update_layers(delta, hspeed)
 	_bleed(delta, 0.25, 0.45)
+	_blend_w = minf(_blend_w + delta / 0.25, 1.0)
 	_apply_pose(_compute_pose())
 
 
@@ -583,15 +598,91 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 		_die(part, pos, dir, impulse * (1.5 if is_head else 1.0), is_head)
 		return 2 if is_head else 1
 
-	# still standing: react, try to keep balance, maybe fall over
+	# still standing: the struck part jerks, then he fights to stay on his feet
+	# with a recovery that depends on where he was hit; a knee hit folds him
 	_react(part_name, pos, dir, impulse)
 	balance -= impulse * BALANCE_COST.get(part_name, 0.02)
-	if balance < 0.0:
+	var knee := part_name.begins_with("shin") or (part_name.begins_with("thigh") and local.y < -0.13)
+	var frame := Engine.get_physics_frames()
+	var falling_on_knee := state == State.STAGGER and _stagger_fall
+	if knee and not falling_on_knee:
+		_start_stagger("knee_fall_" + part_name.right(1), true, part, pos, dir, impulse)
+	elif balance < 0.0 and not falling_on_knee:
 		_knockdown(part, pos, dir, impulse)
-	elif not display_only:
-		velocity += Vector3(dir.x, 0, dir.z).normalized() * minf(impulse * 0.12, 2.5)
+	elif frame != _hit_frame and not falling_on_knee:
+		_start_stagger(_pick_stagger(part_name, dir), false, part, pos, dir, impulse)
+	_hit_frame = frame
+	if not display_only:
 		alert(pos - dir)
 	return 0
+
+
+func _pick_stagger(part_name: String, dir: Vector3) -> String:
+	match part_name:
+		"head":
+			return "stagger_head"
+		"thigh_l", "thigh_r":
+			return "limp_" + part_name.right(1)
+		"uarm_l", "farm_l":
+			return "spin_l"
+		"uarm_r", "farm_r":
+			return "spin_r"
+	var local_dir := global_transform.basis.inverse() * dir
+	if absf(local_dir.z) >= absf(local_dir.x):
+		return "stagger_back" if local_dir.z > 0.0 else "stagger_fwd"
+	return "stagger_right" if local_dir.x > 0.0 else "stagger_left"
+
+
+func _capture_blend() -> void:
+	_blend_from.clear()
+	for p in parts:
+		_blend_from.append(p.global_transform)
+	_blend_w = 0.0
+
+
+func _start_stagger(clip_name: String, fall: bool, part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> void:
+	_capture_blend()
+	_stagger = _lib.clip(clip_name)
+	_stagger_t = 0.0
+	_stagger_prev = _lib.pelvis_pos(_stagger, 0.0)
+	_stagger_fall = fall
+	_fall_args = [part, pos, dir, impulse]
+	state = State.STAGGER
+	velocity.x = 0.0
+	velocity.z = 0.0
+
+
+func _stagger_process(delta: float) -> void:
+	_stagger_t += delta
+	_blend_w = minf(_blend_w + delta / 0.12, 1.0)
+	var p := _lib.pelvis_pos(_stagger, _stagger_t)
+	var d := p - _stagger_prev
+	_stagger_prev = p
+	var world := global_transform.basis * Vector3(d.x, 0.0, d.z)
+	velocity.x = world.x / delta
+	velocity.z = world.z / delta
+	if is_on_floor():
+		velocity.y = -0.5
+	else:
+		velocity.y -= 9.8 * delta
+	move_and_slide()
+	_update_layers(delta, 0.0)
+	_bleed(delta, 0.2, 0.4)
+	_apply_pose(_compute_pose())
+	if _stagger_t < _stagger.length:
+		return
+	if _stagger_fall:
+		var part: RigidBody3D = _fall_args[0] if is_instance_valid(_fall_args[0]) else pelvis
+		var fwd := -global_transform.basis.z
+		_knockdown(chest, chest.global_position, (fwd + _fall_args[2] * 0.3).normalized(), 4.0 + _fall_args[3] * 0.2)
+		part.apply_central_impulse(_fall_args[2] * 2.0)
+		return
+	_capture_blend()
+	velocity = Vector3.ZERO
+	state = State.IDLE
+	_state_time = 0.4
+	if ai_enabled and not display_only:
+		alert(global_position)
 
 
 func _react(part_name: String, pos: Vector3, dir: Vector3, impulse: float) -> void:
@@ -608,36 +699,6 @@ func _react(part_name: String, pos: Vector3, dir: Vector3, impulse: float) -> vo
 		b = _lib.parent[b]
 		falloff *= 0.45
 
-	# one animated reaction per frame (pellets arrive together)
-	var frame := Engine.get_physics_frames()
-	if frame == _hit_frame:
-		return
-	_hit_frame = frame
-	var clip := ""
-	match part_name:
-		"head":
-			clip = "react_head"
-		"thigh_l", "shin_l":
-			clip = "react_leg_l"
-		"thigh_r", "shin_r":
-			clip = "react_leg_r"
-		"uarm_l", "farm_l":
-			clip = "react_arm_l"
-		"uarm_r", "farm_r":
-			clip = "react_arm_r"
-		_:
-			if absf(local_dir.z) >= absf(local_dir.x):
-				clip = "react_back" if local_dir.z > 0.0 else "react_fwd"
-			else:
-				clip = "react_right" if local_dir.x > 0.0 else "react_left"
-	var c := _lib.clip(clip)
-	for r in _reacts:
-		if r.clip == c:
-			r.t = minf(r.t, 0.08)
-			return
-	if _reacts.size() >= 3:
-		_reacts.pop_front()
-	_reacts.append({"clip": c, "t": 0.0, "w": 0.0})
 
 
 func _bleed(delta: float, cd_min: float, cd_max: float) -> void:
