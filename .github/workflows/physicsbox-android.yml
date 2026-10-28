@@ -5,6 +5,8 @@ on:
     paths:
       - "physicsbox/**"
       - ".github/workflows/physicsbox-android.yml"
+permissions:
+  contents: write
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -52,3 +54,12 @@ jobs:
         with:
           name: PhysicsBox-apk
           path: physicsbox/build/PhysicsBox.apk
+      - name: Publish to the "latest" release (direct download link)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Physics Box (последняя сборка)
+          body: "Скачать: https://github.com/${{ github.repository }}/releases/download/latest/PhysicsBox.apk"
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: physicsbox/build/PhysicsBox.apk
