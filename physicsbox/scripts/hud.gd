@@ -1,7 +1,8 @@
 class_name Hud
 extends Control
 ## In-game HUD: crosshair, hit markers, counters and the multitouch controls
-## (floating joystick, look area, fire / aim / jump / reload buttons).
+## (floating joystick, look area, fire / aim / jump / reload buttons, the
+## list of orders).
 
 const JOY_RADIUS := 80.0
 
@@ -26,6 +27,12 @@ var _look_last := Vector2.ZERO
 var _fire_index := -1
 var _fire_last := Vector2.ZERO
 var _held := {} # button key -> touch index
+var _orders_open := false
+var _order_text := ""
+var _order_note := ""
+var _order_t := 0.0
+var _order_pressed := -1
+var _order_pressed_t := 0.0
 
 
 func _ready() -> void:
@@ -43,6 +50,13 @@ func set_stats(kills: int, alive: int, slowmo: bool) -> void:
 	_kills = kills
 	_alive = alive
 	_slowmo = slowmo
+
+
+## Shows what was shouted (and how it went) for a moment.
+func order_feedback(text: String, note: String) -> void:
+	_order_text = "«%s»" % text
+	_order_note = note
+	_order_t = 1.8
 
 
 func _on_hit(kind: int) -> void:
@@ -65,6 +79,7 @@ func _buttons() -> Dictionary:
 		"slowmo": {"pos": Vector2(s.x - 210, 50), "r": 32.0, "text": "x0.3"},
 		"ai": {"pos": Vector2(s.x - 290, 50), "r": 32.0, "text": "ИИ"},
 		"weapons": {"pos": Vector2(s.x - 375, 50), "r": 36.0, "text": "ОРУЖ."},
+		"orders": {"pos": Vector2(s.x - 462, 50), "r": 36.0, "text": "ПРИКАЗ"},
 		"switch": {"pos": Vector2(s.x - 320, s.y - 250), "r": 42.0, "text": "СМЕНА"},
 	}
 
@@ -83,7 +98,25 @@ func _input(event: InputEvent) -> void:
 		_touch_drag(event.index, event.position)
 
 
+## Pills of the order list (opened with the ПРИКАЗ button).
+func _order_rects() -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	var n := Npc.ORDERS.size()
+	var h := clampf((size.y - 400.0) / n, 36.0, 52.0)
+	for i in n:
+		out.append(Rect2(size.x - 595, 96 + i * h, 230, h - 6))
+	return out
+
+
 func _touch_down(i: int, p: Vector2) -> void:
+	if _orders_open:
+		var rects := _order_rects()
+		for k in rects.size():
+			if rects[k].grow(4).has_point(p):
+				game.give_order(k)
+				_order_pressed = k
+				_order_pressed_t = 0.2
+				return
 	var buttons := _buttons()
 	for key in buttons:
 		var b: Dictionary = buttons[key]
@@ -113,6 +146,8 @@ func _touch_down(i: int, p: Vector2) -> void:
 					player.weapon.next_weapon()
 				"weapons":
 					game.toggle_weapon_menu()
+				"orders":
+					_orders_open = not _orders_open
 			return
 	if p.x < size.x * 0.42 and p.y > size.y * 0.25 and _joy_index == -1:
 		_joy_index = i
@@ -164,6 +199,8 @@ func reset_touches() -> void:
 
 func _process(delta: float) -> void:
 	_hit_t = maxf(_hit_t - delta, 0.0)
+	_order_t = maxf(_order_t - delta, 0.0)
+	_order_pressed_t = maxf(_order_pressed_t - delta, 0.0)
 	_fire_flash = maxf(_fire_flash - delta * 6.0, 0.0)
 	queue_redraw()
 
@@ -202,6 +239,14 @@ func _draw() -> void:
 		status_y += 28.0
 	if not Npc.ai_enabled:
 		_text(Vector2(24, status_y), "ИИ ОТКЛЮЧЁН", 22, Color(1, 0.75, 0.3, 0.9))
+	# the last order shouted
+	if _order_t > 0.0:
+		var a := clampf(_order_t / 0.4, 0.0, 1.0)
+		var w := _font.get_string_size(_order_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 34).x
+		_text(Vector2(c.x - w * 0.5, 150), _order_text, 34, Color(1, 0.85, 0.35, a))
+		if _order_note != "":
+			var nw := _font.get_string_size(_order_note, HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x
+			_text(Vector2(c.x - nw * 0.5, 182), _order_note, 22, Color(1, 1, 1, 0.75 * a))
 	if Settings.show_fps:
 		_text(Vector2(24, size.y - 20), "FPS %d" % Engine.get_frames_per_second(), 20, Color(0.6, 1, 0.6, 0.9))
 	var ammo_text := "%s   %d / ∞" % [player.weapon.weapon_name(), _ammo] if not player.weapon.reloading else "ПЕРЕЗАРЯДКА"
@@ -212,7 +257,21 @@ func _draw() -> void:
 	if not player.touch_mode:
 		_text(Vector2(24, size.y - 50), "WASD — ходьба, ЛКМ — огонь, ПКМ — прицел, R — перезарядка", 18, Color(1, 1, 1, 0.55))
 		_text(Vector2(24, size.y - 26), "1/2/F — оружие, B — меню оружия, E — манекен, Q — замедление, T — ИИ, Esc — пауза", 18, Color(1, 1, 1, 0.55))
+		_text(Vector2(24, size.y - 74), "Приказы: 3 стоять, 4 руки вверх, 5 на колени, 6 брось оружие, 7 ко мне, 8 проваливай, 9 вольно", 18, Color(1, 1, 1, 0.55))
 		return
+
+	# order list
+	if _orders_open:
+		var rects := _order_rects()
+		for k in rects.size():
+			var r: Rect2 = rects[k]
+			var hot := k == _order_pressed and _order_pressed_t > 0.0
+			draw_rect(r, Color(0.75, 0.05, 0.08, 0.6) if hot else Color(0, 0, 0, 0.4))
+			draw_rect(r, Color(1, 1, 1, 0.45), false, 2.0)
+			var label: String = Npc.ORDERS[k][1]
+			var fs := 20
+			var lw := _font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+			draw_string(_font, r.get_center() + Vector2(-lw * 0.5, fs * 0.35), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, 0.9))
 
 	# joystick
 	var base := _joy_origin if _joy_index != -1 else Vector2(190, size.y - 175)
@@ -226,7 +285,8 @@ func _draw() -> void:
 	var buttons := _buttons()
 	for key in buttons:
 		var b: Dictionary = buttons[key]
-		var held: bool = _held.has(key) or (key == "aim" and player.weapon.aiming) or (key == "slowmo" and _slowmo) or (key == "ai" and not Npc.ai_enabled)
+		var held: bool = _held.has(key) or (key == "aim" and player.weapon.aiming) or (key == "slowmo" and _slowmo) \
+				or (key == "ai" and not Npc.ai_enabled) or (key == "orders" and _orders_open)
 		var fill := Color(0.75, 0.05, 0.08, 0.45) if held else Color(0, 0, 0, 0.25)
 		if key == "fire":
 			fill = Color(0.75, 0.05, 0.08, 0.55 if held else 0.3)

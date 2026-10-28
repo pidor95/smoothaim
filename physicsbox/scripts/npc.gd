@@ -6,13 +6,35 @@ extends CharacterBody3D
 ## and per-bone springs kicked by each bullet. Every hit costs balance; when it
 ## runs out the body goes limp as a jointed ragdoll and later gets back up.
 ## Death leaves the ragdoll for good.
+## A neck shot opens the carotid: he clamps his throat with both hands and
+## fights for air until he bleeds out. NPCs obey the player's orders, and an
+## armed one with no way out may put the pistol to his own head.
 
 signal died(npc: Npc, headshot: bool)
 
-enum State { IDLE, WANDER, PANIC, STAGGER, KNOCKED, GETUP, DEAD }
+enum State { IDLE, WANDER, PANIC, STAGGER, KNOCKED, GETUP, DEAD, CHOKE, ORDER }
 
 ## Global AI switch (pause menu / HUD). When off NPCs just stand and take hits.
 static var ai_enabled := true
+## Some spawned NPCs carry a pistol (pause menu toggle).
+static var guns_enabled := true
+const ARMED_CHANCE := 0.35
+
+# The pistol in the right hand, farm_r space. Must match HAND_R / GUN_BARREL /
+# GUN_TOP in tools/blender/build_mannequin_anims.py (the suicide pose is
+# solved for it): barrel along the forearm tipped 20 degrees forward.
+const GUN_SCENE := "res://assets/npc/npc_pistol.glb"
+const GUN_HAND := Vector3(0, -0.19, 0)
+const GUN_BARREL := Vector3(0, -0.9397, -0.342)
+const GUN_TOP := Vector3(0, 0.342, -0.9397)
+const GUN_MUZZLE := Vector3(0, 0.035, -0.12) # in the gun model
+const MAX_DROPPED_GUNS := 8
+
+## Orders the player can shout: [command, what is shouted].
+const ORDERS := [["stand", "СТОЯТЬ!"], ["hands_up", "РУКИ ВВЕРХ!"], ["kneel", "НА КОЛЕНИ!"],
+		["drop", "БРОСЬ ОРУЖИЕ!"], ["come", "КО МНЕ!"], ["flee", "ПРОВАЛИВАЙ!"], ["free", "ВОЛЬНО"]]
+## Pose each order is held in ("" = just stand).
+const ORDER_CLIPS := {"stand": "", "hands_up": "hands_up", "kneel": "kneel_hands_head", "come": ""}
 
 const LAYER_WORLD := 1
 const LAYER_PROPS := 2
@@ -45,9 +67,10 @@ const JB_DOWN := Basis(Vector3(0, -1, 0), Vector3(1, 0, 0), Vector3(0, 0, 1))
 const JB_UP := Basis(Vector3(0, 1, 0), Vector3(-1, 0, 0), Vector3(0, 0, 1))
 const JB_HINGE := Basis(Vector3(0, -1, 0), Vector3(0, 0, -1), Vector3(1, 0, 0))
 
-# How much a hit on each part costs in balance per unit of impulse.
-const BALANCE_COST := {"pelvis": 0.045, "chest": 0.03, "head": 0.04, "uarm_l": 0.014, "uarm_r": 0.014,
-		"farm_l": 0.012, "farm_r": 0.012, "thigh_l": 0.06, "thigh_r": 0.06, "shin_l": 0.07, "shin_r": 0.07}
+# How much a hit on each part costs in balance per unit of impulse. He tries
+# hard to stay on his feet, so it takes a few hits to put him down.
+const BALANCE_COST := {"pelvis": 0.034, "chest": 0.022, "head": 0.03, "uarm_l": 0.01, "uarm_r": 0.01,
+		"farm_l": 0.009, "farm_r": 0.009, "thigh_l": 0.045, "thigh_r": 0.045, "shin_l": 0.07, "shin_r": 0.07}
 # Spring "mass" per bone: lighter bones get kicked further by a bullet.
 const SPRING_MASS := [9.0, 7.0, 2.2, 1.6, 1.0, 1.6, 1.0, 4.0, 2.4, 4.0, 2.4]
 
@@ -70,6 +93,8 @@ var balance := 1.0
 var display_only := false # menu mannequin: stands still, no AI
 var outfit_index := -1 # -1 = random
 var dead := false
+var armed := false # set before adding to the tree
+var suicided := false
 
 var pelvis: RigidBody3D
 var chest: RigidBody3D
@@ -135,6 +160,31 @@ var _arteries: Array = [] # [{part, pos, dir, strength, age}]
 var _time := 0.0
 var _hit_frame := -1
 var _outfit: Dictionary
+var _blend_time := 0.25
+# neck wound
+var _neck_wound := false
+var _choke_drain := 0.0 # hp per second lost through the throat
+var _choke_kneel := false
+var _choke_t := 0.0
+var _cough_cd := 0.8
+var _c_choke_stand: MannequinAnims.Clip
+var _c_choke_knees: MannequinAnims.Clip
+# orders
+var _order := ""
+var _order_clip: MannequinAnims.Clip
+var _order_w := 0.0
+var _t_order := 0.0
+var _order_retarget := 0.0
+# pistol / despair
+var _gun: Node3D
+var _c_suicide: MannequinAnims.Clip
+var _suicide_t := -1.0
+var _suicide_fire := 0.0
+var _suicide_w := 0.0
+var _despair_cd := 1.0
+var _choke_despair_rolled := false
+var _stuck_count := 0
+var _knee_hits := 0
 
 
 func _ready() -> void:
@@ -162,11 +212,16 @@ func _ready() -> void:
 	_c_idle = _lib.clip("idle")
 	_c_walk = _lib.clip("walk")
 	_c_panic = _lib.clip("panic_run")
+	_c_choke_stand = _lib.clip("choke_stand")
+	_c_choke_knees = _lib.clip("choke_knees")
+	_c_suicide = _lib.clip("suicide_r")
 	_spring.resize(CENTERS.size())
 	_spring_vel.resize(CENTERS.size())
 
 	_outfit = OUTFITS[outfit_index if outfit_index >= 0 else randi() % OUTFITS.size()]
 	_build_body()
+	if armed and not display_only:
+		_attach_gun()
 	_state_time = randf_range(0.5, 2.5)
 	_last_pos = global_position
 	_apply_pose(_compute_pose())
@@ -342,6 +397,11 @@ func _compute_pose() -> Array[Transform3D]:
 			if i == 0:
 				# horizontal travel is root motion (the body itself is moved)
 				p.y = L.pelvis_pos(_stagger, _stagger_t).y
+		elif state == State.CHOKE:
+			var cc := _c_choke_knees if _choke_kneel else _c_choke_stand
+			var ct := fposmod(_choke_t, cc.length)
+			q = L.rot(cc, i, ct)
+			p = L.pelvis_pos(cc, ct) if i == 0 else L.rest_local[i].origin
 		else:
 			q = L.rot(_c_idle, i, _t_idle)
 			p = L.pelvis_pos(_c_idle, _t_idle) if i == 0 else L.rest_local[i].origin
@@ -353,12 +413,20 @@ func _compute_pose() -> Array[Transform3D]:
 				q = q.slerp(L.rot(_c_panic, i, _t_panic), _w_panic)
 				if i == 0:
 					p = p.lerp(L.pelvis_pos(_c_panic, _t_panic), _w_panic)
+			# obeying an order: hands up / on his knees
+			if _order_w > 0.001 and _order_clip != null:
+				q = q.slerp(L.rot(_order_clip, i, _t_order), _order_w)
+				if i == 0:
+					p = p.lerp(L.pelvis_pos(_order_clip, _t_order), _order_w)
 		# hand on the wound: overrides the bones that pose touches
 		if _clutch_w > 0.001 and _clutch_mask[i] > 0.0:
 			var cw := _clutch_w * _clutch_mask[i]
 			q = q.slerp(L.rot(_clutch, i, 0.0), cw)
 			if i == 0:
 				p.y += (L.pelvis_pos(_clutch, 0.0).y - L.rest_local[0].origin.y) * cw
+		# pistol to the temple (head + right arm only)
+		if _suicide_w > 0.001 and (i == 2 or i == 5 or i == 6):
+			q = q.slerp(L.rot(_c_suicide, i, 0.0), _suicide_w)
 		# hit reactions, additive relative to the rest pose
 		for r in _reacts:
 			var d: Quaternion = L.rest_rot[i].inverse() * L.rot(r.clip, i, r.t)
@@ -389,6 +457,9 @@ func _apply_pose(globals: Array[Transform3D]) -> void:
 
 func _update_layers(delta: float, hspeed: float) -> void:
 	_t_idle = fposmod(_t_idle + delta, _c_idle.length)
+	if _order_clip != null:
+		_t_order = fposmod(_t_order + delta, _order_clip.length)
+	_order_w = 1.0 if state == State.ORDER and _order_clip != null else 0.0
 	var panic := state == State.PANIC
 	_t_walk = fposmod(_t_walk + delta * maxf(hspeed, 0.4) / 1.3, _c_walk.length)
 	_t_panic = fposmod(_t_panic + delta * maxf(hspeed, 1.0) / 4.3, _c_panic.length)
@@ -405,8 +476,9 @@ func _update_layers(delta: float, hspeed: float) -> void:
 	for i in _spring.size():
 		_spring_vel[i] += (-_spring[i] * 140.0 - _spring_vel[i] * 13.0) * delta
 		_spring[i] += _spring_vel[i] * delta
-	balance = minf(balance + delta * 0.3, 1.0)
+	balance = minf(balance + delta * 0.35, 1.0)
 	_update_clutch(delta)
+	_update_suicide(delta)
 
 
 # ------------------------------------------------------------------ AI
@@ -415,11 +487,20 @@ func _physics_process(delta: float) -> void:
 	_time += delta
 	_head_damage = maxf(_head_damage - delta * 35.0, 0.0)
 	_update_arteries(delta)
+	if _neck_wound and not dead:
+		health -= _choke_drain * delta
 	if not dead and health <= 0.0:
 		_bleed_out()
+	if _suicide_t >= 0.0 and _suicide_t >= _suicide_fire and not dead:
+		_suicide_shot()
+	if armed and not dead:
+		_despair_check(delta)
 	match state:
 		State.DEAD:
 			_dead_process(delta)
+			return
+		State.CHOKE:
+			_choke_process(delta)
 			return
 		State.KNOCKED:
 			_knocked_process(delta)
@@ -431,10 +512,20 @@ func _physics_process(delta: float) -> void:
 			_stagger_process(delta)
 			return
 
-	var ai := ai_enabled and not display_only
-	if not ai and state != State.IDLE:
+	var ai := ai_enabled and not display_only and _suicide_t < 0.0
+	if _order != "" and (state == State.IDLE or state == State.WANDER or state == State.PANIC):
+		state = State.ORDER
+	if not ai and state != State.IDLE and state != State.ORDER:
 		state = State.IDLE
 	_state_time -= delta
+	var player := get_tree().get_first_node_in_group("player") as Node3D
+	if state == State.ORDER and _order == "come" and player:
+		_order_retarget -= delta
+		if _order_retarget <= 0.0:
+			_order_retarget = 0.5
+			_agent.target_position = player.global_position
+		if global_position.distance_to(player.global_position) < 1.8:
+			_set_order("stand")
 	if ai:
 		match state:
 			State.IDLE:
@@ -452,12 +543,13 @@ func _physics_process(delta: float) -> void:
 					_flee_target()
 
 	var desired := Vector3.ZERO
-	if state != State.IDLE and not _agent.is_navigation_finished():
+	var moving := state == State.WANDER or state == State.PANIC or (state == State.ORDER and _order == "come")
+	if moving and _suicide_t < 0.0 and not _agent.is_navigation_finished():
 		var next := _agent.get_next_path_position()
 		var to := next - global_position
 		to.y = 0.0
 		if to.length() > 0.05:
-			desired = to.normalized() * (_speed if state == State.WANDER else 4.3)
+			desired = to.normalized() * (4.3 if state == State.PANIC else _speed)
 	# reacting to a hit slows him down while he catches his balance
 	desired *= clampf(0.35 + balance * 0.65, 0.0, 1.0)
 
@@ -474,15 +566,22 @@ func _physics_process(delta: float) -> void:
 	var hspeed := Vector2(velocity.x, velocity.z).length()
 	if hspeed > 0.3 and desired != Vector3.ZERO:
 		rotation.y = lerp_angle(rotation.y, atan2(-velocity.x, -velocity.z), 7.0 * delta)
+	elif state == State.ORDER and player:
+		# keeps his eyes on whoever gives the orders
+		var tp := player.global_position - global_position
+		rotation.y = lerp_angle(rotation.y, atan2(-tp.x, -tp.z), 2.5 * delta)
 
 	if desired != Vector3.ZERO:
 		_stuck_time += delta
 		if _stuck_time > 1.5:
 			if global_position.distance_to(_last_pos) < 0.4:
 				if state == State.PANIC:
+					_stuck_count += 1 # cornered
 					_flee_target()
-				else:
+				elif state == State.WANDER:
 					_start_wander()
+			else:
+				_stuck_count = 0
 			_stuck_time = 0.0
 			_last_pos = global_position
 	if global_position.y < -40.0:
@@ -490,8 +589,7 @@ func _physics_process(delta: float) -> void:
 		return
 
 	var target_yaw := 0.0
-	if state == State.IDLE and ai:
-		var player := get_tree().get_first_node_in_group("player") as Node3D
+	if (state == State.IDLE and ai) or state == State.ORDER:
 		if player:
 			var local := to_local(player.global_position)
 			target_yaw = clampf(atan2(-local.x, -local.z), -1.0, 1.0)
@@ -499,7 +597,7 @@ func _physics_process(delta: float) -> void:
 
 	_update_layers(delta, hspeed)
 	_bleed(delta, 0.25, 0.45)
-	_blend_w = minf(_blend_w + delta / 0.25, 1.0)
+	_blend_w = minf(_blend_w + delta / _blend_time, 1.0)
 	_apply_pose(_compute_pose())
 
 
@@ -539,7 +637,7 @@ func _flee_target() -> void:
 
 ## Gunshot heard nearby.
 func alert(_from: Vector3) -> void:
-	if dead or display_only or not ai_enabled:
+	if dead or display_only or not ai_enabled or _order != "" or _suicide_t >= 0.0:
 		return
 	if state == State.IDLE or state == State.WANDER:
 		state = State.PANIC
@@ -566,10 +664,15 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 	var local := part.to_local(pos)
 	var local_normal := part.global_basis.inverse() * normal
 	if is_head and local.y < -0.065:
-		# neck: not an instant kill, but the carotid opens up
+		# neck: not an instant kill, but the carotid opens up and he chokes
+		# on his own blood until he bleeds out
 		is_head = false
-		damage = minf(damage, 55.0)
-		_add_artery(part, local, local_normal, 1.1)
+		damage = minf(damage, 40.0)
+		_add_artery(part, local, local_normal, 1.1, true, false)
+		if not dead:
+			_neck_wound = true
+			_choke_drain = minf(_choke_drain + 3.4, 7.0)
+			_bleed_left = 9999.0
 	elif is_head and not head_gone:
 		_head_damage += damage
 		if _head_damage >= 150.0:
@@ -615,7 +718,21 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 	_react(part_name, pos, dir, impulse)
 	balance -= impulse * BALANCE_COST.get(part_name, 0.02)
 	var knee := part_name.begins_with("shin") or (part_name.begins_with("thigh") and local.y < -0.13)
+	if knee:
+		_knee_hits += 1
 	var frame := Engine.get_physics_frames()
+	# fighting for air (or kneeling on orders): hits only rock him, unless
+	# they knock him down
+	var kneeling := state == State.ORDER and _order == "kneel"
+	if state == State.CHOKE or kneeling or (_neck_wound and not knee):
+		if balance < 0.0:
+			_knockdown(part, pos, dir, impulse)
+		elif state != State.CHOKE and _neck_wound:
+			_start_choke()
+		elif kneeling:
+			_start_clutch(_clutch_for(part_name, local))
+		_hit_frame = frame
+		return 0
 	var falling_on_knee := state == State.STAGGER and _stagger_fall
 	if knee and not falling_on_knee:
 		_start_stagger("knee_fall_" + part_name.right(1), true, part, pos, dir, impulse)
@@ -713,6 +830,7 @@ func _pick_stagger(part_name: String, dir: Vector3) -> String:
 
 
 func _capture_blend() -> void:
+	_blend_time = 0.25
 	_blend_from.clear()
 	for p in parts:
 		_blend_from.append(p.global_transform)
@@ -760,7 +878,9 @@ func _stagger_process(delta: float) -> void:
 	velocity = Vector3.ZERO
 	state = State.IDLE
 	_state_time = 0.4
-	if ai_enabled and not display_only:
+	if _neck_wound:
+		_start_choke()
+	elif ai_enabled and not display_only:
 		alert(global_position)
 
 
@@ -797,6 +917,9 @@ func _bleed(delta: float, cd_min: float, cd_max: float) -> void:
 func _go_limp(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> void:
 	_clutch = null
 	_clutch_w = 0.0
+	_suicide_t = -1.0
+	_suicide_w = 0.0
+	drop_gun(velocity + dir * 1.5 + Vector3.UP * 0.8)
 	collision_layer = 0
 	collision_mask = 0
 	var vel := velocity
@@ -901,6 +1024,8 @@ func _knocked_process(delta: float) -> void:
 		queue_free()
 		return
 	var settled := chest.linear_velocity.length() < 0.5 and pelvis.linear_velocity.length() < 0.5
+	if _neck_wound and health < 35.0:
+		return # too weak to get up: he bleeds out on the floor
 	if (_knock_time > 1.8 and settled) or _knock_time > 6.0:
 		_start_getup()
 
@@ -953,7 +1078,9 @@ func _getup_process(delta: float) -> void:
 		_state_time = 0.5
 		_w_walk = 0.0
 		_w_panic = 0.0
-		if ai_enabled and not display_only:
+		if _neck_wound:
+			_start_choke()
+		elif ai_enabled and not display_only:
 			alert(global_position)
 
 
@@ -1082,10 +1209,13 @@ func _in_heart(local: Vector3) -> bool:
 	return local.x > -0.11 and local.x < -0.012 and local.y > 0.02 and local.y < 0.13
 
 
-func _add_artery(part: RigidBody3D, local_pos: Vector3, local_dir: Vector3, strength: float, force := false) -> void:
+## `drain`: the jet also costs health (the neck wound drains at its own rate).
+func _add_artery(part: RigidBody3D, local_pos: Vector3, local_dir: Vector3, strength: float, force := false,
+		drain := true) -> void:
 	if _arteries.size() >= 6 and not force:
 		return
-	_arteries.append({"part": part, "pos": local_pos, "dir": local_dir.normalized(), "strength": strength, "age": 0.0, "acc": 0.0})
+	_arteries.append({"part": part, "pos": local_pos, "dir": local_dir.normalized(), "strength": strength, "age": 0.0,
+			"acc": 0.0, "drain": drain})
 
 
 ## Pulsing jets of blood. The heart keeps pumping while he lives (and he
@@ -1099,12 +1229,12 @@ func _update_arteries(delta: float) -> void:
 		var p: RigidBody3D = a.part
 		if not is_instance_valid(p):
 			continue
-		var pressure: float = a.strength * exp(-a.age / 14.0)
+		var pressure: float = a.strength * exp(-a.age / (14.0 if a.drain else 40.0))
 		if dead:
 			pressure *= exp(-_dead_time / 3.0)
 		if pressure < 0.05:
 			continue
-		if not dead:
+		if not dead and a.drain:
 			health -= pressure * 4.5 * delta
 		a.acc += delta
 		if a.acc < 0.035:
@@ -1116,7 +1246,7 @@ func _update_arteries(delta: float) -> void:
 		Blood.spray(wpos + wdir * 0.02, wdir + Vector3.UP * 0.2, int(2 + 5 * beat), speed * 0.85, speed * 1.15, 0.06, 0.013, 0.026)
 
 
-## Blood loss finished him: he just collapses.
+## Blood loss finished him: he just collapses (forwards, still holding on).
 func _bleed_out() -> void:
 	match state:
 		State.DEAD:
@@ -1124,7 +1254,8 @@ func _bleed_out() -> void:
 		State.KNOCKED:
 			_mark_dead(false)
 		_:
-			_die(chest, chest.global_position, -global_transform.basis.z, 2.0, false)
+			var fwd := -global_transform.basis.z
+			_die(chest, chest.global_position + Vector3.UP * 0.2, fwd, 3.0 if state == State.CHOKE else 2.0, false)
 
 
 ## Close shotgun blast to a limb tears it off at the joint.
@@ -1154,6 +1285,239 @@ func sever(part: RigidBody3D, dir: Vector3) -> void:
 	Blood.spray(pivot, dir, 30, 2.0, 6.0, 0.5, 0.012, 0.03)
 	Blood.mist(pivot, dir, 1.5)
 	_bleed_left = maxf(_bleed_left, 25.0)
+
+
+# ------------------------------------------------------------------ neck wound
+
+## Carotid open: both hands clamp the throat and stay there to the end.
+func _start_choke() -> void:
+	if state == State.CHOKE or dead:
+		return
+	_capture_blend()
+	_blend_time = 0.35
+	state = State.CHOKE
+	_order = ""
+	_order_clip = null
+	_clutch = null
+	_clutch_w = 0.0
+	_choke_t = randf() * 2.0
+	_cough_cd = randf_range(0.4, 1.0)
+	velocity.x = 0.0
+	velocity.z = 0.0
+
+
+func _choke_process(delta: float) -> void:
+	_choke_t += delta
+	_blend_w = minf(_blend_w + delta / _blend_time, 1.0)
+	if not _choke_kneel and health < 28.0:
+		# the legs give out: down on his knees, still holding his throat
+		_choke_kneel = true
+		_capture_blend()
+		_blend_time = 0.8
+		_choke_t = 0.0
+	var drift := Vector3.ZERO
+	if not _choke_kneel:
+		# reeling on the spot, a little this way and that
+		drift = global_transform.basis * Vector3(sin(_time * 1.3) * 0.22, 0.0, cos(_time * 0.8) * 0.18)
+	velocity.x = move_toward(velocity.x, drift.x, 2.0 * delta)
+	velocity.z = move_toward(velocity.z, drift.z, 2.0 * delta)
+	if is_on_floor():
+		velocity.y = -0.5
+	else:
+		velocity.y -= 9.8 * delta
+	move_and_slide()
+	_cough_cd -= delta
+	if _cough_cd <= 0.0:
+		_cough_cd = randf_range(1.0, 2.6) * (0.75 if _choke_kneel else 1.0)
+		_cough()
+	_update_layers(delta, 0.0)
+	_bleed(delta, 0.12, 0.28)
+	_apply_pose(_compute_pose())
+
+
+## A gasp that brings up blood: chest and head jerk, the mouth sprays.
+func _cough() -> void:
+	_spring_vel[1] += Vector3(-2.2, randf_range(-0.6, 0.6), 0.0)
+	_spring_vel[2] += Vector3(randf_range(2.0, 4.0), randf_range(-1.0, 1.0), 0.0)
+	if head_gone:
+		return
+	var mouth := head.to_global(Vector3(0, -0.055, -0.1))
+	Blood.spray(mouth, head.global_basis * Vector3(0, -0.35, -1), 7, 0.8, 2.4, 0.4, 0.008, 0.02)
+	Blood.drip(mouth, randf_range(0.015, 0.025))
+
+
+# ------------------------------------------------------------------ orders
+
+## The player's order (see Game.ORDERS). Returns false when he cannot obey.
+func order(cmd: String) -> bool:
+	if dead or display_only or _neck_wound or _suicide_t >= 0.0:
+		return false
+	match cmd:
+		"free":
+			_set_order("")
+			return true
+		"flee":
+			_set_order("")
+			if state == State.IDLE or state == State.WANDER:
+				state = State.PANIC
+				_state_time = randf_range(6.0, 10.0)
+				_flee_target()
+			return true
+	if _gun != null and (cmd == "drop" or cmd == "hands_up" or cmd == "kneel"):
+		# told to give up: with no way out an armed man may take the other exit
+		if _hopeless() and randf() < 0.5:
+			_start_suicide()
+			return true
+		drop_gun(-global_transform.basis.z * 0.5 + Vector3.UP * 0.4)
+	if cmd == "drop":
+		cmd = "hands_up"
+	_set_order(cmd)
+	return true
+
+
+func _set_order(cmd: String) -> void:
+	var clip_name: String = ORDER_CLIPS.get(cmd, "")
+	var c: MannequinAnims.Clip = _lib.clip(clip_name) if clip_name != "" else null
+	var posed := state == State.IDLE or state == State.WANDER or state == State.PANIC or state == State.ORDER
+	if posed and c != _order_clip:
+		_capture_blend()
+		_blend_time = 0.9 # going down on the knees / raising the hands takes a moment
+	_order = cmd
+	_order_clip = c
+	_t_order = 0.0
+	_order_retarget = 0.0
+	if cmd == "":
+		if state == State.ORDER:
+			state = State.IDLE
+			_state_time = randf_range(1.5, 3.0)
+	elif posed:
+		state = State.ORDER
+
+
+# ------------------------------------------------------------------ pistol
+
+func _attach_gun() -> void:
+	_gun = (load(GUN_SCENE) as PackedScene).instantiate()
+	var z := -GUN_BARREL
+	_gun.transform = Transform3D(Basis(GUN_TOP.cross(z), GUN_TOP, z), GUN_HAND)
+	farm_r.add_child(_gun)
+
+
+## Lets go of the pistol: it falls as a loose physics prop.
+func drop_gun(vel: Vector3) -> void:
+	if _gun == null:
+		return
+	var rb := RigidBody3D.new()
+	rb.mass = 1.1
+	rb.collision_layer = LAYER_DEBRIS
+	rb.collision_mask = LAYER_WORLD | LAYER_PROPS
+	rb.continuous_cd = true
+	rb.set_meta("surface", "metal")
+	var cs := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(0.032, 0.13, 0.2)
+	cs.shape = box
+	cs.position = Vector3(0, -0.005, -0.025)
+	rb.add_child(cs)
+	rb.add_to_group("dropped_guns")
+	get_tree().current_scene.add_child(rb)
+	rb.global_transform = _gun.global_transform
+	_gun.reparent(rb, false)
+	_gun.transform = Transform3D.IDENTITY
+	rb.linear_velocity = vel
+	rb.angular_velocity = Vector3(randf_range(-6, 6), randf_range(-6, 6), randf_range(-6, 6))
+	_gun = null
+	armed = false
+	var guns := get_tree().get_nodes_in_group("dropped_guns")
+	if guns.size() > MAX_DROPPED_GUNS:
+		guns[0].queue_free()
+
+
+func _hopeless() -> bool:
+	return _neck_wound or health < 45.0 or _knee_hits >= 2 or _stuck_count >= 2
+
+
+## Armed and out of options (throat cut open, shot to pieces with the shooter
+## close, crippled, cornered): now and then he decides to end it himself.
+func _despair_check(delta: float) -> void:
+	if _gun == null or _suicide_t >= 0.0 or display_only:
+		return
+	if state == State.STAGGER or state == State.KNOCKED or state == State.GETUP:
+		return
+	_despair_cd -= delta
+	if _despair_cd > 0.0:
+		return
+	_despair_cd = 1.0
+	var player := get_tree().get_first_node_in_group("player") as Node3D
+	var dist := global_position.distance_to(player.global_position) if player else 99.0
+	var chance := 0.0
+	if _neck_wound:
+		chance = 0.03
+		if _choke_kneel and not _choke_despair_rolled:
+			_choke_despair_rolled = true
+			chance = 0.55
+	elif health < 35.0 and dist < 10.0:
+		chance = 0.12
+	elif _knee_hits >= 2 and dist < 10.0:
+		chance = 0.1
+	elif state == State.PANIC and _stuck_count >= 2 and dist < 7.0:
+		chance = 0.2
+	if randf() < chance:
+		_start_suicide()
+
+
+## Raises the pistol to his temple, hesitates with a shaking hand, fires.
+func _start_suicide() -> void:
+	if _gun == null or _suicide_t >= 0.0 or dead:
+		return
+	_suicide_t = 0.0
+	_suicide_fire = randf_range(1.7, 3.4)
+	if _order != "":
+		_set_order("")
+	if state == State.WANDER or state == State.PANIC:
+		state = State.IDLE
+	velocity.x = 0.0
+	velocity.z = 0.0
+
+
+func _update_suicide(delta: float) -> void:
+	if _suicide_t < 0.0:
+		return
+	_suicide_t += delta
+	_suicide_w = smoothstep(0.0, 1.0, _suicide_t / 0.9)
+	if _suicide_t > 0.9:
+		_spring_vel[6] += Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * 18.0 * delta
+
+
+func _suicide_shot() -> void:
+	var muzzle := _gun.global_transform * GUN_MUZZLE
+	var c := head.global_position
+	var into := (c - muzzle).normalized()
+	var entry := c - into * 0.115
+	var exit := c + into * 0.115
+	Sfx.play_3d("gunshot", muzzle)
+	var flash := OmniLight3D.new()
+	flash.light_color = Color(1.0, 0.72, 0.38)
+	flash.light_energy = 4.0
+	flash.omni_range = 4.0
+	get_tree().current_scene.add_child(flash)
+	flash.global_position = muzzle
+	get_tree().create_timer(0.06).timeout.connect(flash.queue_free)
+	Blood.wound(head, entry, -into)
+	Blood.wound(head, exit, into)
+	Blood.mist(entry, -into, 0.6)
+	Blood.mist(exit, into, 2.2)
+	Blood.spray(exit, into + Vector3.UP * 0.15, 40, 2.5, 7.5, 0.35, 0.012, 0.035)
+	Gore.chunks(exit, into, 2, 3.5)
+	if _wounds.size() < 14:
+		_wounds.append([head, head.to_local(exit)])
+	_bleed_left = maxf(_bleed_left, 30.0)
+	suicided = true
+	health = 0.0
+	_die(head, exit, into, 5.0, true)
+	for n in get_tree().get_nodes_in_group("npcs"):
+		if n != self and n.global_position.distance_to(global_position) < 22.0:
+			n.alert(muzzle)
 
 
 ## Body hit position estimate for camera / spawn logic.

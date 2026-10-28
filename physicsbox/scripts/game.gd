@@ -1,6 +1,6 @@
 extends Node3D
 ## Level controller: environment, house, player, HUD, NPC spawning,
-## slow motion and the pause menu.
+## the player's orders, slow motion and the pause menu.
 
 const MAX_BODIES := 10
 const TARGET_ALIVE := 4
@@ -20,6 +20,7 @@ var _pause_panel: Control
 var _slowmo_button: Button
 var _auto_button: Button
 var _ai_button: Button
+var _guns_button: Button
 var _weapon_layer := CanvasLayer.new()
 var _weapon_panel: Control
 var _weapon_cards: Array = [] # [button, slot index]
@@ -110,6 +111,7 @@ func spawn_npc(pos: Vector3) -> Npc:
 	var npc := Npc.new()
 	npc.position = pos
 	npc.rotation.y = randf() * TAU
+	npc.armed = Npc.guns_enabled and randf() < Npc.ARMED_CHANCE
 	add_child(npc)
 	npc.died.connect(_on_npc_died)
 	return npc
@@ -147,7 +149,8 @@ func _alive_count() -> int:
 
 
 func _on_npc_died(npc: Npc, _headshot: bool) -> void:
-	kills += 1
+	if not npc.suicided:
+		kills += 1
 	_bodies.append(npc)
 	while _bodies.size() > MAX_BODIES:
 		var old: Npc = _bodies.pop_front()
@@ -160,8 +163,51 @@ func clear_bodies() -> void:
 		if is_instance_valid(b):
 			b.queue_free()
 	_bodies.clear()
+	for g in get_tree().get_nodes_in_group("dropped_guns"):
+		g.queue_free()
 	Blood.clear()
 	Gore.clear()
+
+
+# ------------------------------------------------------------------ orders
+
+## Shouts order `index` (Npc.ORDERS). The mannequin under the crosshair takes
+## it; with nobody there, everyone close by who can see the player does.
+func give_order(index: int) -> void:
+	var o: Array = Npc.ORDERS[index]
+	var targets := _order_targets()
+	var obeyed := 0
+	for npc in targets:
+		if npc.order(o[0]):
+			obeyed += 1
+	var note := ""
+	if targets.is_empty():
+		note = "никого рядом"
+	elif obeyed == 0:
+		note = "не реагирует"
+	hud.order_feedback(o[1], note)
+
+
+func _order_targets() -> Array[Npc]:
+	var out: Array[Npc] = []
+	var from := player.camera.global_position
+	var space := get_world_3d().direct_space_state
+	var q := PhysicsRayQueryParameters3D.create(from, from - player.camera.global_basis.z * 40.0, 1 | 2 | 4)
+	q.exclude = [player.get_rid()]
+	var hit := space.intersect_ray(q)
+	if not hit.is_empty() and hit.collider.has_meta("npc"):
+		var n: Npc = hit.collider.get_meta("npc")
+		if is_instance_valid(n) and not n.dead:
+			out.append(n)
+			return out
+	for n in get_tree().get_nodes_in_group("npcs"):
+		if n.dead or n.center().distance_to(from) > 14.0:
+			continue
+		var los := PhysicsRayQueryParameters3D.create(from, n.center(), 1 | 2)
+		los.exclude = [player.get_rid()]
+		if space.intersect_ray(los).is_empty():
+			out.append(n)
+	return out
 
 
 func _physics_process(delta: float) -> void:
@@ -188,6 +234,9 @@ func _process(_delta: float) -> void:
 			toggle_ai()
 		if Input.is_action_just_pressed("weapon_menu"):
 			toggle_weapon_menu()
+		for i in Npc.ORDERS.size():
+			if Input.is_action_just_pressed("order_%d" % (i + 1)):
+				give_order(i)
 
 
 ## AI on/off: with AI off mannequins stand still (they still react to hits).
@@ -291,6 +340,11 @@ func _build_pause_menu() -> void:
 	left.add_child(_auto_button)
 	_ai_button = UiKit.button("ИИ манекенов: ВКЛ" if Npc.ai_enabled else "ИИ манекенов: ВЫКЛ", toggle_ai)
 	left.add_child(_ai_button)
+	_guns_button = UiKit.button("", func():
+		Npc.guns_enabled = not Npc.guns_enabled
+		_guns_button.text = "Пистолеты у манекенов: " + ("ВКЛ" if Npc.guns_enabled else "ВЫКЛ"))
+	_guns_button.text = "Пистолеты у манекенов: " + ("ВКЛ" if Npc.guns_enabled else "ВЫКЛ")
+	left.add_child(_guns_button)
 	left.add_child(UiKit.button("Главное меню", _to_menu))
 	for b in left.get_children():
 		if b is Button:
