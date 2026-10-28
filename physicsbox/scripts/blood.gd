@@ -3,7 +3,7 @@ extends Node
 ## Simulates flying droplets, leaves splats where they land, spawns wounds,
 ## pools, mist bursts, dust and bullet holes.
 
-const MAX_DROPS := 260
+const MAX_DROPS := 420
 const MAX_SPLATS := 200
 const MAX_HOLES := 60
 const DROP_MASK := 1 | 2

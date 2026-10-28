@@ -34,9 +34,11 @@ const DEFS := [
 		"yaw": 3.5, "ads_dist": 0.36, "ads_fov": 0.8, "fire_last": "", "reload_empty": "",
 	},
 ]
-## Close shotgun blasts that put this many pellets into the torso spill guts.
-const GUTS_PELLETS := 3
+## Close shotgun blasts that put this many pellets into the torso spill the
+## organs; into a limb, tear it off.
+const GORE_PELLETS := 3
 const GUTS_RANGE := 4.0
+const SEVER_RANGE := 3.5
 
 
 class Slot:
@@ -279,7 +281,7 @@ func _shoot() -> void:
 	var fwd := -cam.global_basis.z
 	var space := get_world_3d().direct_space_state
 	var best_kind := -1
-	var torso_hits := {} # npc -> [count, part, pos, normal, dist]
+	var part_hits := {} # npc -> {part name: [count, part, pos, normal, dist]}
 	var played_impact := false
 	for pellet in d.pellets:
 		# uniform spread inside a cone
@@ -305,10 +307,11 @@ func _shoot() -> void:
 					var impulse: float = d.impulse * (1.0 if not npc.dead else 0.7) * falloff
 					var kind: int = npc.take_hit(collider, pos, normal, dir, d.damage.get(part, 10.0) * falloff, impulse, fx)
 					best_kind = maxi(best_kind, kind)
-					if part == "chest" or part == "pelvis":
-						var e: Array = torso_hits.get(npc, [0, collider, pos, normal, dist])
-						e[0] += 1
-						torso_hits[npc] = e
+					if not part_hits.has(npc):
+						part_hits[npc] = {}
+					var e: Array = part_hits[npc].get(part, [0, collider, pos, normal, dist])
+					e[0] += 1
+					part_hits[npc][part] = e
 				break
 			var surface: String = collider.get_meta("surface", "concrete")
 			if surface == "glass" and collider.has_method("shatter"):
@@ -321,11 +324,18 @@ func _shoot() -> void:
 			_impact(collider, pos, normal, dir, surface, not played_impact, falloff)
 			played_impact = true
 			break
-	for npc in torso_hits:
-		var e: Array = torso_hits[npc]
-		if e[0] >= GUTS_PELLETS and e[4] < GUTS_RANGE and is_instance_valid(npc):
-			if e[4] < 2.2 or randf() < 0.6:
-				npc.spill_guts(e[1], e[2], e[3], fwd)
+	for npc in part_hits:
+		if not is_instance_valid(npc):
+			continue
+		for part in part_hits[npc]:
+			var e: Array = part_hits[npc][part]
+			if e[0] < GORE_PELLETS:
+				continue
+			if part == "chest" or part == "pelvis":
+				if e[4] < GUTS_RANGE and (e[4] < 2.2 or randf() < 0.6):
+					npc.spill_organs(e[1], e[2], e[3], fwd)
+			elif part != "head" and e[4] < SEVER_RANGE:
+				npc.sever(e[1], fwd)
 	if best_kind >= 0:
 		hit_confirmed.emit(best_kind)
 		Sfx.play("hitmarker", -6.0 if best_kind == 0 else -2.0)
@@ -377,8 +387,6 @@ func _eject_shell() -> void:
 	s.collision_layer = 32
 	s.collision_mask = 1 | 2
 	s.continuous_cd = true
-	s.contact_monitor = true
-	s.max_contacts_reported = 1
 	var mi := MeshInstance3D.new()
 	mi.mesh = _shell_meshes[kind]
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -391,12 +399,6 @@ func _eject_shell() -> void:
 	s.global_transform = Transform3D(cam_basis * Basis(Vector3.FORWARD, PI / 2), _bone_world(current.eject).origin)
 	s.linear_velocity = player.velocity + cam_basis * Vector3(randf_range(1.6, 2.4), randf_range(1.8, 2.6), randf_range(-0.2, 0.4))
 	s.angular_velocity = Vector3(randf_range(-25, 25), randf_range(-25, 25), randf_range(-25, 25))
-	var state := {"played": 0}
-	s.body_entered.connect(func(_b):
-		if state.played < 2 and s.linear_velocity.length() > 0.6:
-			state.played += 1
-			Sfx.play_3d("shell", s.global_position, -4.0 - state.played * 5.0, 0.15 if kind == "pistol" else 0.3)
-	)
 	_shells.append(s)
 	if _shells.size() > MAX_SHELLS:
 		var old: RigidBody3D = _shells.pop_front()

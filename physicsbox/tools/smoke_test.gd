@@ -96,6 +96,13 @@ func _process(_delta: float) -> bool:
 			_shot("05_knocked")
 			_wait = 1
 		8:
+			if npc.dead:
+				# an opened artery can bleed him out before he gets up
+				print("died while down (arterial bleeding)")
+				npc = _spawn(Vector3(-4.0, 0.05, -1.4))
+				_step = 9
+				_wait = 10
+				return false
 			if npc.state == Npc.State.KNOCKED:
 				_knocked_seen = true
 			if npc.state == Npc.State.GETUP:

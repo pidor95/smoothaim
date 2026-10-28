@@ -113,8 +113,16 @@ var _bleed_cd := 0.0
 var _pool: MeshInstance3D
 var _pool_done := false
 var _dead_time := 0.0
-var _fall_sound_cd := 0.0
 var _guts_spilled := false
+var _skin_mat: StandardMaterial3D
+var _head_visuals: Array[MeshInstance3D] = []
+var _head_shape: CollisionShape3D
+var head_gone := false
+var _head_damage := 0.0 # decays; enough of it in a short time blows the head apart
+var _joint_of := {} # child part -> joint holding it to its parent
+var _severed := {}
+var _arteries: Array = [] # [{part, pos, dir, strength, age}]
+var _time := 0.0
 var _hit_frame := -1
 var _outfit: Dictionary
 
@@ -252,6 +260,7 @@ func _build_body() -> void:
 	var shirt := _mat(_outfit.shirt)
 	var pants := _mat(_outfit.pants)
 	var skin := _mat(_outfit.skin, 0.6)
+	_skin_mat = skin
 	var shoes := _mat(Color(0.04, 0.04, 0.04), 0.5)
 	var eyes := _mat(Color(1, 1, 1), 0.5, true)
 
@@ -273,9 +282,17 @@ func _build_body() -> void:
 	_visual(head, _capsule_mesh(0.05, 0.16), skin, Vector3(0, -0.14, 0))
 	_visual(head, _sphere_mesh(0.014, 0.02), eyes, Vector3(-0.042, 0.02, -0.103))
 	_visual(head, _sphere_mesh(0.014, 0.02), eyes, Vector3(0.042, 0.02, -0.103))
+	for i in head.get_child_count():
+		if i != 1: # everything but the neck goes when the head is blown off
+			_head_visuals.append(head.get_child(i))
 	var hsh := SphereShape3D.new()
 	hsh.radius = 0.125
 	_shape(head, hsh)
+	_head_shape = head.get_child(head.get_child_count() - 1)
+	var nsh := CapsuleShape3D.new() # neck: shots here open the carotid
+	nsh.radius = 0.055
+	nsh.height = 0.17
+	_shape(head, nsh, Vector3(0, -0.14, 0))
 
 	uarm_l = _limb("uarm_l", 2.5, 0.058, 0.34, shirt)
 	farm_l = _limb("farm_l", 1.8, 0.05, 0.3, shirt)
@@ -372,6 +389,11 @@ func _update_layers(delta: float, hspeed: float) -> void:
 # ------------------------------------------------------------------ AI
 
 func _physics_process(delta: float) -> void:
+	_time += delta
+	_head_damage = maxf(_head_damage - delta * 35.0, 0.0)
+	_update_arteries(delta)
+	if not dead and health <= 0.0:
+		_bleed_out()
 	match state:
 		State.DEAD:
 			_dead_process(delta)
@@ -514,6 +536,31 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 		_wounds.append([part, part.to_local(pos)])
 	_bleed_left = maxf(_bleed_left, 14.0)
 
+	var local := part.to_local(pos)
+	var local_normal := part.global_basis.inverse() * normal
+	if is_head and local.y < -0.065:
+		# neck: not an instant kill, but the carotid opens up
+		is_head = false
+		damage = minf(damage, 55.0)
+		_add_artery(part, local, local_normal, 1.1)
+	elif is_head and not head_gone:
+		_head_damage += damage
+		if _head_damage >= 150.0:
+			_explode_head(pos, dir)
+			if dead:
+				part.apply_impulse(dir * impulse, pos - part.global_position)
+				return 0
+			health = 0.0
+			_die(part, pos, dir, impulse * 1.5, true)
+			return 2
+	else:
+		var artery := _artery_strength(part_name, local)
+		if artery > 0.0:
+			_add_artery(part, local, local_normal, artery)
+		if part_name == "chest" and _in_heart(local):
+			damage = 999.0
+			_add_artery(part, local, local_normal, 1.3)
+
 	if dead:
 		part.apply_impulse(dir * impulse, pos - part.global_position)
 		return 0
@@ -531,6 +578,7 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 	if killed:
 		if is_head:
 			Blood.mist(pos + dir * 0.1, dir, 2.2)
+			Gore.chunks(pos, dir + Vector3.UP * 0.3, 2, 3.0)
 			Blood.spray(pos + dir * 0.15, dir + Vector3.UP * 0.25, 34, 3.5, 9.0, 0.45, 0.012, 0.035)
 		_die(part, pos, dir, impulse * (1.5 if is_head else 1.0), is_head)
 		return 2 if is_head else 1
@@ -619,11 +667,6 @@ func _go_limp(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> 
 		p.collision_mask = LAYER_WORLD | LAYER_PROPS | LAYER_PARTS
 		p.linear_velocity = vel
 	part.apply_impulse(dir * impulse, pos - part.global_position)
-	for p in [chest, pelvis, head]:
-		p.contact_monitor = true
-		p.max_contacts_reported = 2
-		if not p.body_entered.is_connected(_on_part_contact):
-			p.body_entered.connect(_on_part_contact.bind(p))
 
 
 func _knockdown(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> void:
@@ -680,6 +723,7 @@ func _cone(a: RigidBody3D, b: RigidBody3D, pivot: Vector3, rest_center: Vector3,
 	j.node_a = j.get_path_to(a)
 	j.node_b = j.get_path_to(b)
 	_joints.append(j)
+	_joint_of[b] = j
 
 
 func _hinge(a: RigidBody3D, b: RigidBody3D, pivot: Vector3, rest_center: Vector3, lower: float, upper: float) -> void:
@@ -692,22 +736,13 @@ func _hinge(a: RigidBody3D, b: RigidBody3D, pivot: Vector3, rest_center: Vector3
 	j.node_a = j.get_path_to(a)
 	j.node_b = j.get_path_to(b)
 	_joints.append(j)
-
-
-func _on_part_contact(_body: Node, part: RigidBody3D) -> void:
-	if _fall_sound_cd > 0.0:
-		return
-	var speed := part.linear_velocity.length()
-	if speed > 1.8:
-		_fall_sound_cd = 0.25
-		Sfx.play_3d("body_fall", part.global_position, clampf(-14.0 + speed * 2.0, -14.0, 0.0))
+	_joint_of[b] = j
 
 
 # ------------------------------------------------------------------ knocked down / getting up
 
 func _knocked_process(delta: float) -> void:
 	_knock_time += delta
-	_fall_sound_cd -= delta
 	_bleed(delta, 0.15, 0.35)
 	if chest.global_position.y < -40.0:
 		queue_free()
@@ -724,6 +759,7 @@ func _start_getup() -> void:
 	for j in _joints:
 		j.queue_free()
 	_joints.clear()
+	_joint_of.clear()
 	for p in parts:
 		p.freeze = true
 		p.collision_mask = 0
@@ -770,7 +806,6 @@ func _getup_process(delta: float) -> void:
 
 func _dead_process(delta: float) -> void:
 	_dead_time += delta
-	_fall_sound_cd -= delta
 	if chest.global_position.y < -40.0:
 		queue_free()
 		return
@@ -791,12 +826,21 @@ func _dead_process(delta: float) -> void:
 
 # ------------------------------------------------------------------ guts
 
-## Close shotgun blast to the belly: a string of intestine spills out of the
-## wound and hangs / drags on physics joints.
-func spill_guts(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3) -> void:
+## Close shotgun blast to the torso: organs (Blender meshes) fall out and a
+## string of intestine spills from the wound, hanging on physics joints.
+func spill_organs(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3) -> void:
 	if _guts_spilled:
 		return
 	_guts_spilled = true
+	var organs := ["heart", "lung", "lung"] if part == chest else ["stomach", "liver", "kidney"]
+	for o in organs:
+		var b := Basis.from_euler(Vector3(randf(), randf(), randf()) * TAU)
+		Gore.spawn(o, Transform3D(b, pos + normal * 0.05), normal * randf_range(1.2, 2.8) + dir * 1.2 + Vector3.UP * 0.6, null, 0.35)
+	Gore.chunks(pos, normal + dir * 0.5, 4, 3.5)
+	if part == chest:
+		Blood.spray(pos, normal + Vector3.DOWN * 0.3, 26, 1.5, 4.5, 0.5, 0.015, 0.04)
+		_bleed_left = maxf(_bleed_left, 25.0)
+		return
 	var mat := _mat(Color(0.72, 0.3, 0.32), 0.25)
 	var dark := _mat(Color(0.45, 0.08, 0.1), 0.3)
 	var seg_len := 0.085
@@ -836,6 +880,130 @@ func spill_guts(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3) 
 			_wounds.append([s, Vector3.ZERO])
 	Blood.spray(pos, normal + Vector3.DOWN * 0.3, 26, 1.5, 4.5, 0.5, 0.015, 0.04)
 	Blood.mist(pos, normal, 1.6)
+	_bleed_left = maxf(_bleed_left, 25.0)
+
+
+# ------------------------------------------------------------------ head, arteries, limbs
+
+func _explode_head(pos: Vector3, dir: Vector3) -> void:
+	head_gone = true
+	for v in _head_visuals:
+		v.visible = false
+	_head_shape.disabled = true
+	var stump := MeshInstance3D.new()
+	stump.mesh = Gore.mesh("stump")
+	stump.position = Vector3(0, -0.075, 0)
+	head.add_child(stump)
+	var c := head.global_position
+	var away := (dir + Vector3.UP * 0.35).normalized()
+	for i in 4:
+		var b := Basis.from_euler(Vector3(randf(), randf(), randf()) * TAU)
+		var spread := Vector3(randf_range(-1, 1), randf_range(-0.3, 1), randf_range(-1, 1))
+		Gore.spawn("skull_%d" % i, Transform3D(b, c + spread * 0.06), away * randf_range(2.5, 6.0) + spread * 2.5, _skin_mat, 0.12)
+	for i in 4:
+		var b := Basis.from_euler(Vector3(randf(), randf(), randf()) * TAU)
+		var spread := Vector3(randf_range(-1, 1), randf_range(-0.2, 1), randf_range(-1, 1))
+		Gore.spawn("brain_%d" % (i % 3), Transform3D(b, c + spread * 0.04), away * randf_range(1.5, 5.0) + spread * 1.8, null, 0.1)
+	for i in 2:
+		Gore.spawn("eye", Transform3D(Basis.IDENTITY, c + Vector3(randf_range(-0.05, 0.05), 0.02, 0)), away * randf_range(2.0, 4.0) + Vector3(randf_range(-1.5, 1.5), 1.5, randf_range(-1.5, 1.5)), null, 0.02)
+	Gore.chunks(c, away, 6, 5.5)
+	Blood.spray(c, away, 70, 3.0, 10.0, 0.6, 0.012, 0.04)
+	Blood.mist(c, dir, 3.0)
+	Blood.mist(c, -dir + Vector3.UP, 1.5)
+	_wounds.append([head, Vector3(0, -0.06, 0)])
+	_add_artery(head, Vector3(0, -0.055, 0), Vector3.UP, 1.5, true)
+	_bleed_left = maxf(_bleed_left, 30.0)
+
+
+## Inner thigh / inner upper arm hits may open an artery.
+func _artery_strength(part_name: String, local: Vector3) -> float:
+	match part_name:
+		"thigh_l":
+			return 0.9 if local.x > 0.02 and local.y > -0.08 and randf() < 0.6 else 0.0
+		"thigh_r":
+			return 0.9 if local.x < -0.02 and local.y > -0.08 and randf() < 0.6 else 0.0
+		"uarm_l":
+			return 0.6 if local.x > 0.015 and randf() < 0.45 else 0.0
+		"uarm_r":
+			return 0.6 if local.x < -0.015 and randf() < 0.45 else 0.0
+	return 0.0
+
+
+func _in_heart(local: Vector3) -> bool:
+	return local.x > -0.11 and local.x < -0.012 and local.y > 0.02 and local.y < 0.13
+
+
+func _add_artery(part: RigidBody3D, local_pos: Vector3, local_dir: Vector3, strength: float, force := false) -> void:
+	if _arteries.size() >= 6 and not force:
+		return
+	_arteries.append({"part": part, "pos": local_pos, "dir": local_dir.normalized(), "strength": strength, "age": 0.0, "acc": 0.0})
+
+
+## Pulsing jets of blood. The heart keeps pumping while he lives (and he
+## bleeds out); after death the pressure fades within a few seconds.
+func _update_arteries(delta: float) -> void:
+	if _arteries.is_empty():
+		return
+	var beat := pow(maxf(sin(_time * TAU * 1.3), 0.0), 2.0) * 0.8 + 0.2
+	for a in _arteries:
+		a.age += delta
+		var p: RigidBody3D = a.part
+		if not is_instance_valid(p):
+			continue
+		var pressure: float = a.strength * exp(-a.age / 14.0)
+		if dead:
+			pressure *= exp(-_dead_time / 3.0)
+		if pressure < 0.05:
+			continue
+		if not dead:
+			health -= pressure * 4.5 * delta
+		a.acc += delta
+		if a.acc < 0.035:
+			continue
+		a.acc = 0.0
+		var wpos: Vector3 = p.to_global(a.pos)
+		var wdir: Vector3 = (p.global_basis * a.dir).normalized()
+		var speed := (2.4 + 4.6 * beat) * pressure
+		Blood.spray(wpos + wdir * 0.02, wdir + Vector3.UP * 0.2, int(2 + 5 * beat), speed * 0.85, speed * 1.15, 0.06, 0.013, 0.026)
+
+
+## Blood loss finished him: he just collapses.
+func _bleed_out() -> void:
+	match state:
+		State.DEAD:
+			return
+		State.KNOCKED:
+			_mark_dead(false)
+		_:
+			_die(chest, chest.global_position, -global_transform.basis.z, 2.0, false)
+
+
+## Close shotgun blast to a limb tears it off at the joint.
+func sever(part: RigidBody3D, dir: Vector3) -> void:
+	if _severed.has(part) or part == chest or part == pelvis or part == head:
+		return
+	if not dead:
+		health = 0.0
+		if state == State.KNOCKED:
+			_mark_dead(false)
+		else:
+			_die(part, part.global_position, dir, 6.0, false)
+	var j: Joint3D = _joint_of.get(part)
+	if j == null:
+		return
+	var pivot := j.global_position
+	var bi := parts.find(part)
+	var parent_part: RigidBody3D = parts[_lib.parent[bi]]
+	j.queue_free()
+	_joint_of.erase(part)
+	_severed[part] = true
+	_add_artery(parent_part, parent_part.to_local(pivot), parent_part.global_basis.inverse() * (pivot - parent_part.global_position).normalized(), 1.0, true)
+	_add_artery(part, part.to_local(pivot), part.global_basis.inverse() * (pivot - part.global_position).normalized(), 0.5, true)
+	_wounds.append([parent_part, parent_part.to_local(pivot)])
+	part.apply_central_impulse(dir * 7.0 + Vector3.UP * 2.0)
+	Gore.chunks(pivot, dir, 4, 4.0)
+	Blood.spray(pivot, dir, 30, 2.0, 6.0, 0.5, 0.012, 0.03)
+	Blood.mist(pivot, dir, 1.5)
 	_bleed_left = maxf(_bleed_left, 25.0)
 
 

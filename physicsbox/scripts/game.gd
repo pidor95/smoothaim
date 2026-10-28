@@ -25,6 +25,7 @@ var _ai_button: Button
 func _ready() -> void:
 	add_to_group("settings_listeners")
 	Blood.clear()
+	Gore.clear()
 	Engine.time_scale = 1.0
 	AudioServer.playback_speed_scale = 1.0
 	_build_environment()
@@ -155,6 +156,7 @@ func clear_bodies() -> void:
 			b.queue_free()
 	_bodies.clear()
 	Blood.clear()
+	Gore.clear()
 
 
 func _physics_process(delta: float) -> void:

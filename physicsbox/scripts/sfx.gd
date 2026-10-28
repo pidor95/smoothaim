@@ -8,8 +8,6 @@ const SOUNDS := {
 	"shotgun_shot": ["shotgun_shot"],
 	"shotgun_reload": ["shotgun_reload"],
 	"shotgun_pump": ["shotgun_pump"],
-	"shell": ["shell_0", "shell_1", "shell_2"],
-	"body_fall": ["body_fall_0", "body_fall_1", "body_fall_2"],
 	"wall_hit": ["wall_hit_0", "wall_hit_1"],
 	"wood_hit": ["wood_hit"],
 	"metal_hit": ["metal_hit"],

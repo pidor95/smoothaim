@@ -115,6 +115,7 @@ func _process(delta: float) -> void:
 		if _respawn <= 0.0:
 			dummy.queue_free()
 			Blood.clear()
+			Gore.clear()
 			_spawn_dummy()
 
 

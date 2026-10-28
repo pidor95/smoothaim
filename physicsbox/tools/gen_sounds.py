@@ -107,23 +107,6 @@ def reload_snd():
     return mix(mag_out, at(mag_in, 0.55), at(slide_back, 1.05), at(slide_fwd, 1.25))
 
 
-def shell(seed_f):
-    dur = 0.35
-    t = t_axis(dur)
-    tone = sum(np.sin(2 * np.pi * f * t) * a for f, a in [(seed_f, 0.6), (seed_f * 2.76, 0.4), (seed_f * 5.4, 0.25)])
-    hit = tone * env(dur, 0.0005, 18)
-    bounce = at(tone[: int(SR * 0.15)] * env(0.15, 0.0005, 30) * 0.4, 0.12)
-    return mix(hit, bounce, at(tone[: int(SR * 0.08)] * env(0.08, 0.0005, 50) * 0.2, 0.2))
-
-
-def body_fall(variant):
-    dur = 0.45
-    t = t_axis(dur)
-    thud = np.sin(2 * np.pi * (60 + 15 * variant) * t) * env(dur, 0.002, 16)
-    cloth = lowpass(noise(dur), 1500) * env(dur, 0.005, 22) * 0.6
-    return mix(thud * 1.4, cloth)
-
-
 def wall_hit(variant):
     dur = 0.3
     t = t_axis(dur)
@@ -179,10 +162,6 @@ if __name__ == "__main__":
     save("gunshot", gunshot(), 0.95)
     save("dry_fire", dry_fire(), 0.6)
     save("reload", reload_snd(), 0.7)
-    for i, f in enumerate([3100, 3600, 4200]):
-        save(f"shell_{i}", shell(f), 0.35)
-    for i in range(3):
-        save(f"body_fall_{i}", body_fall(i), 0.7)
     for i in range(2):
         save(f"wall_hit_{i}", wall_hit(i), 0.6)
     save("wood_hit", wood_hit(), 0.6)
