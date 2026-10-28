@@ -8,8 +8,11 @@
 - Текстуры земли, стен и крыш: ambientCG (CC0). Небо (HDRI): Poly Haven, kloofendal_48d_partly_cloudy_puresky (CC0).
 - Деревья: сгенерированы в Blender (Sapling Tree Gen) и запечены в спрайты.
 - Модели Су-57, Ми-24, Панцирь-С1, МиГ-29, AH-64, M1 Абрамс: файлы, присланные автором игры, обработаны в Blender (`tools/blender_vehicles.py`, `tools/blender_models2.py`), затенение (AO) запечено скриптом `tools/blender_ao.py`.
+- Су-25М: «Low poly Ukrainian Su-25M» by 42manako (https://sketchfab.com/3d-models/low-poly-ukrainian-su-25m-a17e07be737b4d0c8d359949662a90a9), лицензия CC BY 4.0.
+- Су-24М со Storm Shadow (low-poly FBX с текстурами) и Су-27 (экспорт из Roblox): файлы, присланные автором игры. Все три штурмовика обработаны скриптом `tools/blender_attack.py` (шасси и подвески — отдельные узлы).
+- Авиабаза (полоса, ангар, вертолётная площадка, гараж) и укрепления точек штурма (бункер, ЗУ-23-2, склад): построены в игре из примитивов (`scripts/base.gd`, `scripts/props.gd`).
 - Оружие пехоты (АК-47, Mossberg M500 с глушителем, ПЗРК «Стингер»): модели, присланные автором игры, обработаны скриптом `tools/blender_weapons.py`.
 - Солдат: построен скриптом `tools/blender_soldier.py` (отдельные части тела для процедурной анимации и рэгдолла).
-- Звуки и спрайты эффектов: синтезированы скриптом `tools/make_fx.py`.
+- Звуки и спрайты эффектов: синтезированы скриптом `tools/make_fx.py`; выстрел дробовика с глушителем и передёргивание цевья — `tools/make_sounds_v25.py`.
 
 Сборка ассетов: `tools/process_map.py` (карта), `tools/blender_*.py` (Blender 4.5, деревья, здания, техника).

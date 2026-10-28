@@ -83,5 +83,5 @@ jobs:
         run: |
           gh release delete boevoy-front-native -y --cleanup-tag || true
           gh release create boevoy-front-native out/BoevoyFront.apk out/BoevoyFront-Windows.zip out/BoevoyFront-Server-Linux.zip out/BoevoyFront-Server-ARM.zip \
-            --target "$GITHUB_SHA" --title "Боевой Фронт 2.4" \
-            --notes "Нативная версия на Godot 4: реальная карта Прохоровки, тени, небо, деревья, дома. BoevoyFront.apk — Android (разрешите установку из неизвестных источников). BoevoyFront-Windows.zip — для ПК, распакуйте и запустите BoevoyFront.exe. BoevoyFront-Server-Linux.zip / -ARM.zip — выделенный сервер для онлайна (инструкция в SERVER.md внутри)."
+            --target "$GITHUB_SHA" --title "Боевой Фронт 2.5" \
+            --notes "Версия 2.5: штурмовики Су-25М, Су-24М (Storm Shadow) и Су-27, бомбы с прицелом CCIP, Х-25; штурм точек A/B/C; вылет с авиабазы (ангар и полоса, вертолётная площадка, гараж); новое меню для ПК; реакции пехоты на попадания. Реальная карта Прохоровки, тени, небо, деревья, дома. BoevoyFront.apk — Android (разрешите установку из неизвестных источников). BoevoyFront-Windows.zip — для ПК, распакуйте и запустите BoevoyFront.exe. BoevoyFront-Server-Linux.zip / -ARM.zip — выделенный сервер для онлайна (инструкция в SERVER.md внутри)."

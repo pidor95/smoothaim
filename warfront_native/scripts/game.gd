@@ -5,14 +5,20 @@ const D := preload("res://scripts/data.gd")
 const Vehicle := preload("res://scripts/vehicle.gd")
 const Soldier := preload("res://scripts/soldier.gd")
 const Flare := preload("res://scripts/flare.gd")
+const Intro := preload("res://scripts/intro.gd")
 const G := D.G
 const ZONE := D.ZONE
 const ZONE_KILL := D.ZONE_KILL
 const CAMC := {"plane": [30.0, 7.0], "heli": [24.0, 6.0], "tank": [15.0, 5.5], "inf": [3.3, 0.35]}
 # infantry fights around the Prokhorovka village; each side gathers on its own edge of it
 const INF_SPAWN := {"blue": Vector2(2150, 250), "red": Vector2(2380, -680)}
+# assault points on the red side: flat fields, no houses or trees
+const OBJECTIVES := [["A", Vector2(-2150, -2850)], ["B", Vector2(-150, -2300)], ["C", Vector2(2050, -1350)]]
+# what each point holds: type and offset (east, towards the blue side)
+const OBJ_LAYOUT := [["bunker", Vector2(0, 0)], ["zu23", Vector2(30, -12)], ["depot", Vector2(-32, -8)]]
 
 signal player_died(attacker_name: String, weapon: String)
+signal match_won
 
 var world: Node3D
 var fx: Node3D
@@ -35,6 +41,9 @@ var hit_stats := {}              # body-part hits (for tests)         # every ki
 var kills := 0
 var deaths := 0
 var time := 0.0
+var objectives: Array = []       # {"n": "A", "p": Vector3, "units": [], "taken": bool}
+var won := false
+var online_match := false
 
 # player controls, written by the HUD and the keyboard
 var ctrl := {"thr": 0.7, "slot": 0, "fire": false, "fire_pressed": false, "flare": false, "a": false, "b": false, "man": false, "zoom": false}
@@ -96,17 +105,21 @@ func clear() -> void:
 	player = null
 	kills = 0
 	deaths = 0
+	objectives.clear()
+	won = false
+	time = 0.0
 	fx.draw_tracers([], Vector3.ZERO)
 
 
 func start(vehicle_type: String, online: bool) -> void:
 	clear()
+	online_match = online
 	player = _new_vehicle(vehicle_type, "blue", {"player": true, "name": settings.get("nick", "") if online and settings.get("nick", "") != "" else ("Игрок" if online else "Вы")})
 	respawn_player(vehicle_type)
 	if not online:
 		var list: Array[String] = []
 		for i in int(settings["bp"]):
-			list.append("mig29" if i % 2 else "su57")
+			list.append(["su57", "mig29", "su27"][i % 3])
 		for i in int(settings["bh"]):
 			list.append("mi24" if i % 2 else "ah64")
 		for i in int(settings["bt"]):
@@ -118,6 +131,8 @@ func start(vehicle_type: String, online: bool) -> void:
 			spawn(b)
 		for i in int(settings.get("ba", 3)):
 			spawn(_new_vehicle("soldier", "blue", {"bot": true, "name": "Союзник"}))
+		if settings.get("assault", true):
+			_make_objectives()
 	playing = true
 	paused = false
 
@@ -154,6 +169,66 @@ func respawn_player(t: String) -> void:
 	cam_yaw = player.heading
 	cam_pitch = 0.0 if cat == "plane" or cat == "inf" else -0.12
 	cam_sm_init = false
+	# offline the player rolls out of the airbase: hangar and runway, helipad or garage
+	if not online_match and cat != "inf" and settings.get("intro", true):
+		player.intro = Intro.new(self, player)
+
+
+func skip_intro() -> void:
+	if player and player.intro != null:
+		player.intro.skip()
+
+
+func _finish_intro(v) -> void:
+	v.intro.finish()
+	if v == player:
+		ctrl["thr"] = {"plane": 0.9, "heli": 0.6}.get(v.cat, 0.75)
+		reset_camera_to(v.fwd() if v.cat == "plane" else Vehicle.dir_of(v.heading))
+		cam_sm_init = false
+		flash("К БОЮ!", "grn")
+
+
+# ---------------------------------------------------------------- assault points
+func _make_objectives() -> void:
+	for o in OBJECTIVES:
+		var c: Vector2 = o[1]
+		var units := []
+		for spec in OBJ_LAYOUT:
+			var off: Vector2 = spec[1]
+			# blue attacks from the south (+Z): the bunker slit and the guns face that way
+			var q := Vector2(c.x + off.x, c.y - off.y)
+			var v = _new_vehicle(spec[0], "red", {"bot": true, "name": "%s %s" % [D.TYPES[spec[0]]["name"], o[0]]})
+			v.reset()
+			v.place(Vector3(q.x, world.height(q.x, q.y), q.y), PI + randf_range(-0.2, 0.2), 0.0)
+			v.bot = {"think": randf(), "tgt": null, "last_t": null, "seen_t": 0.0, "gun_t": randf() * 3.0, "aim_err": Vector3.ZERO}
+			v.inp["aim_point"] = v.pos + Vehicle.dir_of(v.heading) * 100.0 + Vector3(0, 20, 0)
+			units.append(v)
+		objectives.append({"n": o[0], "p": Vector3(c.x, world.height(c.x, c.y), c.y), "units": units, "taken": false})
+
+
+func _check_objectives() -> void:
+	var left := 0
+	for o in objectives:
+		if o["taken"]:
+			continue
+		if objective_left(o) == 0:
+			o["taken"] = true
+			flash("ТОЧКА %s ЗАХВАЧЕНА!" % o["n"], "grn")
+			audio.tone("headshot", -4.0, 0.7)
+			killfeed.append({"txt": "Точка %s захвачена" % o["n"], "t": 8.0})
+		else:
+			left += 1
+	if left == 0 and not objectives.is_empty() and not won:
+		won = true
+		get_tree().create_timer(2.5, false).timeout.connect(func(): match_won.emit())
+
+
+func objective_left(o: Dictionary) -> int:
+	var n := 0
+	for u in o["units"]:
+		if not u.dead:
+			n += 1
+	return n
 
 
 func spawn_point(cat: String, team: String) -> Array:
@@ -226,8 +301,14 @@ func _process(delta: float) -> void:
 			fx.wreck(v.pos + Vector3(0, 2, 0))
 		if v.remote:
 			continue
+		if v.intro != null:
+			if v.intro.update(dt):
+				_finish_intro(v)
+			v.physics(dt)
+			v.sync()
+			continue
 		if v.dead:
-			if v.is_bot:
+			if v.is_bot and v.cat != "struct":
 				v.respawn_t -= dt
 				if v.respawn_t <= 0.0:
 					spawn(v)
@@ -235,6 +316,8 @@ func _process(delta: float) -> void:
 		if v.is_bot:
 			if v.cat == "inf":
 				_bot_inf(v, dt)
+			elif v.cat == "struct":
+				_bot_struct(v, dt)
 			else:
 				_bot_think(v, dt)
 		v.physics(dt)
@@ -243,7 +326,7 @@ func _process(delta: float) -> void:
 		_handle_weapons(v, dt)
 		if v.cat == "tank" and v.speed > 2.5:
 			_run_over(v)
-		if v.cat != "tank" and v.cat != "inf" and world.building_hit(v.pos, 2.0):
+		if (v.cat == "plane" or v.cat == "heli") and world.building_hit(v.pos, 2.0):
 			kill(v, null, "crash")
 			continue
 		var r := Vector2(v.pos.x, v.pos.z).length()
@@ -327,6 +410,10 @@ func _unhandled_key_input(e: InputEvent) -> void:
 		return
 	var k := e as InputEventKey
 	if k.echo:
+		return
+	if player.intro != null:
+		if k.pressed and (k.keycode == KEY_SPACE or k.keycode == KEY_ENTER):
+			skip_intro()
 		return
 	if k.keycode == KEY_SPACE:
 		if k.pressed and not ctrl["fire"]:
@@ -451,6 +538,9 @@ func _update_camera(dt: float) -> void:
 	cam.fov = lerpf(cam.fov, fov, 1.0 - exp(-6.0 * dt))
 	if player == null or (player.dead and not player.wreck):
 		return
+	if player.intro != null:
+		_intro_camera(dt)
+		return
 	cam.near = 0.03 if first else 0.1
 	if first and player.dead:
 		# death: the view stays in the head and goes down with the body
@@ -492,6 +582,26 @@ func _update_camera(dt: float) -> void:
 	var gh: float = world.surf_h(ideal.x, ideal.z) + 1.5
 	ideal.y = maxf(ideal.y, gh)
 	cam.global_position = ideal
+
+
+## Roll-out intro: the camera starts in front of the vehicle (looking into the hangar or garage) and swings
+## round behind it as it moves off.
+func _intro_camera(dt: float) -> void:
+	var it = player.intro
+	var k := smoothstep(0.0, 1.0, it.t / (it.length * 0.5))
+	var dist: float = {"plane": 34.0, "heli": 30.0}.get(player.cat, 17.0)
+	var phi := lerpf(0.75, PI, k)
+	var target: Vector3 = player.pos + Vehicle.dir_of(player.heading + phi) * dist + Vector3(0, lerpf(3.5, 7.0, k), 0)
+	target.y = maxf(target.y, world.surf_h(target.x, target.z) + 1.5)
+	if not cam_sm_init or cam.global_position.distance_to(target) > 300.0:
+		cam.global_position = target
+		cam_sm_init = true
+	cam.global_position = cam.global_position.lerp(target, 1.0 - exp(-3.0 * dt))
+	cam.look_at(player.pos + Vector3(0, 1.5, 0), Vector3.UP)
+	cam.near = 0.1
+	cam_fwd = -cam.global_transform.basis.z
+	cam_yaw = player.heading
+	cam_pitch = 0.0
 
 
 ## The soldier's eyes, where the first-person camera sits.
@@ -585,8 +695,12 @@ func can_hit(owner, v) -> bool:
 func _find_lock(v, dir: Vector3, W: Dictionary):
 	var best = null
 	var ba: float = W["cone"]
+	var ground: bool = W.get("ground_only", false)
 	for o in vehicles:
-		if o == v or o.dead or o.team == v.team or o.in_smoke or o.cat == "inf" or (W.get("air_only", false) and o.cat == "tank"):
+		if o == v or o.dead or o.team == v.team or o.in_smoke or o.cat == "inf" or o.intro != null:
+			continue
+		var on_ground: bool = o.cat == "tank" or o.cat == "struct"
+		if (W.get("air_only", false) and on_ground) or (ground and not on_ground):
 			continue
 		var to: Vector3 = o.pos - v.pos
 		var d := to.length()
@@ -641,11 +755,10 @@ func _handle_weapons(v, dt: float) -> void:
 			v.lock_target = null
 			v.lock_time = 0.0
 			v.locked = false
-	elif v.is_bot:
-		for s in v.T["slots"]:
-			if D.WEAP[s["w"]].get("homing", false):
-				_update_lock(v, s["w"], dt)
-				break
+	elif v.is_bot and v.cat != "struct":
+		var lw_: String = bot_missile(v)
+		if lw_ != "":
+			_update_lock(v, lw_, dt)
 	if v.inp["flare"]:
 		var fi: int = v.slot_of("flare")
 		if fi >= 0 and v.cd.get("flare", 0.0) <= 0.0 and (v.ammo[fi] > 0 or infinite_ammo(v)):
@@ -687,13 +800,13 @@ func _fire(v, wname: String) -> void:
 	var W: Dictionary = D.WEAP[wname]
 	var pl: bool = v.is_player
 	match wname:
-		"gun":
-			var mp: Vector3 = v.lw(-0.9, 0.35, 7.0)
+		"gun", "gun30", "gun23":
+			var mp: Vector3 = v.lw(-0.9, 0.35, 7.0) if wname == "gun" else v.lw(-0.45, -0.7, 6.0)
 			_bullet(v, mp, v.aim_dir, W, v.vel, wname)
-			v.flash_muzzle(mp, 1.0)
+			v.flash_muzzle(mp, 1.3 if wname == "gun30" else 1.0)
 			v.alt_side = not v.alt_side
 			if v.alt_side:
-				audio.play3d("gun", mp, -4.0 if pl else -8.0, 60.0)
+				audio.play3d("gun", mp, -4.0 if pl else -8.0, 60.0, 0.75 if wname == "gun30" else (1.25 if wname == "gun23" else 1.0))
 		"gun360":
 			var mp: Vector3 = v.chin_pos() + v.aim_dir * 2.0
 			_bullet(v, mp, v.aim_dir, W, v.vel, wname)
@@ -732,7 +845,7 @@ func _fire(v, wname: String) -> void:
 			spawn_rocket(v, mp, d)
 			if pl and net and net.active:
 				net.event({"t": "r", "p": mp, "d": d})
-		"aam", "atgm":
+		"aam", "atgm", "r60", "r73", "r27", "kh25":
 			v.alt_side = not v.alt_side
 			var mp: Vector3 = v.lw(3.4 if v.alt_side else -3.4, -0.6, -1.0) if v.cat == "plane" else v.lw(2.45 if v.alt_side else -2.45, -0.5, 0.6)
 			var tg = v.lock_target if v.locked else null
@@ -748,6 +861,31 @@ func _fire(v, wname: String) -> void:
 				net.event({"t": "m", "w": wname, "p": mp, "d": d, "tid": tg.peer if tg != null and tg.remote else (-1 if tg == null else 0)})
 			if v.is_bot:
 				v.lock_time = 0.0
+		"storm":
+			# dropped from under the belly, then the turbojet starts and it flies low to the target
+			var k: int = v.ammo[v.slot]
+			var mp: Vector3 = v.lw(0.9 if k % 2 else -0.9, -1.4, 0.5)
+			var tg = v.lock_target if v.locked else null
+			var ap: Vector3 = v.inp["aim_point"]
+			ap.y = world.height(ap.x, ap.z)
+			spawn_missile(v, mp, v.fwd(), wname, tg, ap)
+			v.update_stores()
+			if pl and net and net.active:
+				net.event({"t": "m", "w": wname, "p": mp, "d": v.fwd(), "ap": ap, "tid": tg.peer if tg != null and tg.remote else (-1 if tg == null else 0)})
+		"fab250", "fab500":
+			v.alt_side = not v.alt_side
+			var mp: Vector3 = v.lw(1.6 if v.alt_side else -1.6, -1.3, 0.3)
+			spawn_bomb(v, mp, v.vel, wname)
+			if pl and net and net.active:
+				net.event({"t": "b", "w": wname, "p": mp, "u": v.vel})
+		"zu23":
+			v.alt_side = not v.alt_side
+			var side := Vector3(-v.aim_dir.z, 0, v.aim_dir.x).normalized() * (0.17 if v.alt_side else -0.17)
+			var mp: Vector3 = v.muzzle_pos() + side
+			_bullet(v, mp, v.aim_dir, W, Vector3.ZERO, wname)
+			v.flash_muzzle(mp, 1.2)
+			if v.alt_side:
+				audio.play3d("gun", mp, -6.0, 70.0, 0.9)
 		"aa30":
 			# twin 30 mm guns on both sides of the turret
 			v.alt_side = not v.alt_side
@@ -777,14 +915,20 @@ func _fire(v, wname: String) -> void:
 			var sp: float = W["spread"] * (1.0 + v.speed * 0.35) * (0.45 if pl and ctrl["zoom"] else 1.0)
 			for i in int(W.get("pellets", 1)):
 				_bullet(v, mp, d, W, Vector3.ZERO, wname, sp)
-			v.flash_muzzle(mp, 1.4 if wname == "shotgun" else 1.0)
-			audio.play3d(wname, mp, -2.0 if pl else -6.0, 30.0)
+			v.flash_muzzle(mp, 0.5 if wname == "shotgun" else 1.0)
+			# the shotgun wears a suppressor: a muffled thump, then the pump is racked
+			audio.play3d(wname, mp, (-4.0 if wname == "shotgun" else -2.0) if pl else -8.0, 20.0 if wname == "shotgun" else 30.0)
+			if wname == "shotgun":
+				v.pump_t = 0.75
+				get_tree().create_timer(0.32, false).timeout.connect(func():
+					if is_instance_valid(v) and not v.dead:
+						audio.play3d("pump", v.muzzle_world, -5.0 if pl else -12.0, 10.0))
 			if pl:
-				# muzzle climb that recovers by itself
-				var kick := 0.045 if wname == "shotgun" else 0.012
-				recoil_p = minf(recoil_p + kick, 0.12)
-				cam_yaw += randf_range(-0.3, 0.3) * kick
-				cam_shake = maxf(cam_shake, 0.25 if wname == "shotgun" else 0.08)
+				# a small muzzle climb that settles back by itself (the view must stay on target)
+				var kick := 0.022 if wname == "shotgun" else 0.0045
+				recoil_p = minf(recoil_p + kick, 0.035)
+				cam_yaw += randf_range(-0.25, 0.25) * kick
+				cam_shake = maxf(cam_shake, 0.18 if wname == "shotgun" else 0.05)
 			if pl and net and net.active:
 				pass
 		"stinger":
@@ -839,15 +983,56 @@ func spawn_rocket(owner, p: Vector3, d: Vector3) -> void:
 	audio.play3d("rocket", p, -4.0, 60.0)
 
 
-func spawn_missile(owner, p: Vector3, d: Vector3, wname: String, target) -> void:
+func spawn_missile(owner, p: Vector3, d: Vector3, wname: String, target, aimp = null) -> void:
 	var W: Dictionary = D.WEAP[wname]
 	var n := _missile_node(false)
+	if W.get("cruise", false):
+		n.get_child(0).scale = Vector3(2.6, 1.7, 2.6)
 	var m := {"p": p, "prev": p, "d": d, "vel": owner.vel + d * W["launch"], "t": 0.0, "W": W, "w": wname, "owner": owner, "target": target,
-		"life": W["life"], "node": n, "seen": {}, "rocket": false}
+		"life": W["life"], "node": n, "seen": {}, "rocket": false, "cruise": W.get("cruise", false), "aimp": aimp if aimp != null else p + d * 3000.0}
 	n.global_position = p
 	m["trail"] = fx.trail(n, false)
 	missiles.append(m)
-	audio.play3d("missile", p, -2.0, 80.0)
+	audio.play3d("missile", p, -2.0 if not m["cruise"] else -8.0, 80.0)
+
+
+## Free-fall bomb: released with the aircraft's speed, falls on a ballistic arc and blows up on impact.
+func spawn_bomb(owner, p: Vector3, vel: Vector3, wname: String) -> void:
+	var W: Dictionary = D.WEAP[wname]
+	var n := Node3D.new()
+	add_child(n)
+	var big: bool = wname == "fab500"
+	var body := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.2 if big else 0.16
+	cm.bottom_radius = 0.12 if big else 0.1
+	cm.height = 2.4 if big else 1.7
+	cm.radial_segments = 10
+	body.mesh = cm
+	body.rotation.x = PI / 2.0
+	body.material_override = preload("res://scripts/props.gd").olive()
+	n.add_child(body)
+	n.global_position = p
+	missiles.append({"p": p, "prev": p, "d": vel.normalized(), "vel": vel + Vector3(0, -2.0, 0), "t": 0.0, "W": W, "w": wname, "owner": owner,
+		"target": null, "life": W["life"], "node": n, "seen": {}, "rocket": true, "bomb": true, "trail": null})
+	audio.play3d("flare", p, -10.0, 30.0, 0.6)
+
+
+## Where a bomb released now would hit the ground (for the CCIP mark), or null when it falls too far away.
+func bomb_impact(v, wname: String):
+	var W: Dictionary = D.WEAP[wname]
+	var p: Vector3 = v.lw(0, -1.3, 0.3)
+	var vel: Vector3 = v.vel + Vector3(0, -2.0, 0)
+	var dt := 0.1
+	for i in 600:
+		var sp := vel.length()
+		vel -= vel / maxf(sp, 1.0) * W["drag"] * sp * sp * dt
+		vel.y -= G * dt
+		var q := p + vel * dt
+		if q.y < world.surf_h(q.x, q.z):
+			return q
+		p = q
+	return null
 
 
 func drop_flares(v) -> void:
@@ -918,7 +1103,7 @@ func remote_cannon(v, p: Vector3, d: Vector3) -> void:
 
 # ---------------------------------------------------------------- damage
 func damage(victim, amt: float, attacker, wname: String) -> void:
-	if victim == null or victim.dead:
+	if victim == null or victim.dead or victim.intro != null:
 		return
 	if attacker == player and victim != attacker:
 		hit_t = 0.15
@@ -937,6 +1122,12 @@ func damage(victim, amt: float, attacker, wname: String) -> void:
 		cam_shake = maxf(cam_shake, 0.5)
 	if victim.hp <= 0.0:
 		kill(victim, attacker, wname)
+	elif victim.cat == "inf" and amt > 0.0:
+		# a hit that does not kill: the soldier flinches and staggers
+		victim.flinch(victim.last_impulse, victim.hit_part)
+		if victim == player:
+			recoil_p += randf_range(0.01, 0.03)
+			cam_yaw += randf_range(-0.03, 0.03)
 
 
 func splash(p: Vector3, r: float, dmg: float, attacker, wname: String, except = null) -> void:
@@ -975,6 +1166,18 @@ func kill(v, attacker, wname: String) -> void:
 		v.start_wreck()
 		v.respawn_t = 12.0
 		audio.play3d("flesh", v.centre(), -4.0, 20.0)
+	elif v.cat == "struct":
+		# fortification destroyed: it burns; an ammo depot goes up with secondary blasts
+		var depot: bool = v.type == "depot"
+		explosion(v.pos + Vector3(0, 1.5, 0), 3.2 if depot else 1.8)
+		v.wreck_fx = fx.burning(v)
+		v.charred()
+		if depot:
+			for k in 4:
+				var q: Vector3 = v.pos + Vector3(randf_range(-6, 6), randf_range(1, 4), randf_range(-6, 6))
+				get_tree().create_timer(0.4 + k * 0.45, false).timeout.connect(func(): explosion(q, 1.6))
+			splash(v.pos, 30.0, 160.0, attacker, "blast", v)
+		_check_objectives.call_deferred()
 	elif v.cat != "tank" and wname != "crash" and wname != "zone":
 		# shot down in the air: a small blast, then the burning wreck falls
 		explosion(v.pos, 1.0)
@@ -1116,11 +1319,15 @@ func _update_missiles(dt: float) -> void:
 		m["t"] += dt
 		var spd: float = m["vel"].length()
 		var vd: Vector3 = m["vel"] / maxf(spd, 1.0)
-		if m["t"] < W["burn"]:
-			m["vel"] += vd * W["thrust"] * dt
-		m["vel"] -= vd * W["drag"] * spd * spd * dt
-		m["vel"].y -= G * dt
-		if not m["rocket"]:
+		if m.get("cruise", false):
+			if _cruise(m, dt):
+				continue
+		else:
+			if m["t"] < W.get("burn", 0.0):
+				m["vel"] += vd * W["thrust"] * dt
+			m["vel"] -= vd * W["drag"] * spd * spd * dt
+			m["vel"].y -= G * dt
+		if not m["rocket"] and not m.get("cruise", false):
 			var t = m["target"]
 			if t != null and not (t is Flare) and (t.dead or t.in_smoke):
 				if not t.dead:
@@ -1128,7 +1335,7 @@ func _update_missiles(dt: float) -> void:
 				t = null
 				m["target"] = null
 			# radar AAM loses lock in the doppler notch, at very low target speed or during post-stall manoeuvres
-			if t != null and not (t is Flare) and m["w"] == "aam" and t.cat == "plane":
+			if t != null and not (t is Flare) and (m["w"] == "aam" or m["w"] == "r27") and t.cat == "plane":
 				var to: Vector3 = t.pos - m["p"]
 				var dist := to.length()
 				if dist > 220.0:
@@ -1200,7 +1407,7 @@ func _update_missiles(dt: float) -> void:
 		n.global_position = m["p"]
 		if m["d"].cross(Vector3.UP).length_squared() > 1e-4:
 			n.look_at(m["p"] + m["d"], Vector3.UP)
-		if m["t"] > W["burn"] and n.has_node("Flame"):
+		if m["t"] > W.get("burn", 0.0) and n.has_node("Flame"):
 			n.get_node("Flame").queue_free()
 			m["trail"].emitting = false
 
@@ -1218,13 +1425,56 @@ func _boom(m: Dictionary, hit) -> void:
 	if hit != null:
 		damage(hit, W["dmg"], m["owner"], m["w"])
 	splash(m["p"], W.get("splash", 14.0), W.get("sdmg", W["dmg"] * 0.35), m["owner"], m["w"], hit)
-	explosion(m["p"], 0.9 if m["rocket"] else 1.3)
+	var big := {"fab250": 2.6, "fab500": 3.4, "storm": 3.0, "kh25": 1.8}
+	explosion(m["p"], big.get(m["w"], 0.9 if m["rocket"] else 1.3))
 
 
 func _remove_missile(m: Dictionary) -> void:
 	missiles.erase(m)
-	fx.detach_trail(m["trail"])
+	if m["trail"] != null:
+		fx.detach_trail(m["trail"])
 	m["node"].queue_free()
+
+
+## Storm Shadow: drops clear, then flies at a constant speed hugging the terrain towards the target (or the point
+## it was launched at), climbs near the end and dives onto it. Returns true when it hit and was removed.
+func _cruise(m: Dictionary, dt: float) -> bool:
+	var W: Dictionary = m["W"]
+	var p: Vector3 = m["p"]
+	if m["t"] < 1.0:
+		m["vel"].y -= G * dt
+		return false
+	var t = m["target"]
+	if t != null and (not is_instance_valid(t) or t.dead):
+		m["target"] = null
+		t = null
+	var tp: Vector3 = t.pos + Vector3(0, 1.0, 0) if t != null else m["aimp"]
+	var flat := Vector3(tp.x - p.x, 0, tp.z - p.z)
+	var hd := flat.length()
+	var spd: float = W["cruise_spd"]
+	var want: Vector3
+	if hd < 700.0 and m.get("popped", false) or hd < 250.0:
+		want = (tp - p).normalized() * spd                       # terminal dive
+	else:
+		# terrain following: the highest ground over the next few hundred metres plus the cruise height
+		var dir := flat / maxf(hd, 1.0)
+		var gmax := 0.0
+		for k in [0.0, 150.0, 300.0, 500.0]:
+			var q: Vector3 = p + dir * k
+			gmax = maxf(gmax, world.surf_h(q.x, q.z))
+		var target_y: float = gmax + W["cruise_alt"]
+		if hd < 1800.0:
+			target_y = world.height(tp.x, tp.z) + 260.0           # pop-up before the dive
+			m["popped"] = p.y > target_y - 60.0 or m.get("popped", false)
+		want = dir * spd
+		want.y = clampf((target_y - p.y) * 0.9, -60.0, 60.0)
+		want = want.normalized() * spd
+	m["vel"] = m["vel"].move_toward(want, W["max_g"] * G * dt * 2.0)
+	if p.distance_to(tp) < W["prox"]:
+		_boom(m, t)
+		_remove_missile(m)
+		return true
+	return false
 
 
 func _update_flares(dt: float) -> void:
@@ -1368,6 +1618,58 @@ func _bot_inf(b, dt: float) -> void:
 
 
 
+## Fortification gunner: the ZU-23 shoots at aircraft in range, the bunker machine gun at troops and vehicles nearby.
+func _bot_struct(b, dt: float) -> void:
+	var inp: Dictionary = b.inp
+	var B: Dictionary = b.bot
+	var Df: Dictionary = D.DIFF[settings["diff"]]
+	inp["fire"] = false
+	inp["fire_pressed"] = false
+	inp["flare"] = false
+	if b.type == "depot":
+		return
+	var aa: bool = b.type == "zu23"
+	var piv: Vector3 = b.pos + Vector3(0, b.T.get("aim_h", 1.5), 0)
+	B["think"] -= dt
+	if B["think"] <= 0.0:
+		B["think"] = randf_range(0.5, 0.9)
+		var best = null
+		var bd := 2200.0 if aa else 520.0
+		for v in vehicles:
+			if v.dead or v.team == b.team or v.intro != null:
+				continue
+			var air: bool = v.cat == "plane" or v.cat == "heli"
+			if air != aa or v.cat == "struct":
+				continue
+			var d: float = v.pos.distance_to(b.pos)
+			if d < bd and has_los(piv, v.pos + Vector3(0, 1.0, 0)):
+				bd = d
+				best = v
+		B["tgt"] = best
+	var t = B["tgt"] if B["tgt"] != null and is_instance_valid(B["tgt"]) and not B["tgt"].dead else null
+	if t != B["last_t"]:
+		B["last_t"] = t
+		B["seen_t"] = 0.0
+	B["seen_t"] += dt
+	B["gun_t"] += dt
+	if t == null:
+		inp["aim_point"] = b.pos + Vehicle.dir_of(b.heading + sin(B["gun_t"] * 0.2) * 0.6) * 100.0 + Vector3(0, 30.0 if aa else 1.5, 0)
+		return
+	var W: Dictionary = D.WEAP[b.weapon()]
+	var dist: float = t.pos.distance_to(piv)
+	var tt: float = dist / W["spd"]
+	if randf() < dt * 0.8:
+		B["aim_err"] = Vector3(randf_range(-1, 1), randf_range(-0.6, 0.8), randf_range(-1, 1)) * (Df["err"] * 0.3 if aa else Df["inf"] * 1.5)
+	var ap: Vector3 = t.pos + Vector3(0, 1.0 if t.cat == "inf" else 0.0, 0) + t.vel * tt + B["aim_err"] * dist
+	ap.y += 0.5 * G * tt * tt
+	inp["aim_point"] = ap
+	# bursts: the difficulty sets how much of the time the gunner is firing
+	var cycle := 2.8
+	if settings["shoot"] and B["seen_t"] > Df["react"] and fmod(B["gun_t"], cycle) < cycle * (Df["gun"] + 0.1) \
+			and b.aim_dir.angle_to((ap - piv).normalized()) < 0.06:
+		_bot_use(b, b.weapon())
+
+
 ## Air-defence bot (Pantsir): missiles at aircraft it has locked, 30 mm guns at anything close.
 func _bot_aa(b, t, piv: Vector3, fired: bool) -> void:
 	var inp: Dictionary = b.inp
@@ -1409,13 +1711,35 @@ func _nearest_enemy(b):
 	var best = null
 	var bd := INF
 	for v in vehicles:
-		if v.dead or v.team == b.team or (b.cat == "plane" and v.cat == "inf"):
+		if v.dead or v.team == b.team or v.intro != null or (b.cat == "plane" and v.cat == "inf"):
 			continue
 		var d: float = v.pos.distance_squared_to(b.pos)
 		if d < bd:
 			bd = d
 			best = v
 	return best
+
+
+## The bot's guided weapon against aircraft (or the first guided one it has), "" when none.
+func bot_missile(b) -> String:
+	var any := ""
+	for s in b.T["slots"]:
+		var W: Dictionary = D.WEAP[s["w"]]
+		if W.get("homing", false) and not W.get("ground_only", false):
+			if b.cat == "plane" and not W.get("air_only", false) and s["w"] != "aam":
+				any = s["w"] if any == "" else any
+				continue
+			return s["w"]
+	return any
+
+
+## The bot's gun (the first automatic bullet weapon).
+func bot_gun(b) -> String:
+	for s in b.T["slots"]:
+		var W: Dictionary = D.WEAP[s["w"]]
+		if W["auto"] and W.has("spd"):
+			return s["w"]
+	return ""
 
 
 func _bot_use(b, wname: String) -> bool:
@@ -1488,10 +1812,10 @@ func _bot_plane(b, t, threat, td: float, dt: float, fired: bool) -> void:
 		if B["can_launch"] and not fired:
 			var a := f.angle_to(aim)
 			if b.locked and B["msl_t"] <= 0.0 and dist > 800.0 and dist < 3800.0:
-				if _bot_use(b, "aam"):
+				if _bot_use(b, bot_missile(b)):
 					B["msl_t"] = Df["msl"] * randf_range(0.7, 1.3)
 			elif B["can_shoot"] and dist < 900.0 and a < 0.035 + Df["err"]:
-				_bot_use(b, "gun")
+				_bot_use(b, bot_gun(b))
 		aim = (aim + B["aim_err"] * 0.5).normalized()
 	else:
 		B["wander"] += dt * 0.2
@@ -1596,7 +1920,12 @@ func _bot_tank(b, t, dt: float, fired: bool) -> void:
 	B["cwait"] = B.get("cwait", 0.0) - dt
 	if B["wp"] == null or B["wp_t"] <= 0.0 or b.blocked > 1.5 or Vector2(B["wp"].x - b.pos.x, B["wp"].z - b.pos.z).length() < 40.0:
 		B["wp_t"] = randf_range(15, 30)
-		if t != null and t.cat == "tank" and t.pos.distance_to(b.pos) > 900.0:
+		var guard: Array = objectives.filter(func(o): return not o["taken"]) if b.team == "red" else []
+		if not guard.is_empty() and randf() < 0.6:
+			# red armour holds the ground around the assault points
+			var o: Dictionary = guard[randi() % guard.size()]
+			B["wp"] = o["p"] + Vector3(randf_range(-260, 260), 0, randf_range(-60, 300))
+		elif t != null and t.cat == "tank" and t.pos.distance_to(b.pos) > 900.0:
 			B["wp"] = Vector3(t.pos.x + randf_range(-350, 350), 0, t.pos.z + randf_range(-350, 350))
 		else:
 			var a := randf() * TAU

@@ -43,6 +43,12 @@ func _layout() -> void:
 	u = s.y / 720.0
 	btn.clear()
 	var cat: String = game.player.cat if game.player else "plane"
+	btn["skip"] = {"rect": Rect2(s.x / 2.0 - 170 * u, s.y - 120 * u, 340 * u, 64 * u), "round": false}
+	if desktop:
+		# PC: mouse and keyboard only, no touch buttons; the throttle is just a gauge
+		if cat != "inf":
+			btn["thr"] = {"rect": Rect2(22 * u, s.y * 0.3, 20 * u, s.y * 0.4), "round": false}
+		return
 	if cat != "inf":
 		btn["thr"] = {"rect": Rect2(26 * u, s.y * 0.2, 74 * u, s.y * 0.52), "round": false}
 	else:
@@ -125,7 +131,9 @@ func _input(e: InputEvent) -> void:
 				return
 			if (e is InputEventScreenTouch or e is InputEventScreenDrag) and e.device == InputEvent.DEVICE_ID_EMULATION:
 				return
-		elif e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT and not _on_button(e.position):
+		elif e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+			if game.player.intro != null and _hit("skip", e.position):
+				game.skip_intro()
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 			get_viewport().set_input_as_handled()
 			return
@@ -177,6 +185,13 @@ func _press(i: int, p: Vector2) -> void:
 		if k.begins_with("slot"):
 			game.select_slot(int(k.substr(4)))
 			role = "none"
+		if k == "skip":
+			if game.player.intro != null:
+				game.skip_intro()
+			role = "none"
+			break
+		elif game.player.intro != null:
+			continue
 		match k:
 			"pause":
 				pause_pressed.emit()
@@ -240,11 +255,11 @@ func _set_thr(y: float) -> void:
 # ---------------------------------------------------------------- drawing helpers
 func _text(p: Vector2, t: String, sz: float, col := Color.WHITE, align := HORIZONTAL_ALIGNMENT_LEFT, wdt := -1.0) -> void:
 	var fs := int(sz * u * 1.3)
-	if align == HORIZONTAL_ALIGNMENT_CENTER and wdt < 0.0:
+	if align != HORIZONTAL_ALIGNMENT_LEFT and wdt < 0.0:
 		var w := font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		p.x -= w / 2.0
+		p.x -= w / 2.0 if align == HORIZONTAL_ALIGNMENT_CENTER else w
 		align = HORIZONTAL_ALIGNMENT_LEFT
-	draw_string_outline(font, p, t, align, wdt, fs, int(5 * u), Color(0, 0, 0, 0.6))
+	draw_string_outline(font, p, t, align, wdt, fs, maxi(2, int(sz * 0.25 * u)), Color(0, 0, 0, 0.6))
 	draw_string(font, p, t, align, wdt, fs, col)
 
 
@@ -290,9 +305,13 @@ func _draw() -> void:
 	var s := size
 	var wname: String = p.weapon()
 	var W: Dictionary = D.WEAP[wname]
+	_objective_markers()
+	if p.intro != null:
+		_draw_intro(p)
+		return
 	# labels over other vehicles
 	for v in game.vehicles:
-		if v == p or v.dead:
+		if v == p or v.dead or v.cat == "struct":
 			continue
 		var sp = _screen(v.pos + Vector3(0, v.T["r"] + 2.0, 0))
 		var d: float = v.pos.distance_to(p.pos)
@@ -310,8 +329,11 @@ func _draw() -> void:
 	if p.cat == "inf" and W.has("spread"):
 		var cam0: Camera3D = game.cam
 		gap = 4.0 + tan(W["spread"] * (1.0 + p.speed * 0.35) * (0.45 if c["zoom"] else 1.0) * 2.0) / tan(deg_to_rad(cam0.fov) / 2.0) * s.y / (2.0 * u)
+	# aiming down the sights the rifle's own sights do the job: only a small dot stays
+	var ads: bool = p.cat == "inf" and c["zoom"] and wname != "stinger"
 	for a in [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1)]:
-		draw_line(ctr + a * gap * u, ctr + a * (gap + 10) * u, ch, 2.0 * u)
+		if not ads:
+			draw_line(ctr + a * gap * u, ctr + a * (gap + 10) * u, ch, 2.0 * u)
 	if p.cat == "inf":
 		draw_circle(ctr, 1.6 * u, ch)
 	if game.hit_t > 0.0:
@@ -332,6 +354,14 @@ func _draw() -> void:
 			if gp != null:
 				draw_arc(gp, 10 * u, 0, TAU, 20, COL_ORG, 2.0 * u)
 				draw_circle(gp, 2.0 * u, COL_ORG)
+		if W.get("bomb", false):
+			_draw_ccip(p, wname)
+		if wname == "storm" and not p.locked:
+			var ap: Vector3 = p.inp["aim_point"]
+			var tp = _screen(Vector3(ap.x, game.world.height(ap.x, ap.z), ap.z))
+			if tp != null:
+				draw_rect(Rect2(tp - Vector2(14, 14) * u, Vector2(28, 28) * u), COL_ORG, false, 2.0 * u)
+				_text(tp + Vector2(0, 34 * u), "точка удара", 14, COL_ORG, HORIZONTAL_ALIGNMENT_CENTER)
 		if W.get("homing", false):
 			var cam: Camera3D = game.cam
 			var rpx := tan(W["cone"]) / tan(deg_to_rad(cam.fov) / 2.0) * s.y / 2.0
@@ -362,6 +392,7 @@ func _draw() -> void:
 	if p.cat == "inf" and p.sprinting:
 		st += "  БЕГ"
 	_text(Vector2(28 * u, 88 * u), st, 16, Color(0.9, 0.95, 1.0))
+	_objective_bar()
 	# top-right: score, kill feed, radar
 	_text(Vector2(s.x - 470 * u, 40 * u), "Уничтожено: %d  ·  Потери: %d" % [game.kills, game.deaths], 16)
 	var y := 66.0
@@ -370,6 +401,8 @@ func _draw() -> void:
 		y += 20.0
 	_radar(Rect2(s.x - 188 * u, 76 * u, 170 * u, 170 * u))
 	_button("pause", "II")
+	if desktop:
+		_draw_desktop(p, T)
 	# warnings
 	var warns: Array = []
 	if game.flash_t > 0.0:
@@ -422,7 +455,7 @@ func _draw() -> void:
 			ammo_t = "%d / %d" % [p.mag[i], p.ammo[i] - p.mag[i]]
 		_button("slot%d" % i, "%d  %s" % [i + 1, sl["n"]], i == p.slot, ammo_t)
 		var cdv: float = p.cd.get(sl["w"], 0.0)
-		if not Wi["auto"] and cdv > 0.0:
+		if not Wi["auto"] and cdv > 0.0 and btn.has("slot%d" % i):
 			var br: Rect2 = btn["slot%d" % i]["rect"]
 			draw_rect(Rect2(br.position.x, br.end.y - 5 * u, br.size.x * clampf(cdv * Wi["rate"], 0.0, 1.0), 5 * u), COL_ORG)
 
@@ -498,4 +531,123 @@ func _radar(r: Rect2) -> void:
 		if v == p or v.dead:
 			continue
 		plot.call(v.pos, COL_BLU if v.team == p.team else COL_RED, (6.0 if v.cat == "tank" else 5.0) * u)
+	for o in game.objectives:
+		var d: Vector3 = o["p"] - p.pos
+		var fwd := Vector2(-sin(yaw), -cos(yaw))
+		var right := Vector2(cos(yaw), -sin(yaw))
+		var q := Vector2(Vector2(d.x, d.z).dot(right), -Vector2(d.x, d.z).dot(fwd)) / rng * R
+		if q.length() > R - 8.0:
+			q = q.normalized() * (R - 8.0)
+		_text(cc + q + Vector2(0, 5 * u), o["n"], 12, COL_BLU if o["taken"] else COL_ORG, HORIZONTAL_ALIGNMENT_CENTER)
 	draw_colored_polygon(PackedVector2Array([cc + Vector2(0, -7) * u, cc + Vector2(-5, 5) * u, cc + Vector2(5, 5) * u]), COL_GRN)
+
+
+# ---------------------------------------------------------------- assault points, intro, bombs, PC panels
+func _objective_bar() -> void:
+	if game.objectives.is_empty():
+		return
+	var n: int = game.objectives.size()
+	var w := 84.0 * u
+	var x0 := size.x / 2.0 - (n * w + (n - 1) * 8 * u) / 2.0
+	for i in n:
+		var o: Dictionary = game.objectives[i]
+		var r := Rect2(x0 + i * (w + 8 * u), 12 * u, w, 46 * u)
+		_panel(r, Color(0.1, 0.3, 0.55, 0.6) if o["taken"] else Color(0.45, 0.12, 0.08, 0.55), 8)
+		_text(Vector2(r.position.x + 12 * u, r.position.y + 31 * u), o["n"], 22, Color.WHITE)
+		var left: int = game.objective_left(o)
+		_text(Vector2(r.end.x - 10 * u, r.position.y + 29 * u), "✔" if o["taken"] else "%d/%d" % [left, o["units"].size()], 14,
+			Color(0.8, 0.95, 1.0) if o["taken"] else Color(1, 0.85, 0.75), HORIZONTAL_ALIGNMENT_RIGHT, -1.0)
+
+
+func _objective_markers() -> void:
+	var p = game.player
+	for o in game.objectives:
+		var q = _screen(o["p"] + Vector3(0, 25, 0))
+		if q == null:
+			continue
+		var col := COL_BLU if o["taken"] else COL_ORG
+		var c: Vector2 = q
+		var pts := PackedVector2Array([c + Vector2(0, -16) * u, c + Vector2(16, 0) * u, c + Vector2(0, 16) * u, c + Vector2(-16, 0) * u, c + Vector2(0, -16) * u])
+		draw_polyline(pts, col, 2.5 * u, true)
+		_text(c + Vector2(0, 7 * u), o["n"], 16, col, HORIZONTAL_ALIGNMENT_CENTER)
+		var d: float = p.pos.distance_to(o["p"])
+		_text(c + Vector2(0, 36 * u), ("%d м" % roundi(d)) if d < 1000.0 else ("%.1f км" % (d / 1000.0)), 13, col, HORIZONTAL_ALIGNMENT_CENTER)
+		# fortification labels when close
+		if d < 2500.0 and not o["taken"]:
+			for v in o["units"]:
+				if v.dead:
+					continue
+				var vp = _screen(v.pos + Vector3(0, 5, 0))
+				if vp != null:
+					_text(vp, v.T["name"], 13, COL_RED, HORIZONTAL_ALIGNMENT_CENTER)
+
+
+func _draw_intro(p) -> void:
+	var s := size
+	var t: String = {"plane": "ВЗЛЁТ С АВИАБАЗЫ", "heli": "ВЗЛЁТ С ВЕРТОЛЁТНОЙ ПЛОЩАДКИ"}.get(p.cat, "ВЫЕЗД ИЗ ГАРАЖА")
+	_panel(Rect2(s.x / 2.0 - 260 * u, 70 * u, 520 * u, 54 * u), Color(0.03, 0.05, 0.06, 0.6), 8)
+	_text(Vector2(s.x / 2.0, 106 * u), t, 24, Color(1, 0.85, 0.5), HORIZONTAL_ALIGNMENT_CENTER)
+	_text(Vector2(s.x / 2.0, 150 * u), p.T["name"] + " · " + D.kind_of(p.type), 17, Color(0.9, 0.95, 1.0), HORIZONTAL_ALIGNMENT_CENTER)
+	_button("skip", "ПРОПУСТИТЬ  ▶" + ("    [Пробел]" if desktop else ""))
+
+
+## CCIP: where a bomb released right now would land, joined to the flight path marker.
+func _draw_ccip(p, wname: String) -> void:
+	var fp = _screen(p.pos + p.vel.normalized() * 500.0)
+	var hit = game.bomb_impact(p, wname)
+	if hit == null:
+		if fp != null:
+			_text(fp + Vector2(0, 40 * u), "БОМБЫ: ВНЕ ДАЛЬНОСТИ", 15, COL_ORG, HORIZONTAL_ALIGNMENT_CENTER)
+		return
+	var hp = _screen(hit)
+	if hp == null:
+		return
+	if fp != null:
+		draw_line(fp, hp, Color(COL_GRN, 0.7), 1.5 * u)
+	draw_arc(hp, 16 * u, 0, TAU, 32, COL_GRN, 2.5 * u)
+	draw_circle(hp, 3 * u, COL_GRN)
+	var d: float = p.pos.distance_to(hit)
+	_text(hp + Vector2(0, 38 * u), "CCIP  %d м" % roundi(d), 14, COL_GRN, HORIZONTAL_ALIGNMENT_CENTER)
+
+
+## PC: weapon list with keys at the bottom right, key hints at the bottom left.
+func _draw_desktop(p, T: Dictionary) -> void:
+	var s := size
+	var n: int = T["slots"].size()
+	var rw := 300.0 * u
+	var rh := 32.0 * u
+	var y0 := s.y - 24 * u - n * (rh + 4 * u)
+	for i in n:
+		var sl: Dictionary = T["slots"][i]
+		var Wi: Dictionary = D.WEAP[sl["w"]]
+		var r := Rect2(s.x - rw - 20 * u, y0 + i * (rh + 4 * u), rw, rh)
+		var on: bool = i == p.slot
+		_panel(r, Color(0.9, 0.65, 0.2, 0.7) if on else Color(0.04, 0.06, 0.08, 0.55), 6)
+		var col := Color(0.08, 0.06, 0.02) if on else Color.WHITE
+		_text(Vector2(r.position.x + 10 * u, r.position.y + 23 * u), "%d" % (i + 1), 15, col if on else Color(1, 0.8, 0.45))
+		_text(Vector2(r.position.x + 36 * u, r.position.y + 23 * u), sl["n"], 15, col)
+		var ammo_t := "∞" if game.infinite_ammo(p) else str(p.ammo[i])
+		if p.cat == "inf" and Wi.has("mag") and not game.infinite_ammo(p):
+			ammo_t = "%d / %d" % [p.mag[i], p.ammo[i] - p.mag[i]]
+		_text(Vector2(r.end.x - 10 * u, r.position.y + 23 * u), ammo_t, 15, col, HORIZONTAL_ALIGNMENT_RIGHT, -1.0)
+		var cdv: float = p.cd.get(sl["w"], 0.0)
+		if not Wi["auto"] and cdv > 0.0:
+			draw_rect(Rect2(r.position.x, r.end.y - 3 * u, r.size.x * clampf(cdv * Wi["rate"], 0.0, 1.0), 3 * u), COL_ORG)
+	var hints: Array
+	match p.cat:
+		"plane":
+			hints = ["W/S — тяга", "Мышь — курс", "ЛКМ — огонь", "ПКМ — приближение", "X — флаеры"]
+			if T.get("maneuver", false):
+				hints.append("M — СВМ · C/V/B — манёвры")
+		"heli":
+			hints = ["W/S — скорость", "A/D — высота", "Мышь — курс и прицел", "ЛКМ — огонь", "X — флаеры"]
+		"tank":
+			hints = ["W/S — ход", "A/D — поворот", "Мышь — башня", "ЛКМ — огонь", "ПКМ — прицел"]
+		_:
+			hints = ["WASD — ходьба", "Shift — бег", "ЛКМ — огонь", "ПКМ — прицел", "R — перезарядка"]
+	hints.append("1-%d / колесо — оружие" % n)
+	hints.append("Esc — пауза")
+	var y := s.y - 20 * u - hints.size() * 20 * u
+	for h in hints:
+		_text(Vector2(60 * u, y), h, 13, Color(0.92, 0.95, 1.0, 0.85))
+		y += 20 * u

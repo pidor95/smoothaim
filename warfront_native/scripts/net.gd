@@ -347,9 +347,13 @@ func _event(m: Dictionary) -> void:
 			elif remotes.has(tid):
 				tg = remotes[tid]
 			var wname := str(m.get("w", "aam"))
-			if wname != "aam" and wname != "atgm" and wname != "sam":
+			if not D.WEAP.has(wname) or not D.WEAP[wname].get("homing", false):
 				return
-			game.spawn_missile(o, m["p"], m["d"], wname, tg if tg != null and not tg.dead else null)
+			game.spawn_missile(o, m["p"], m["d"], wname, tg if tg != null and not tg.dead else null, m.get("ap") if m.get("ap") is Vector3 else null)
+		"b":
+			var bw := str(m.get("w", ""))
+			if o and (bw == "fab250" or bw == "fab500") and m.get("p") is Vector3 and m.get("u") is Vector3:
+				game.spawn_bomb(o, m["p"], m["u"], bw)
 		"r":
 			if o and m.get("p") is Vector3 and m.get("d") is Vector3:
 				game.spawn_rocket(o, m["p"], m["d"])

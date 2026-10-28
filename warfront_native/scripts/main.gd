@@ -15,7 +15,8 @@ var hud: Control
 var ui: Control
 var loading: Label
 var post: ColorRect
-var settings := {"bp": 2, "bh": 2, "bt": 3, "bi": 6, "ba": 3, "vol": 0.8, "diff": 1, "shoot": true, "ammo": false, "sens": 6.0, "vehicle": "su57", "gfx": "high", "nick": "", "ip": "", "servers": []}
+var settings := {"bp": 2, "bh": 2, "bt": 3, "bi": 6, "ba": 3, "vol": 0.8, "diff": 1, "shoot": true, "ammo": false, "sens": 6.0, "vehicle": "su57", "gfx": "high", "nick": "", "ip": "", "servers": [],
+	"assault": true, "intro": true}
 
 
 func _ready() -> void:
@@ -76,6 +77,16 @@ func _ready() -> void:
 	ui.respawn.connect(_respawn)
 	ui.to_menu.connect(_to_menu)
 	ui.resume.connect(func(): _pause(false))
+	ui.restart.connect(func(): _start(false))
+	game.match_won.connect(func():
+		if game.playing:
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+			hud.active = false
+			hud.queue_redraw()
+			game.paused = true
+			audio.set_engine("", 0, 1)
+			ui.show_death(false)
+			ui.show_victory(true, game.kills, game.deaths, game.time))
 	ui.quality_changed.connect(_quality)
 	ui.settings_changed.connect(_save_settings)
 	hud.pause_pressed.connect(func(): _pause(true))
@@ -92,7 +103,7 @@ func _ready() -> void:
 		_play_test(args)
 	elif args.has("menushot"):
 		var out := _arg(args, "out", "user://")
-		for page in [["home", ""], ["garage", "pantsir"], ["garage", "soldier"], ["settings", ""], ["online", ""]]:
+		for page in [["home", ""], ["garage", "su25"], ["garage", "su24"], ["garage", "soldier"], ["settings", ""], ["online", ""]]:
 			if page[1] != "":
 				settings["vehicle"] = page[1]
 			ui.show_page(page[0])
@@ -171,6 +182,7 @@ func _save_settings() -> void:
 func _start(online: bool) -> void:
 	ui.show_menu(false)
 	ui.show_death(false)
+	ui.show_victory(false)
 	ui.show_pause(false, online)
 	game.start(settings["vehicle"], online)
 	hud.active = true
@@ -211,6 +223,7 @@ func _to_menu() -> void:
 	hud.queue_redraw()
 	ui.show_pause(false, false)
 	ui.show_death(false)
+	ui.show_victory(false)
 	ui.show_menu(true)
 
 
@@ -265,6 +278,70 @@ func Vehicle_heading(d: Vector3) -> float:
 	return atan2(-d.x, -d.z)
 
 
+## Air-to-ground check against assault point B: "bomb" (level release on the CCIP solution), "kh25" (lock and
+## launch from 4 km), "storm" (Su-24 launch from 6 km). Prints the fortifications' state and takes screenshots.
+func _attack_test(args: PackedStringArray, kind: String, out: String) -> void:
+	settings["shoot"] = false
+	var o: Dictionary = game.objectives[1]
+	if kind == "zu":
+		# hover near point B and let its defences shoot at us
+		settings["shoot"] = true
+		var hp0: float = game.player.hp
+		var q: Vector3 = o["p"] + Vector3(300, 0, 900)
+		game.player.place(Vector3(q.x, world.height(q.x, q.z) + 120.0, q.z), 0.0, 0.0)
+		game.ctrl["thr"] = 0.0
+		for i in 900:
+			game.reset_camera_to((o["p"] - game.player.pos).normalized())
+			await get_tree().process_frame
+			if i % 100 == 0:
+				print("t=%d hp %d zu aim %s bullets %d dead %s" % [i / 20, game.player.hp, o["units"][1].aim_dir.snapped(Vector3.ONE * 0.01), game.bullets.size(), game.player.dead])
+			if game.player.dead:
+				break
+		print("RESULT zu: hp ", hp0, " -> ", game.player.hp, " feed ", game.feed_log)
+		return
+	var tgt = o["units"][0] if kind != "storm" else o["units"][2]
+	var p = game.player
+	var tp: Vector3 = tgt.pos
+	var start: Vector3 = {"bomb": Vector3(tp.x, tp.y + 500.0, tp.z + 2500.0), "kh25": Vector3(tp.x, tp.y + 800.0, tp.z + 4200.0),
+		"storm": Vector3(tp.x - 400.0, tp.y + 600.0, tp.z + 6000.0)}[kind]
+	p.place(start, 0.0, 180.0)
+	game.reset_camera_to(Vector3(0, 0, -1))
+	var wname: String = {"bomb": "fab250", "kh25": "kh25", "storm": "storm"}[kind]
+	game.select_slot(p.slot_of(wname))
+	game.ctrl["thr"] = 0.8
+	var fired := 0
+	var shot_i := 0
+	for i in 1600:
+		var to: Vector3 = (tp - game.cam.global_position).normalized()
+		if kind == "bomb":
+			# fly level straight at the target and release when the CCIP mark reaches it
+			game.reset_camera_to(Vector3(0, 0.0, -1).normalized())
+			var hit = game.bomb_impact(p, wname)
+			if fired < 2 and hit != null and hit.z < tp.z + 6.0:
+				game.ctrl["fire_pressed"] = true
+				game.ctrl["fire"] = true
+				fired += 1
+				print("release ", fired, " at dist ", roundi(p.pos.distance_to(tp)), " ccip ", hit.round(), " target ", tp.round())
+			else:
+				game.ctrl["fire"] = false
+		else:
+			game.reset_camera_to(to)
+			if fired == 0 and p.locked and p.lock_target == tgt:
+				game.ctrl["fire_pressed"] = true
+				fired = 1
+				print("launch at ", roundi(p.pos.distance_to(tp)), " m, locked on ", tgt.nick)
+		await get_tree().process_frame
+		if i % 20 == 0:
+			var ms: Array = game.missiles.map(func(m): return "%s %s spd %d agl %d" % [m["w"], m["p"].round(), roundi(m["vel"].length()), roundi(m["p"].y - world.height(m["p"].x, m["p"].z))])
+			print("t=%.0f plane %s spd %d lock %s missiles %s" % [i * 0.05, p.pos.round(), p.speed, p.locked, ms])
+		if fired > 0 and i % 30 == 0 and DisplayServer.get_name() != "headless" and shot_i < 8:
+			get_viewport().get_texture().get_image().save_png(out.path_join("attack_%s_%d.png" % [kind, shot_i]))
+			shot_i += 1
+		if tgt.dead and game.missiles.is_empty():
+			break
+	print("RESULT ", kind, ": ", o["units"].map(func(u): return "%s hp %d dead %s" % [u.type, u.hp, u.dead]), " taken ", o["taken"], " feed ", game.feed_log)
+
+
 ## Starts a bot match with the given vehicle, flies/drives a little and saves screenshots.
 func _play_test(args: PackedStringArray) -> void:
 	var out := _arg(args, "out", "user://")
@@ -273,6 +350,9 @@ func _play_test(args: PackedStringArray) -> void:
 	settings["bp"] = int(_arg(args, "bp", "2"))
 	settings["bh"] = int(_arg(args, "bh", "2"))
 	settings["bt"] = int(_arg(args, "bt", "3"))
+	settings["intro"] = not args.has("nointro")
+	if args.has("noassault"):
+		settings["assault"] = false
 	var join := _arg(args, "join", "")
 	if join != "":
 		net.refresh_servers([join])
@@ -325,14 +405,38 @@ func _play_test(args: PackedStringArray) -> void:
 		for i in 160:
 			game.paused = false
 			await get_tree().process_frame
-			if i % 10 == 0:
+			if i % 10 == 0 or (i < 40 and i % 3 == 0):
 				print("i=", i, " ", targets.map(func(t): return [t.dead, t.ragdoll, snappedf(t.jp[0].y - world.height(t.jp[0].x, t.jp[0].z), 0.01)]))
-			if i in [2, 6, 12, 24, 50, 159]:
+				if args.has("dbg"):
+					var t0 = targets[1]
+					var hs := []
+					for j in 15:
+						hs.append(snappedf(t0.jp[j].y - world.height(t0.jp[j].x, t0.jp[j].z), 0.01))
+					print("   joints ", hs, " pelvis ", t0.jp[2].round())
+			if i in [3, 7, 11, 15, 19, 26]:
 				game.paused = true
-				cam.global_position = c + Vector3(6.5, world.height(c.x, c.z) + 1.5, 4.5)
-				cam.look_at(c + Vector3(0, world.height(c.x, c.z) + 0.6, -0.5), Vector3.UP)
-				await get_tree().process_frame
-				get_viewport().get_texture().get_image().save_png(out.path_join("rag_%03d.png" % i))
+				for rep in 2:
+					cam.global_position = c + Vector3(6.5, world.height(c.x, c.z) + 1.5, 4.5)
+					cam.look_at(c + Vector3(0, world.height(c.x, c.z) + 0.6, -0.5), Vector3.UP)
+					cam.fov = 60.0
+					await get_tree().process_frame
+				if DisplayServer.get_name() != "headless":
+					get_viewport().get_texture().get_image().save_png(out.path_join("rag_%03d.png" % i))
+		get_tree().quit()
+		return
+	if args.has("win"):
+		for o in game.objectives:
+			for u in o["units"]:
+				game.kill(u, game.player, "fab500")
+		for i in 100:
+			await get_tree().process_frame
+		print("WIN taken ", game.objectives.map(func(o): return o["taken"]), " won ", game.won, " victory shown ", ui.victory_panel.visible, " feed ", game.feed_log.size())
+		if DisplayServer.get_name() != "headless":
+			get_viewport().get_texture().get_image().save_png(out.path_join("victory.png"))
+		get_tree().quit()
+		return
+	if _arg(args, "attack", "") != "":
+		await _attack_test(args, _arg(args, "attack", ""), out)
 		get_tree().quit()
 		return
 	if args.has("stall"):
@@ -361,7 +465,18 @@ func _play_test(args: PackedStringArray) -> void:
 	var frames := int(_arg(args, "frames", "240"))
 	var every := int(_arg(args, "every", "60"))
 	var t0 := Time.get_ticks_msec()
+	var skip_at := int(_arg(args, "skipat", "-1"))
+	var slot_at := int(_arg(args, "slot", "-1"))
 	for i in frames:
+		if i == skip_at:
+			game.skip_intro()
+		if slot_at >= 0 and i > skip_at:
+			game.select_slot(slot_at)
+			game.ctrl["fire"] = false
+			await get_tree().process_frame
+			if i % every == every - 1 and DisplayServer.get_name() != "headless":
+				get_viewport().get_texture().get_image().save_png(out.path_join("%s_%03d.png" % [vt, i]))
+			continue
 		game.ctrl["fire"] = (i / 30) % 3 == 0
 		if args.has("ads") and vt == "soldier":
 			game.ctrl["zoom"] = i >= frames / 2
@@ -391,7 +506,8 @@ func _play_test(args: PackedStringArray) -> void:
 						md = minf(md, a.pos.distance_to(b.pos))
 			print("inf t=%d alive=%d closest_enemy=%.0f bullets=%d" % [i / 20, alive, md, game.bullets.size()])
 		if i % every == every - 1:
-			get_viewport().get_texture().get_image().save_png(out.path_join("%s_%03d.png" % [vt, i]))
-			print("play shot ", i, " fps ", Engine.get_frames_per_second(), " vehicles ", game.vehicles.size(), " missiles ", game.missiles.size(), " bullets ", game.bullets.size(), " hp ", p.hp, " dead ", p.dead)
+			if DisplayServer.get_name() != "headless":
+				get_viewport().get_texture().get_image().save_png(out.path_join("%s_%03d.png" % [vt, i]))
+			print("play shot ", i, " pos ", p.pos.round(), " alt ", roundi(p.pos.y - world.height(p.pos.x, p.pos.z)), " spd ", roundi(p.speed), " intro ", p.intro != null, " fps ", Engine.get_frames_per_second(), " vehicles ", game.vehicles.size(), " missiles ", game.missiles.size(), " bullets ", game.bullets.size(), " hp ", p.hp, " dead ", p.dead)
 	print("play test done in ", Time.get_ticks_msec() - t0, " ms; kills ", game.kills, " deaths ", game.deaths, " feed ", game.feed_log, " hits ", game.hit_stats, " remotes ", net.remotes.keys(), " vehicles ", game.vehicles.size())
 	get_tree().quit()

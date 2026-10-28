@@ -13,7 +13,7 @@ var warn := AudioStreamPlayer.new()
 
 func _ready() -> void:
 	for n in ["jet", "heli", "tank", "gun", "mg", "cannon", "explosion", "missile", "rocket", "flare", "smoke", "hit", "beep", "lock", "warn", "click",
-			"ak", "shotgun", "reload", "flesh", "headshot", "step"]:
+			"ak", "shotgun", "pump", "reload", "flesh", "headshot", "step"]:
 		var s: AudioStreamWAV = load("res://assets/sounds/%s.wav" % n)
 		if n in LOOPS:
 			s = s.duplicate()

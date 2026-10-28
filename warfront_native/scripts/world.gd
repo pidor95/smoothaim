@@ -15,6 +15,8 @@ var buildings: Array = []        # [{c: Vector2, ax: Vector2, ay: Vector2, half:
 var bgrid := {}                  # Vector2i cell -> indices into buildings, for fast hit tests
 const BCELL := 100.0
 var quality := "high"            # high / mid / low
+const Base := preload("res://scripts/base.gd")
+var base: Node3D
 var sun: DirectionalLight3D
 var env: Environment
 
@@ -23,12 +25,16 @@ func build(q: String) -> void:
 	quality = q
 	var f := FileAccess.open("res://assets/map/height.bin", FileAccess.READ)
 	heights = f.get_buffer(f.get_length()).to_float32_array()
+	Base.flatten(self)
 	_environment()
 	_terrain()
 	_trees()
 	_buildings()
 	_water()
 	_outer()
+	base = Base.new()
+	add_child(base)
+	base.build(self)
 
 
 # ---------------------------------------------------------------- heights
@@ -207,6 +213,8 @@ func _trees() -> void:
 		var z := data[t * 4 + 1]
 		var kind := int(data[t * 4 + 2])
 		var s := data[t * 4 + 3]
+		if not Base.keeps_tree(x, z):
+			continue
 		var sp: int
 		var target_h: float
 		match kind:

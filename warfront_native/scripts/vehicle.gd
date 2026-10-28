@@ -82,6 +82,11 @@ var tail_rotor: Node3D
 var flames: Array = []
 var muzzle: Sprite3D
 var muzzle_t := 0.0
+var gear_node: Node3D           # landing gear, shown only on the ground during the take-off intro
+var gear_h := 2.0              # height of the origin above the runway when standing on the gear
+var stores: Array = []         # visible weapons under the wings (Storm Shadow), hidden as they are launched
+var intro = null               # take-off / roll-out intro in progress (intro.gd), the game drives the vehicle
+static var _gear_cache := {}
 
 
 func setup(g: Node, t: String, tm: String, opts := {}) -> void:
@@ -103,7 +108,10 @@ func setup(g: Node, t: String, tm: String, opts := {}) -> void:
 func _build_model() -> void:
 	hull = Node3D.new()
 	add_child(hull)
-	model = load("res://assets/models/%s.glb" % T["model"]).instantiate()
+	if String(T["model"]).begins_with("proc:"):
+		model = preload("res://scripts/props.gd").build(String(T["model"]).substr(5))
+	else:
+		model = load("res://assets/models/%s.glb" % T["model"]).instantiate()
 	hull.add_child(model)
 	if type == "pantsir":
 		for mi in model.find_children("*", "MeshInstance3D", true, false):
@@ -141,7 +149,78 @@ func _build_model() -> void:
 	add_child(muzzle)
 	# a softer shadow on the ground is enough for fast aircraft far away; tanks and helis cast real shadows
 	for mi in model.find_children("*", "MeshInstance3D", true, false):
-		(mi as MeshInstance3D).visibility_range_end = 7000.0 if cat != "tank" else 3500.0
+		(mi as MeshInstance3D).visibility_range_end = 7000.0 if cat != "tank" and cat != "struct" else 3500.0
+	if cat == "plane":
+		gear_node = model.find_child("Gear", true, false)
+		if gear_node == null:
+			gear_node = _make_gear()
+		for n in ["Store_L", "Store_R"]:
+			var st: Node3D = model.find_child(n, true, false)
+			if st:
+				stores.append(st)
+		gear_h = _gear_height()
+		gear_node.visible = false
+	elif cat == "heli":
+		gear_h = _gear_height()
+
+
+## Lowest point of the model below its origin (the wheels), cached per type.
+func _gear_height() -> float:
+	if _gear_cache.has(type):
+		return _gear_cache[type]
+	var lo := 0.0
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		var m3 := mi as MeshInstance3D
+		var xf: Transform3D = model.global_transform.affine_inverse() * m3.global_transform if m3.is_inside_tree() else _local_xf(m3)
+		var bb: AABB = xf * m3.get_aabb()
+		lo = minf(lo, bb.position.y)
+	_gear_cache[type] = -lo
+	return -lo
+
+
+func _local_xf(n: Node3D) -> Transform3D:
+	var xf := Transform3D.IDENTITY
+	var c: Node = n
+	while c != null and c != model:
+		xf = (c as Node3D).transform * xf
+		c = c.get_parent()
+	return xf
+
+
+## Simple tricycle gear for the models that come without one (struts and wheels sized from the airframe).
+func _make_gear() -> Node3D:
+	var lo := Vector3.ZERO
+	var hi := Vector3.ZERO
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		var bb: AABB = _local_xf(mi) * (mi as MeshInstance3D).get_aabb()
+		lo = lo.min(bb.position)
+		hi = hi.max(bb.end)
+	var g := Node3D.new()
+	g.name = "Gear"
+	model.add_child(g)
+	var P := preload("res://scripts/props.gd")
+	var length := hi.z - lo.z
+	var leg := 1.7
+	for w in [[0.0, lo.z + length * 0.22], [-1.6, lo.z + length * 0.62], [1.6, lo.z + length * 0.62]]:
+		var top := Vector3(w[0], lo.y + 0.6, w[1])
+		P.cyl(g, 0.07, 0.09, leg, top - Vector3(0, leg / 2.0, 0), P.steel(), Vector3.ZERO, 6)
+		P.cyl(g, 0.38, 0.38, 0.3, top - Vector3(0, leg, 0), P.mat("tyre", Color(0.06, 0.06, 0.06), 0.95), Vector3(0, 0, PI / 2), 12)
+	return g
+
+
+func show_gear(on: bool) -> void:
+	if gear_node:
+		gear_node.visible = on
+
+
+## Hide launched stores: as many as have been fired from the slot that carries them.
+func update_stores() -> void:
+	if stores.is_empty():
+		return
+	var i := slot_of("storm")
+	var left: int = ammo[i] if i >= 0 else 0
+	for k in stores.size():
+		stores[k].visible = k < left
 
 
 static func _additive(tex: Texture2D) -> StandardMaterial3D:
@@ -185,7 +264,10 @@ func reset() -> void:
 	blocked = 0.0
 	stalled = false
 	stall_t = 0.0
+	intro = null
 	end_wreck()
+	update_stores()
+	show_gear(false)
 
 
 func place(p: Vector3, h: float, spd: float) -> void:
@@ -240,9 +322,13 @@ func sync() -> void:
 
 # ---------------------------------------------------------------- physics
 func physics(dt: float) -> void:
+	if intro != null:
+		_animate(dt)
+		return
 	match cat:
 		"plane": _plane(dt)
 		"heli": _heli(dt)
+		"struct": _struct(dt)
 		_: _tank(dt)
 	_animate(dt)
 
@@ -369,6 +455,7 @@ func _plane(dt: float) -> void:
 	stalled = man == null and absf(alpha) > (1.3 if tvc else A["a_st"] * 1.02) or (man == null and spd < 45.0)
 	stall_t = stall_t + dt if stalled else maxf(0.0, stall_t - dt * 2.0)
 	aim_dir = f
+	fixed_dir = f
 	var s := 3.4 + randf() * 1.2 if thr > 0.85 else 0.4 + thr * 1.2
 	for fl in flames:
 		fl.pixel_size = 0.004 * s
@@ -480,7 +567,29 @@ func _tank(dt: float) -> void:
 		aim_dir = dir_of(turret_yaw) * cos(gun_pitch) + Vector3(0, sin(gun_pitch), 0)
 
 
+## Fortification: no movement, only the gun (ZU-23 turret, or the bunker's machine gun in its firing slit) follows the aim.
+func _struct(dt: float) -> void:
+	vel = Vector3.ZERO
+	speed = 0.0
+	var piv := pos + Vector3(0, T.get("aim_h", 1.5), 0)
+	var ad: Vector3 = (inp["aim_point"] - piv).normalized()
+	if turret == null:
+		# a firing slit covers a 120 degree arc ahead
+		var yaw := heading + clampf(angle_difference(heading, heading_of(ad)), -1.05, 1.05)
+		var el := clampf(asin(clampf(ad.y, -1.0, 1.0)), -0.3, 0.5)
+		aim_dir = dir_of(yaw) * cos(el) + Vector3(0, sin(el), 0)
+		return
+	var tr: float = T.get("turret_rate", 1.0) * dt
+	turret_yaw += clampf(angle_difference(turret_yaw, heading_of(ad)), -tr, tr)
+	var gp := clampf(asin(clampf(ad.y, -1.0, 1.0)), -0.05, T.get("pitch_max", 1.4))
+	var pr: float = T.get("pitch_rate", 1.0) * dt
+	gun_pitch += clampf(gp - gun_pitch, -pr, pr)
+	aim_dir = dir_of(turret_yaw) * cos(gun_pitch) + Vector3(0, sin(gun_pitch), 0)
+
+
 func mg_pos() -> Vector3:
+	if cat == "struct":
+		return pos + Vector3(0, T.get("aim_h", 1.5), 0) + aim_dir * 3.2
 	return lw(0.6, 3.0, -0.2)
 
 
@@ -496,15 +605,31 @@ func _animate(dt: float) -> void:
 		rotor.rotate_y(dt * 14.0)
 	if tail_rotor:
 		tail_rotor.rotate_x(dt * 60.0)
-	if cat == "tank" and turret:
+	if (cat == "tank" or cat == "struct") and turret:
 		turret.rotation.y = angle_difference(heading, turret_yaw)
-		if gun and type == "abrams":
+		if gun and cat == "struct":
+			gun.rotation.x = gun_pitch
+		elif gun and type == "abrams":
 			gun.rotation.x = gun_pitch
 			gun.position.z = -1.64 + 0.5 * sin(minf(recoil, 1.0) * PI / 2.0)
 	if muzzle.visible:
 		muzzle_t -= dt
 		if muzzle_t <= 0.0:
 			muzzle.visible = false
+
+
+## A destroyed fortification looks burnt: every part gets a dark, sooty overlay.
+func charred() -> void:
+	var soot := StandardMaterial3D.new()
+	soot.albedo_color = Color(0.04, 0.035, 0.03, 0.75)
+	soot.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	soot.roughness = 1.0
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		(mi as MeshInstance3D).material_overlay = soot
+	if turret:
+		turret.rotation.z = randf_range(-0.3, 0.3)
+	if gun:
+		gun.rotation.x = -0.15
 
 
 func flash_muzzle(p: Vector3, s: float) -> void:

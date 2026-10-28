@@ -13,6 +13,8 @@ const L_SHIN := 0.43
 const L_TORSO := 0.5
 const ANKLE_H := 0.095
 const WEAPON_MODELS := {"ak": "ak47", "shotgun": "m500", "stinger": "stinger"}
+# sight line height above the bore axis and the eye position along the gun (negative: behind the grip), metres
+const SIGHT := {"ak": [0.121, -0.08], "shotgun": [0.101, -0.1]}
 # capsules for hit tests: [joint a, joint b, radius, part]
 const HITBOX := [[NECK, HEAD, 0.125, "head"], [PELVIS, NECK, 0.2, "torso"], [SL, EL, 0.065, "arm"], [SR, ER, 0.065, "arm"],
 	[EL, WL, 0.055, "arm"], [ER, WR, 0.055, "arm"], [HIPL, KL, 0.09, "leg"], [HIPR, KR, 0.09, "leg"], [KL, AL, 0.065, "leg"], [KR, AR, 0.065, "leg"]]
@@ -51,6 +53,19 @@ var hit_part := ""
 var last_impulse := Vector3.ZERO
 var lod_skip := 0
 var recoil_kick := 0.0
+var pump_t := 0.0                # shotgun: the pump is racked after each shot
+# non-lethal hits: the upper body is knocked aside on a spring and the soldier staggers
+var flinch_v := Vector3.ZERO
+var flinch_vel := Vector3.ZERO
+var stagger_t := 0.0
+# death: for a moment the muscles still try to keep the body upright (it stumbles to catch itself, weakens and falls)
+var hold_t := 0.0
+var stand := PackedVector3Array()   # pose at the moment of the hit, relative to the pelvis
+var stand_h := 0.99                 # pelvis height above the ground at that moment
+var anchors: Array = [Vector3.ZERO, Vector3.ZERO]   # where the feet are planted
+var step_k := 0.0
+var let_go := false
+var drop = null                     # the weapon falling out of the hands: {"n", "xf", "v", "av"}
 
 
 func _build_model() -> void:
@@ -158,6 +173,11 @@ func reset() -> void:
 	ragdoll = false
 	rag_t = 0.0
 	reload_t = 0.0
+	flinch_v = Vector3.ZERO
+	flinch_vel = Vector3.ZERO
+	stagger_t = 0.0
+	pump_t = 0.0
+	drop = null
 	mag.clear()
 	for s in T["slots"]:
 		var W: Dictionary = D.WEAP[s["w"]]
@@ -228,6 +248,10 @@ func physics(dt: float) -> void:
 	var right := Vector3(-f.z, 0, f.x)
 	sprinting = mv.length() > 0.92 and mv.y > 0.6 and not inp["fire"] and reload_t <= 0.0
 	var target_spd: float = (6.3 if sprinting else T["vmax"]) * mv.length() * (0.65 if mv.y < -0.2 else 1.0)
+	if stagger_t > 0.0:
+		stagger_t -= dt
+		target_spd *= 0.35
+		sprinting = false
 	var want := (f * mv.y + right * mv.x)
 	want = want.normalized() * target_spd if want.length() > 1e-3 else Vector3.ZERO
 	var vh := Vector3(vel.x, 0, vel.z).lerp(want, 1.0 - exp(-10.0 * dt))
@@ -271,7 +295,29 @@ func physics(dt: float) -> void:
 			if is_player or pos.distance_to(game.cam.global_position) < 40.0:
 				game.audio.play3d("step", pos, -14.0 if is_player else -18.0, 6.0)
 	recoil_kick = maxf(0.0, recoil_kick - dt * 6.0)
+	pump_t = maxf(0.0, pump_t - dt)
+	# flinch spring
+	flinch_vel += (-flinch_v * 110.0 - flinch_vel * 13.0) * dt
+	flinch_v += flinch_vel * dt
+	if flinch_v.length() > 0.3:
+		flinch_v = flinch_v.normalized() * 0.3
 	_animate_alive(dt)
+
+
+## A bullet or blast that does not kill: the body jerks away from the hit, the gun is knocked off aim,
+## and the soldier stumbles for a moment.
+func flinch(imp: Vector3, part: String) -> void:
+	var d := Vector3(imp.x, 0, imp.z)
+	if d.length() < 0.01:
+		d = -dir_of(heading)
+	d = d.normalized()
+	var k := 1.0 if part == "torso" else (0.7 if part == "arm" else 0.55)
+	flinch_vel += (d * 2.6 + Vector3(0, -0.6, 0)) * k * (0.5 if is_player else 1.0)
+	stagger_t = maxf(stagger_t, 0.25 + 0.3 * k)
+	vel += d * 1.8 * k
+	recoil_kick = 1.0
+	if part == "leg":
+		stagger_t = maxf(stagger_t, 0.7)
 
 
 func _animate_alive(dt: float) -> void:
@@ -309,6 +355,11 @@ func _pose(dt: float, snap: bool) -> void:
 	jp[HEAD] = n + (tup * 0.9 + look * 0.1).normalized() * 0.2
 	jp[SL] = n - tup * 0.05 - right * 0.19
 	jp[SR] = n - tup * 0.05 + right * 0.19
+	if flinch_v != Vector3.ZERO:
+		jp[NECK] += flinch_v
+		jp[HEAD] += flinch_v * 1.25
+		jp[SL] += flinch_v * 0.9
+		jp[SR] += flinch_v * 0.9
 	jp[HIPL] = p - UP * 0.03 - right * 0.095
 	jp[HIPR] = p - UP * 0.03 + right * 0.095
 	var stride := 0.32 * minf(k, 1.4)
@@ -332,7 +383,13 @@ func _pose(dt: float, snap: bool) -> void:
 	if ads:
 		# first-person aiming: bring the sights up to the eye
 		var eye_p: Vector3 = jp[NECK].lerp(jp[HEAD], 0.6) + game.cam_fwd * 0.1
-		grip = eye_p + a * (0.42 if w == "stinger" else 0.3) - wb.y * (0.17 if w == "stinger" else 0.062) - wb.x * (0.05 if w == "stinger" else 0.0)
+		if w == "stinger":
+			grip = eye_p + a * 0.42 - wb.y * 0.17 - wb.x * 0.05
+		else:
+			# the eye sits on the line through the rear and front sights, a little behind the receiver,
+			# so the front sight post covers the centre of the screen where the bullets go
+			var sg: Array = SIGHT[w]
+			grip = eye_p - a * sg[1] - wb.y * sg[0]
 	elif w == "stinger":
 		grip = jp[SR] + a * 0.3 - wb.y * 0.16 + wb.x * 0.02
 	else:
@@ -346,6 +403,9 @@ func _pose(dt: float, snap: bool) -> void:
 	var mz: Array = info.get("muzzle", [0, 0, -0.6])
 	muzzle_world = gun_xf * Vector3(mz[0], mz[1], mz[2])
 	var left_hand := gun_xf * Vector3(fore[0], fore[1] - 0.03, fore[2])
+	if w == "shotgun" and pump_t > 0.0 and pump_t < 0.45:
+		# rack the pump: the left hand pulls the fore-end back and pushes it home
+		left_hand -= a * 0.11 * sin((0.45 - pump_t) / 0.45 * PI)
 	var right_hand := grip - wb.y * 0.05 - a * 0.03
 	var re := ik(jp[SR], right_hand, L_UPPER, L_FORE, -UP + right * 0.7 - f * 0.2)
 	var le := ik(jp[SL], left_hand, L_UPPER, L_FORE, -UP - right * 0.6 - f * 0.1)
@@ -378,6 +438,8 @@ func _render() -> void:
 		mi.global_transform = Transform3D(basis_y(y, fwd), jp[a])
 	for w in guns:
 		var g: Node3D = guns[w]
+		if drop != null and g == drop["n"]:
+			continue
 		g.visible = w == weapon_name() and not dead
 		if g.visible:
 			g.global_transform = gun_xf
@@ -412,9 +474,27 @@ func start_wreck() -> void:
 	wreck = true
 	rag_t = 0.0
 	rag_still = 0.0
+	let_go = false
+	step_k = 0.0
 	for g in guns.values():
 		g.visible = false
 	muzzle.visible = false
+	# the weapon slips out of the hands and falls on its own
+	var held: Node3D = guns.get(weapon_name())
+	if held:
+		held.visible = true
+		var hv: Vector3 = jvel[WR] if jvel.size() == 15 else vel
+		drop = {"n": held, "xf": gun_xf, "v": hv * 0.8 + last_impulse * 0.35 + Vector3(randf_range(-0.6, 0.6), 0.8, randf_range(-0.6, 0.6)),
+			"av": Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * 5.0}
+		held.global_transform = gun_xf
+	# a headshot or a close blast drops the body at once; otherwise the legs fight for a moment
+	hold_t = 0.0 if hit_part == "head" or last_impulse.length() > 6.5 else randf_range(0.55, 1.1)
+	var g0: float = world.height(jp[PELVIS].x, jp[PELVIS].z)
+	stand_h = jp[PELVIS].y - g0
+	stand.resize(15)
+	for i in 15:
+		stand[i] = jp[i] - jp[PELVIS]
+	anchors = [jp[AL], jp[AR]]
 	var f := dir_of(heading)
 	var right := Vector3(-f.z, 0, f.x)
 	# start from the motion the body already had (walking, running)
@@ -423,13 +503,9 @@ func start_wreck() -> void:
 	for i in 15:
 		v[i] = jvel[i] if jvel.size() == 15 else Vector3(vel.x, 0, vel.z)
 	# muscles let go: the knees fold forward and the hips drop, the upper body sags back
-	v[KL] += f * 1.3
-	v[KR] += f * 1.3
-	v[PELVIS] += Vector3(0, -1.0, 0) - f * 0.2
-	v[HIPL] += Vector3(0, -1.0, 0) - f * 0.2
-	v[HIPR] += Vector3(0, -1.0, 0) - f * 0.2
-	v[NECK] -= f * 0.35
-	v[HEAD] -= f * 0.45
+	# (weaker while the soldier still tries to stay on his feet; the rest comes when he gives in)
+	var sag := 1.0 if hold_t <= 0.0 else 0.15
+	_collapse(v, f, sag)
 	# a little asymmetry so no two falls look the same
 	var tw := randf_range(-0.35, 0.35)
 	v[SL] += right * tw
@@ -450,9 +526,105 @@ func start_wreck() -> void:
 		rest[i] = jp[LINKS[i][0]].distance_to(jp[LINKS[i][1]])
 
 
+func _collapse(v: PackedVector3Array, f: Vector3, k: float) -> void:
+	v[KL] += f * 1.3 * k
+	v[KR] += f * 1.3 * k
+	v[PELVIS] += (Vector3(0, -1.0, 0) - f * 0.2) * k
+	v[HIPL] += (Vector3(0, -1.0, 0) - f * 0.2) * k
+	v[HIPR] += (Vector3(0, -1.0, 0) - f * 0.2) * k
+	v[NECK] -= f * 0.35 * k
+	v[HEAD] -= f * 0.45 * k
+
+
 func end_wreck() -> void:
 	ragdoll = false
 	wreck = false
+	if drop != null:
+		drop["n"].visible = false
+		drop = null
+
+
+## Muscles still working: pull the body back towards the standing pose around the pelvis, keep the hips up and
+## step the feet under the falling centre of mass. The strength fades over hold_t, then everything goes limp.
+func _balance(h: float) -> void:
+	var k := 1.0 - rag_t / hold_t
+	var str_ := k * k
+	var p := jp[PELVIS]
+	var g: float = world.height(p.x, p.z)
+	var up_y: float = g + stand_h * (1.0 - 0.22 * (1.0 - k))
+	_nudge(PELVIS, Vector3(0, (up_y - p.y) * 0.3 * str_, 0))
+	for i in [HEAD, NECK, SL, SR, HIPL, HIPR, EL, ER]:
+		var tgt: Vector3 = jp[PELVIS] + stand[i]
+		_nudge(i, (tgt - jp[i]) * 0.2 * str_)
+	# the legs soak up the momentum of the hit
+	for i in 15:
+		var vv := jp[i] - jprev[i]
+		jprev[i] += Vector3(vv.x, 0, vv.z) * 0.015 * str_
+	# stumbling steps: when the hips drift away from the feet, the far foot steps underneath
+	step_k -= h
+	var ph := Vector3(p.x, 0, p.z)
+	var c := Vector3((anchors[0].x + anchors[1].x) * 0.5, 0, (anchors[0].z + anchors[1].z) * 0.5)
+	if step_k <= 0.0 and ph.distance_to(c) > 0.16:
+		step_k = 0.22
+		var far := 0 if ph.distance_to(Vector3(anchors[0].x, 0, anchors[0].z)) > ph.distance_to(Vector3(anchors[1].x, 0, anchors[1].z)) else 1
+		var side := (jp[HIPL] if far == 0 else jp[HIPR]) - p
+		side.y = 0.0
+		var lead := (p - jprev[PELVIS]) / RAG_H
+		lead.y = 0.0
+		var q := ph + side * 0.6 + lead * 0.25
+		anchors[far] = Vector3(q.x, world.height(q.x, q.z) + ANKLE_H, q.z)
+	for fs in [[AL, KL, HIPL, 0], [AR, KR, HIPR, 1]]:
+		var a: Vector3 = anchors[fs[3]]
+		_nudge(fs[0], (a - jp[fs[0]]) * 0.35 * str_)
+		var r := ik(jp[fs[2]], jp[fs[0]], L_THIGH, L_SHIN, (jp[NECK] - jp[PELVIS]).cross(jp[SR] - jp[SL]).normalized() + UP * 0.1)
+		_nudge(fs[1], (r[0] - jp[fs[1]]) * 0.3 * str_)
+
+
+## Inside the solver while the soldier still fights the fall: the legs push straight (hip to ankle almost the
+## full leg length) and the trunk keeps its shape above the pelvis; both weaken as hold_t runs out.
+func _muscles() -> void:
+	var k := 1.0 - rag_t / hold_t
+	k *= k
+	var leg := (L_THIGH + L_SHIN) * (0.96 - 0.12 * (1.0 - k))
+	for l in [[HIPL, AL, KL], [HIPR, AR, KR]]:
+		if jp[l[0]].distance_to(jp[l[1]]) < leg:
+			_solve(l[0], l[1], leg, 0.6 * k)
+	for i in [NECK, HEAD, SL, SR]:
+		var tgt: Vector3 = jp[PELVIS] + stand[i]
+		jp[i] += (tgt - jp[i]) * 0.25 * k
+
+
+## Muscle correction: moves a joint without turning the whole move into velocity (Verlet stores velocity
+## as the step from the previous position), so balancing never launches the body.
+func _nudge(i: int, d: Vector3) -> void:
+	jp[i] += d
+	jprev[i] += d * 0.9
+
+
+func _update_drop(dt: float) -> void:
+	var xf: Transform3D = drop["xf"]
+	var v: Vector3 = drop["v"]
+	var av: Vector3 = drop["av"]
+	v.y -= G * dt
+	xf.origin += v * dt
+	if av.length() > 0.01:
+		xf.basis = Basis(av.normalized(), av.length() * dt) * xf.basis
+	var gy: float = world.height(xf.origin.x, xf.origin.z) + 0.05
+	if xf.origin.y < gy:
+		xf.origin.y = gy
+		v = Vector3(v.x * 0.5, absf(v.y) * 0.15, v.z * 0.5)
+		av *= 0.5
+		# settle on its side
+		var z := Vector3(xf.basis.z.x, 0, xf.basis.z.z)
+		if z.length() > 0.01:
+			z = z.normalized()
+			# lying on its side: the gun's right axis points up
+			var flat := Basis(UP, z.cross(UP), z)
+			xf.basis = Basis(Quaternion(xf.basis.orthonormalized()).slerp(Quaternion(flat), 0.35))
+	drop["xf"] = xf
+	drop["v"] = v
+	drop["av"] = av
+	drop["n"].global_transform = xf
 
 
 ## Move points a and b toward distance target (weighted by inverse mass and stiffness k).
@@ -491,19 +663,36 @@ func wreck_update(dt: float) -> bool:
 	if not ragdoll:
 		return false
 	rag_t += dt
+	if drop != null and rag_t < 4.0:
+		_update_drop(dt)
 	if rag_still > 0.6 or rag_t > 12.0:
 		return false                                  # at rest: stop simulating
 	var steps := clampi(int(round(dt / RAG_H)), 1, 8)
 	var moving := 0.0
+	if hold_t > 0.0 and rag_t >= hold_t and not let_go:
+		# he gives in: the knees buckle and the body folds
+		let_go = true
+		var kick := PackedVector3Array()
+		kick.resize(15)
+		var fw := (jp[NECK] - jp[PELVIS]).cross(jp[SR] - jp[SL])
+		fw.y = 0.0
+		var up_k := clampf((jp[PELVIS].y - world.height(jp[PELVIS].x, jp[PELVIS].z) - 0.3) / 0.6, 0.0, 1.0)
+		_collapse(kick, fw.normalized() if fw.length() > 0.01 else dir_of(heading), 0.85 * up_k)
+		for i in 15:
+			jprev[i] -= kick[i] * RAG_H
 	for s in steps:
 		for i in 15:
 			var p := jp[i]
 			var v := (p - jprev[i]) * 0.998
 			jprev[i] = p
 			jp[i] = p + v + Vector3(0, -G * RAG_H * RAG_H, 0)
+		if rag_t < hold_t:
+			_balance(RAG_H)
 		for it in 8:
 			for li in LINKS.size():
 				_solve(LINKS[li][0], LINKS[li][1], rest[li], LINK_K[li])
+			if rag_t < hold_t:
+				_muscles()
 			var up := jp[NECK] - jp[PELVIS]
 			var fwd := up.cross(jp[SR] - jp[SL]).normalized()
 			var upn := up.normalized()
