@@ -63,6 +63,10 @@ func _setup_input() -> void:
 	_key_action("spawn_npc", [KEY_E])
 	_key_action("slowmo", [KEY_Q])
 	_key_action("pause", [KEY_ESCAPE])
+	_key_action("weapon_1", [KEY_1])
+	_key_action("weapon_2", [KEY_2])
+	_key_action("weapon_next", [KEY_F])
+	_key_action("toggle_ai", [KEY_T])
 	_mouse_action("fire", MOUSE_BUTTON_LEFT)
 	_mouse_action("aim", MOUSE_BUTTON_RIGHT)
 

@@ -183,7 +183,7 @@ func _build_ui() -> void:
 	_play_box.add_theme_constant_override("separation", 12)
 	col.add_child(_play_box)
 	_play_box.add_child(UiKit.label("ВЫБОР ЛОКАЦИИ", 34, Color(1, 0.25, 0.2)))
-	var house_btn := UiKit.button("ДОМ   ·   M1911", _start_house, 480)
+	var house_btn := UiKit.button("ДОМ   ·   M1911 + M500", _start_house, 480)
 	house_btn.custom_minimum_size.y = 84
 	house_btn.add_theme_font_size_override("font_size", 36)
 	_play_box.add_child(house_btn)

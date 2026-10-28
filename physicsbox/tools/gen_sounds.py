@@ -1,5 +1,7 @@
 """Procedurally synthesises the game's sound effects into assets/sounds/*.wav.
 
+The shotgun sounds (shotgun_*.wav) are recorded samples and are not generated here.
+
 Run: python3 tools/gen_sounds.py  (needs numpy)
 """
 import os
@@ -114,27 +116,6 @@ def shell(seed_f):
     return mix(hit, bounce, at(tone[: int(SR * 0.08)] * env(0.08, 0.0005, 50) * 0.2, 0.2))
 
 
-def flesh(variant):
-    dur = 0.4
-    t = t_axis(dur)
-    squish = lowpass(noise(dur), 700 + 250 * variant) * env(dur, 0.002, 18)
-    thump = np.sin(2 * np.pi * (90 + 20 * variant) * t) * env(dur, 0.001, 25) * 1.2
-    wet = highpass(noise(dur), 3000) * env(dur, 0.01, 35) * 0.25
-    # little gurgle modulation
-    squish *= 1 + 0.5 * np.sin(2 * np.pi * (28 + 9 * variant) * t)
-    return mix(squish * 1.5, thump, wet)
-
-
-def headshot():
-    dur = 0.6
-    t = t_axis(dur)
-    crunch = mix(*[at(highpass(noise(0.03), 800) * env(0.03, 0.0005, 120) * rng.uniform(0.4, 1.0), d)
-                  for d in np.cumsum(rng.uniform(0.004, 0.018, 9))])
-    splat = lowpass(noise(dur), 1100) * env(dur, 0.003, 12) * 1.1
-    thump = np.sin(2 * np.pi * 70 * t) * env(dur, 0.001, 20)
-    return mix(crunch * 1.2, splat, thump)
-
-
 def body_fall(variant):
     dur = 0.45
     t = t_axis(dur)
@@ -184,13 +165,6 @@ def footstep(variant):
                np.sin(2 * np.pi * (80 + 10 * variant) * t) * env(dur, 0.002, 50) * 0.5)
 
 
-def drip(variant):
-    dur = 0.15
-    t = t_axis(dur)
-    f = 900 + 250 * variant
-    return np.sin(2 * np.pi * (f * t + 2500 * t * t)) * env(dur, 0.001, 45) + lowpass(noise(dur), 2000) * env(dur, 0.001, 70) * 0.2
-
-
 def ui_click():
     return click(1500, 0.05, 160, 0.6)
 
@@ -208,9 +182,6 @@ if __name__ == "__main__":
     for i, f in enumerate([3100, 3600, 4200]):
         save(f"shell_{i}", shell(f), 0.35)
     for i in range(3):
-        save(f"flesh_{i}", flesh(i), 0.85)
-    save("headshot", headshot(), 0.95)
-    for i in range(3):
         save(f"body_fall_{i}", body_fall(i), 0.7)
     for i in range(2):
         save(f"wall_hit_{i}", wall_hit(i), 0.6)
@@ -219,7 +190,5 @@ if __name__ == "__main__":
     save("glass_break", glass_break(), 0.8)
     for i in range(3):
         save(f"footstep_{i}", footstep(i), 0.35)
-    for i in range(2):
-        save(f"drip_{i}", drip(i), 0.3)
     save("ui_click", ui_click(), 0.5)
     save("hitmarker", hitmarker(), 0.5)

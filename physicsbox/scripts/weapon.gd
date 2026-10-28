@@ -1,158 +1,119 @@
 class_name Weapon
 extends Node3D
-## First-person M1911: firing, hit processing, recoil/slide/reload animation,
-## muzzle flash and ejected shell casings.
+## First-person weapons. Each viewmodel (gun + gloved hands) and its
+## animations come from Blender (tools/blender/build_weapons.py); this script
+## plays them and adds sway, bob, aiming, firing, hit processing, muzzle
+## flash and ejected shells.
 
 signal fired
 signal hit_confirmed(kind: int) # 0 hit, 1 kill, 2 headshot
-signal ammo_changed(ammo: int, mag_size: int)
+signal ammo_changed(ammo: int, capacity: int)
+signal weapon_changed(weapon_name: String)
 
-const MAG_SIZE := 7
-const MODEL_SCALE := 0.0626 # model is ~3.45 units long, a real M1911 is 0.216 m
-const HIP_POS := Vector3(0.15, -0.165, -0.36)
-const HIP_ROT := Vector3(0.0, deg_to_rad(4.0), 0.0)
-const ADS_POS := Vector3(0.0, -0.0645, -0.25)
-const MUZZLE := Vector3(0.0, 0.0302, -0.146)
-const EJECT_PORT := Vector3(0.012, 0.05, -0.03)
-const SLIDE_PARTS := ["Plane_007", "Plane_010", "Plane_012", "Cylinder_001", "Plane_011"]
-const SLIDE_TRAVEL := 0.75 # model units
 const RAY_MASK := 1 | 2 | 4
-const RELOAD_TIME := 1.4
-const DAMAGE := {"head": 100.0, "chest": 40.0, "pelvis": 34.0, "uarm_l": 22.0, "uarm_r": 22.0,
-		"farm_l": 18.0, "farm_r": 18.0, "thigh_l": 28.0, "thigh_r": 28.0, "shin_l": 20.0, "shin_r": 20.0}
 const MAX_SHELLS := 24
+const DEFS := [
+	{
+		"id": "m1911", "name": "M1911", "scene": "res://assets/weapons/m1911_fp.glb",
+		"capacity": 8, "pellets": 1, "impulse": 11.0, "cooldown": 0.12,
+		"damage": {"head": 100.0, "chest": 40.0, "pelvis": 34.0, "uarm_l": 22.0, "uarm_r": 22.0, "farm_l": 18.0,
+				"farm_r": 18.0, "thigh_l": 28.0, "thigh_r": 28.0, "shin_l": 20.0, "shin_r": 20.0},
+		"spread_hip": 1.4, "spread_ads": 0.0, "falloff_start": 40.0, "falloff_min": 0.6,
+		"sound": "gunshot", "reload_sound": "reload", "pump_sound": "", "pump_at": 0.0,
+		"shell": "pistol", "shell_at": 0.0, "alert": 26.0, "flash": 1.0, "cam_recoil": 2.6,
+		"yaw": 4.0, "ads_dist": 0.25, "ads_fov": 0.72, "fire_last": "fire_last", "reload_empty": "reload_empty",
+	},
+	{
+		"id": "m500", "name": "M500", "scene": "res://assets/weapons/m500_fp.glb",
+		"capacity": 6, "pellets": 8, "impulse": 5.5, "cooldown": 0.95,
+		"damage": {"head": 45.0, "chest": 16.0, "pelvis": 15.0, "uarm_l": 9.0, "uarm_r": 9.0, "farm_l": 8.0,
+				"farm_r": 8.0, "thigh_l": 11.0, "thigh_r": 11.0, "shin_l": 9.0, "shin_r": 9.0},
+		"spread_hip": 3.6, "spread_ads": 2.4, "falloff_start": 7.0, "falloff_min": 0.3,
+		"sound": "shotgun_shot", "reload_sound": "shotgun_reload", "pump_sound": "shotgun_pump", "pump_at": 0.38,
+		"shell": "shotgun", "shell_at": 0.55, "alert": 12.0, "flash": 0.45, "cam_recoil": 6.5,
+		"yaw": 3.5, "ads_dist": 0.36, "ads_fov": 0.8, "fire_last": "", "reload_empty": "",
+	},
+]
+## Close shotgun blasts that put this many pellets into the torso spill guts.
+const GUTS_PELLETS := 3
+const GUTS_RANGE := 4.0
+
+
+class Slot:
+	var def: Dictionary
+	var root: Node3D
+	var anim: AnimationPlayer
+	var skel: Skeleton3D
+	var muzzle := -1
+	var eject := -1
+	var ammo := 0
+	var ads := Transform3D.IDENTITY
+
 
 var player: Player
-var ammo := MAG_SIZE + 1
 var aiming := false
 var aim_t := 0.0
 var reloading := false
+var slots: Array[Slot] = []
+var current: Slot
+var ammo: int:
+	get:
+		return current.ammo if current else 0
 
 var _sway_root := Node3D.new()
-var _gun_root := Node3D.new()
-var _model: Node3D
-var _slide_nodes: Array[Node3D] = []
-var _slide_rest: Array[Vector3] = []
+var _holder := Node3D.new()
 var _flash_root := Node3D.new()
 var _flash_light := OmniLight3D.new()
 var _flash_time := 0.0
 var _cooldown := 0.0
-var _recoil := 0.0
-var _recoil_vel := 0.0
-var _slide := 0.0
-var _slide_locked := false
-var _reload_t := 0.0
+var _reload_left := 0.0
+var _events: Array = [] # [time_left, callable]
 var _sway := Vector2.ZERO
 var _bob_phase := 0.0
 var _wall_push := 0.0
 var _auto_reload := -1.0
 var _shells: Array[RigidBody3D] = []
-var _shell_mesh: CylinderMesh
-var _shell_shape: CylinderShape3D
-var _shell_mat: StandardMaterial3D
+var _shell_meshes := {}
+var _shell_shapes := {}
 
 
 func _ready() -> void:
 	add_child(_sway_root)
-	_sway_root.add_child(_gun_root)
-	_gun_root.position = HIP_POS
-	_gun_root.rotation = HIP_ROT
-
-	_model = load("res://assets/m1911/m1911.fbx").instantiate()
-	_model.scale = Vector3.ONE * MODEL_SCALE
-	_model.rotation = Vector3(0, PI, 0)
-	_gun_root.add_child(_model)
-	var gun_mat := StandardMaterial3D.new()
-	gun_mat.albedo_texture = load("res://assets/m1911/m1911_albedo.jpg")
-	gun_mat.metallic = 0.3
-	gun_mat.roughness = 0.5
-	for n in _model.find_children("*", "MeshInstance3D", true, false):
-		var mi := n as MeshInstance3D
-		mi.material_override = gun_mat
-		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		if mi.name in SLIDE_PARTS:
-			_slide_nodes.append(mi)
-			_slide_rest.append(mi.position)
-
-	_build_hand()
+	_sway_root.add_child(_holder)
+	for def in DEFS:
+		var s := Slot.new()
+		s.def = def
+		s.root = load(def.scene).instantiate()
+		_holder.add_child(s.root)
+		s.anim = s.root.find_children("*", "AnimationPlayer", true, false)[0]
+		s.skel = s.root.find_children("*", "Skeleton3D", true, false)[0]
+		s.muzzle = s.skel.find_bone("muzzle")
+		s.eject = s.skel.find_bone("eject")
+		var sight := s.root.to_local(s.skel.to_global(s.skel.get_bone_global_rest(s.skel.find_bone("sight")).origin))
+		s.ads = Transform3D(Basis.IDENTITY, Vector3(0, 0, -def.ads_dist)) \
+				* Transform3D(Basis(Vector3.UP, -deg_to_rad(def.yaw)), Vector3.ZERO) \
+				* Transform3D(Basis.IDENTITY, -sight)
+		s.ammo = def.capacity
+		for mi in s.root.find_children("*", "MeshInstance3D", true, false):
+			(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		s.root.visible = false
+		s.anim.play("idle")
+		slots.append(s)
 	_build_flash()
-
-	_shell_mesh = CylinderMesh.new()
-	_shell_mesh.top_radius = 0.0065
-	_shell_mesh.bottom_radius = 0.0065
-	_shell_mesh.height = 0.024
-	_shell_mesh.radial_segments = 8
-	_shell_mesh.rings = 1
-	_shell_mat = StandardMaterial3D.new()
-	_shell_mat.albedo_color = Color(0.86, 0.64, 0.26)
-	_shell_mat.metallic = 1.0
-	_shell_mat.roughness = 0.3
-	_shell_mesh.material = _shell_mat
-	_shell_shape = CylinderShape3D.new()
-	_shell_shape.radius = 0.0065
-	_shell_shape.height = 0.024
-	ammo_changed.emit.call_deferred(ammo, MAG_SIZE)
-
-
-func _build_hand() -> void:
-	var glove := StandardMaterial3D.new()
-	glove.albedo_color = Color(0.035, 0.035, 0.04)
-	glove.roughness = 0.85
-	var sleeve := StandardMaterial3D.new()
-	sleeve.albedo_color = Color(0.05, 0.05, 0.055)
-	sleeve.roughness = 0.95
-
-	# fist wrapped around the grip
-	var fist := MeshInstance3D.new()
-	var fm := CapsuleMesh.new()
-	fm.radius = 0.024
-	fm.height = 0.085
-	fist.mesh = fm
-	fist.material_override = glove
-	fist.position = Vector3(0.0, -0.038, 0.04)
-	fist.rotation = Vector3(deg_to_rad(-18), 0, 0)
-	fist.scale = Vector3(1.05, 1.0, 1.35)
-	_gun_root.add_child(fist)
-	# thumb along the frame
-	var thumb := MeshInstance3D.new()
-	var tm := CapsuleMesh.new()
-	tm.radius = 0.009
-	tm.height = 0.05
-	thumb.mesh = tm
-	thumb.material_override = glove
-	thumb.position = Vector3(-0.016, -0.008, 0.012)
-	thumb.rotation = Vector3(deg_to_rad(-80), 0, 0)
-	_gun_root.add_child(thumb)
-	# forearm: from the wrist back towards the lower right of the screen
-	var wrist := Vector3(0.0, -0.06, 0.07)
-	var elbow := Vector3(0.12, -0.25, 0.5)
-	var arm := MeshInstance3D.new()
-	var am := CapsuleMesh.new()
-	am.radius = 0.042
-	am.height = wrist.distance_to(elbow) + 0.08
-	arm.mesh = am
-	arm.material_override = sleeve
-	var axis := (elbow - wrist).normalized()
-	var side := axis.cross(Vector3.FORWARD).normalized()
-	arm.basis = Basis(side, axis, side.cross(axis)).orthonormalized()
-	arm.position = (wrist + elbow) * 0.5
-	_gun_root.add_child(arm)
-	for m in [fist, thumb, arm]:
-		m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_build_shells()
+	select(0, false)
 
 
 func _build_flash() -> void:
-	_flash_root.position = MUZZLE
-	_gun_root.add_child(_flash_root)
-	var front_mat := _additive_mat("res://assets/textures/muzzle_flash.png")
-	var side_mat := _additive_mat("res://assets/textures/muzzle_flash_side.png")
+	add_child(_flash_root)
 	var front := MeshInstance3D.new()
 	var fq := QuadMesh.new()
 	fq.size = Vector2(0.13, 0.13)
 	front.mesh = fq
-	front.material_override = front_mat
+	front.material_override = _additive_mat("res://assets/textures/muzzle_flash.png")
 	front.name = "Front"
 	_flash_root.add_child(front)
+	var side_mat := _additive_mat("res://assets/textures/muzzle_flash_side.png")
 	for i in 2:
 		var side := MeshInstance3D.new()
 		var sq := QuadMesh.new()
@@ -168,9 +129,8 @@ func _build_flash() -> void:
 	_flash_light.light_color = Color(1.0, 0.72, 0.38)
 	_flash_light.light_energy = 3.0
 	_flash_light.omni_range = 4.5
-	_flash_light.position = MUZZLE + Vector3(0, 0, -0.08)
 	_flash_light.visible = false
-	_gun_root.add_child(_flash_light)
+	add_child(_flash_light)
 
 
 func _additive_mat(path: String) -> StandardMaterial3D:
@@ -184,139 +144,258 @@ func _additive_mat(path: String) -> StandardMaterial3D:
 	return m
 
 
+func _build_shells() -> void:
+	var brass := StandardMaterial3D.new()
+	brass.albedo_color = Color(0.86, 0.64, 0.26)
+	brass.metallic = 1.0
+	brass.roughness = 0.3
+	var hull := StandardMaterial3D.new()
+	hull.albedo_color = Color(0.62, 0.06, 0.05)
+	hull.roughness = 0.45
+	for kind in ["pistol", "shotgun"]:
+		var r := 0.0065 if kind == "pistol" else 0.0105
+		var h := 0.024 if kind == "pistol" else 0.068
+		var m := CylinderMesh.new()
+		m.top_radius = r
+		m.bottom_radius = r
+		m.height = h
+		m.radial_segments = 8
+		m.rings = 1
+		m.material = brass if kind == "pistol" else hull
+		_shell_meshes[kind] = m
+		var sh := CylinderShape3D.new()
+		sh.radius = r
+		sh.height = h
+		_shell_shapes[kind] = sh
+
+
+# ------------------------------------------------------------------ switching
+
+func select(index: int, animate := true) -> void:
+	var s := slots[index]
+	if s == current:
+		return
+	if current:
+		current.root.visible = false
+	current = s
+	s.root.visible = true
+	reloading = false
+	_events.clear()
+	_auto_reload = -1.0
+	if animate:
+		s.anim.play("draw")
+		s.anim.queue("idle")
+		_cooldown = s.anim.get_animation("draw").length * 0.8
+		Sfx.play("ui_click", -6.0)
+	else:
+		s.anim.play("idle")
+	weapon_changed.emit(s.def.name)
+	ammo_changed.emit(s.ammo, s.def.capacity)
+
+
+func next_weapon() -> void:
+	select((slots.find(current) + 1) % slots.size())
+
+
+func weapon_name() -> String:
+	return current.def.name
+
+
 # ------------------------------------------------------------------ actions
 
-## Trigger pull (semi-automatic: one shot per press).
+## Trigger pull (one shot per press; the shotgun also needs its pump cycle).
 func trigger() -> void:
 	if reloading or _cooldown > 0.0:
 		return
-	if ammo <= 0:
+	var d := current.def
+	if current.ammo <= 0:
 		Sfx.play("dry_fire")
 		_cooldown = 0.25
 		_auto_reload = 0.3
 		return
-	ammo -= 1
-	_cooldown = 0.11
-	_slide_locked = ammo == 0
-	_slide = 1.0
-	_recoil_vel += 26.0
+	current.ammo -= 1
+	_cooldown = d.cooldown
+	var anim_name: String = "fire"
+	if current.ammo == 0 and d.fire_last != "":
+		anim_name = d.fire_last
+	current.anim.stop()
+	current.anim.play(anim_name)
+	if anim_name != d.fire_last:
+		current.anim.queue("idle")
 	_flash_time = 0.05
 	_flash_root.visible = true
 	_flash_light.visible = true
+	_flash_light.light_energy = 3.0 * d.flash
+	_flash_root.scale = Vector3.ONE * randf_range(0.8, 1.2) * d.flash
 	_flash_root.get_node("Front").rotation.z = randf() * TAU
-	_flash_root.scale = Vector3.ONE * randf_range(0.8, 1.2)
-	Sfx.play("gunshot", 0.0, 0.05)
-	player.add_recoil(deg_to_rad(randf_range(2.2, 3.0)), deg_to_rad(randf_range(-0.6, 0.6)))
-	_eject_shell()
+	_place_flash()
+	Sfx.play(d.sound, 0.0, 0.05)
+	var kick: float = d.cam_recoil
+	player.add_recoil(deg_to_rad(kick * randf_range(0.85, 1.15)), deg_to_rad(randf_range(-0.25, 0.25) * kick))
+	if d.shell_at <= 0.0:
+		_eject_shell()
+	else:
+		_events.append([d.shell_at, _eject_shell])
+	if d.pump_sound != "":
+		_events.append([d.pump_at, Sfx.play.bind(d.pump_sound, -2.0, 0.03)])
 	_shoot()
-	_alert_npcs()
+	_alert_npcs(d.alert)
 	fired.emit()
-	ammo_changed.emit(ammo, MAG_SIZE)
+	ammo_changed.emit(current.ammo, d.capacity)
 
 
 func reload() -> void:
-	if reloading or ammo >= MAG_SIZE + 1:
+	var d := current.def
+	if reloading or current.ammo >= d.capacity or _cooldown > 0.3:
 		return
 	reloading = true
-	_reload_t = 0.0
-	Sfx.play("reload")
+	var anim_name := "reload"
+	if current.ammo == 0 and d.reload_empty != "":
+		anim_name = d.reload_empty
+	current.anim.stop()
+	current.anim.play(anim_name)
+	current.anim.queue("idle")
+	_reload_left = current.anim.get_animation(anim_name).length
+	Sfx.play(d.reload_sound)
 
 
 func set_aiming(value: bool) -> void:
 	aiming = value
 
 
-func _alert_npcs() -> void:
+func _alert_npcs(radius: float) -> void:
 	var pos := global_position
 	for n in get_tree().get_nodes_in_group("npcs"):
-		if n.global_position.distance_to(pos) < 26.0:
+		if n.global_position.distance_to(pos) < radius:
 			n.alert(pos)
 
 
 func _shoot() -> void:
+	var d := current.def
 	var cam := get_viewport().get_camera_3d()
 	var from := cam.global_position
-	var spread := deg_to_rad(lerpf(1.4, 0.0, aim_t) + player.velocity.length() * 0.25 * (1.0 - aim_t))
+	var spread_deg: float = lerpf(d.spread_hip, d.spread_ads, aim_t) + player.velocity.length() * 0.25 * (1.0 - aim_t)
+	var spread := deg_to_rad(spread_deg)
 	var fwd := -cam.global_basis.z
-	var dir := fwd.rotated(cam.global_basis.x, randf_range(-spread, spread)).rotated(cam.global_basis.y, randf_range(-spread, spread)).normalized()
 	var space := get_world_3d().direct_space_state
-	var q := PhysicsRayQueryParameters3D.create(from, from + dir * 300.0, RAY_MASK)
-	q.exclude = [player.get_rid()]
-	for _i in 4:
-		var hit := space.intersect_ray(q)
-		if hit.is_empty():
-			return
-		var collider: Object = hit.collider
-		var pos: Vector3 = hit.position
-		var normal: Vector3 = hit.normal
-		if collider.has_meta("npc"):
-			var npc = collider.get_meta("npc")
-			if is_instance_valid(npc):
-				var part: String = collider.get_meta("part")
-				var kind: int = npc.take_hit(collider, pos, normal, dir, DAMAGE.get(part, 25.0), 11.0 if not npc.dead else 7.0)
-				hit_confirmed.emit(kind)
-				Sfx.play("hitmarker", -6.0 if kind == 0 else -2.0)
-			return
-		var surface: String = collider.get_meta("surface", "concrete")
-		if surface == "glass" and collider.has_method("shatter"):
-			collider.shatter(pos, dir)
-			var ex: Array[RID] = q.exclude
-			ex.append(collider.get_rid())
-			q.exclude = ex
-			q.from = pos
-			continue
-		_impact(collider, pos, normal, dir, surface)
-		return
+	var best_kind := -1
+	var torso_hits := {} # npc -> [count, part, pos, normal, dist]
+	var played_impact := false
+	for pellet in d.pellets:
+		# uniform spread inside a cone
+		var a := randf() * TAU
+		var r := sqrt(randf()) * spread
+		var dir := fwd.rotated(cam.global_basis.x, sin(a) * r).rotated(cam.global_basis.y, cos(a) * r).normalized()
+		var q := PhysicsRayQueryParameters3D.create(from, from + dir * 300.0, RAY_MASK)
+		q.exclude = [player.get_rid()]
+		for _i in 4:
+			var hit := space.intersect_ray(q)
+			if hit.is_empty():
+				break
+			var collider: Object = hit.collider
+			var pos: Vector3 = hit.position
+			var normal: Vector3 = hit.normal
+			var dist := from.distance_to(pos)
+			var falloff := clampf(1.0 - (dist - d.falloff_start) / 20.0, d.falloff_min, 1.0)
+			if collider.has_meta("npc"):
+				var npc = collider.get_meta("npc")
+				if is_instance_valid(npc):
+					var part: String = collider.get_meta("part")
+					var fx := 1.0 if d.pellets == 1 else 0.45
+					var impulse: float = d.impulse * (1.0 if not npc.dead else 0.7) * falloff
+					var kind: int = npc.take_hit(collider, pos, normal, dir, d.damage.get(part, 10.0) * falloff, impulse, fx)
+					best_kind = maxi(best_kind, kind)
+					if part == "chest" or part == "pelvis":
+						var e: Array = torso_hits.get(npc, [0, collider, pos, normal, dist])
+						e[0] += 1
+						torso_hits[npc] = e
+				break
+			var surface: String = collider.get_meta("surface", "concrete")
+			if surface == "glass" and collider.has_method("shatter"):
+				collider.shatter(pos, dir)
+				var ex: Array[RID] = q.exclude
+				ex.append(collider.get_rid())
+				q.exclude = ex
+				q.from = pos
+				continue
+			_impact(collider, pos, normal, dir, surface, not played_impact, falloff)
+			played_impact = true
+			break
+	for npc in torso_hits:
+		var e: Array = torso_hits[npc]
+		if e[0] >= GUTS_PELLETS and e[4] < GUTS_RANGE and is_instance_valid(npc):
+			if e[4] < 2.2 or randf() < 0.6:
+				npc.spill_guts(e[1], e[2], e[3], fwd)
+	if best_kind >= 0:
+		hit_confirmed.emit(best_kind)
+		Sfx.play("hitmarker", -6.0 if best_kind == 0 else -2.0)
 
 
-func _impact(collider: Object, pos: Vector3, normal: Vector3, dir: Vector3, surface: String) -> void:
+func _impact(collider: Object, pos: Vector3, normal: Vector3, dir: Vector3, surface: String, sound: bool, power: float) -> void:
 	var body: Node3D = collider as Node3D
 	if collider is RigidBody3D:
 		var rb := collider as RigidBody3D
-		rb.apply_impulse(dir * 7.0, pos - rb.global_position)
+		rb.apply_impulse(dir * current.def.impulse * 0.65 * power, pos - rb.global_position)
 		Blood.bullet_hole(pos, normal, rb)
 	else:
 		Blood.bullet_hole(pos, normal, body if body is AnimatableBody3D else null)
+	var snd := "wall_hit"
+	var col := Color(0.75, 0.73, 0.7)
 	match surface:
 		"wood":
-			Sfx.play_3d("wood_hit", pos)
-			Blood.dust(pos, normal, Color(0.55, 0.4, 0.25))
+			snd = "wood_hit"
+			col = Color(0.55, 0.4, 0.25)
 		"metal":
-			Sfx.play_3d("metal_hit", pos)
-			Blood.dust(pos, normal, Color(0.7, 0.7, 0.7))
+			snd = "metal_hit"
+			col = Color(0.7, 0.7, 0.7)
 		"soft":
-			Sfx.play_3d("wood_hit", pos, -6.0)
-			Blood.dust(pos, normal, Color(0.8, 0.8, 0.8))
-		_:
-			Sfx.play_3d("wall_hit", pos)
-			Blood.dust(pos, normal)
+			snd = "wood_hit"
+			col = Color(0.8, 0.8, 0.8)
+		"flesh":
+			snd = ""
+			col = Color(0.5, 0.02, 0.03)
+	if sound and snd != "":
+		Sfx.play_3d(snd, pos, -3.0 if surface == "soft" else 0.0)
+	Blood.dust(pos, normal, col)
+
+
+func _bone_world(bone: int) -> Transform3D:
+	return current.skel.global_transform * current.skel.get_bone_global_pose(bone)
+
+
+func _place_flash() -> void:
+	var cam := get_viewport().get_camera_3d()
+	var muzzle := _bone_world(current.muzzle).origin
+	_flash_root.global_transform = Transform3D(cam.global_basis, muzzle).scaled_local(_flash_root.scale)
+	_flash_light.global_position = muzzle - cam.global_basis.z * 0.08
 
 
 func _eject_shell() -> void:
+	var kind: String = current.def.shell
 	var s := RigidBody3D.new()
-	s.mass = 0.012
+	s.mass = 0.012 if kind == "pistol" else 0.03
 	s.collision_layer = 32
 	s.collision_mask = 1 | 2
 	s.continuous_cd = true
 	s.contact_monitor = true
 	s.max_contacts_reported = 1
 	var mi := MeshInstance3D.new()
-	mi.mesh = _shell_mesh
+	mi.mesh = _shell_meshes[kind]
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	s.add_child(mi)
 	var cs := CollisionShape3D.new()
-	cs.shape = _shell_shape
+	cs.shape = _shell_shapes[kind]
 	s.add_child(cs)
 	get_tree().current_scene.add_child(s)
 	var cam_basis := get_viewport().get_camera_3d().global_basis
-	s.global_transform = Transform3D(cam_basis * Basis(Vector3.FORWARD, PI / 2), _gun_root.to_global(EJECT_PORT))
+	s.global_transform = Transform3D(cam_basis * Basis(Vector3.FORWARD, PI / 2), _bone_world(current.eject).origin)
 	s.linear_velocity = player.velocity + cam_basis * Vector3(randf_range(1.6, 2.4), randf_range(1.8, 2.6), randf_range(-0.2, 0.4))
 	s.angular_velocity = Vector3(randf_range(-25, 25), randf_range(-25, 25), randf_range(-25, 25))
 	var state := {"played": 0}
 	s.body_entered.connect(func(_b):
 		if state.played < 2 and s.linear_velocity.length() > 0.6:
 			state.played += 1
-			Sfx.play_3d("shell", s.global_position, -4.0 - state.played * 5.0, 0.15)
+			Sfx.play_3d("shell", s.global_position, -4.0 - state.played * 5.0, 0.15 if kind == "pistol" else 0.3)
 	)
 	_shells.append(s)
 	if _shells.size() > MAX_SHELLS:
@@ -325,7 +404,7 @@ func _eject_shell() -> void:
 			old.queue_free()
 
 
-# ------------------------------------------------------------------ animation
+# ------------------------------------------------------------------ per frame
 
 func _process(frame_delta: float) -> void:
 	# springs below go unstable with huge steps, so cap the step on slow frames
@@ -335,46 +414,43 @@ func _process(frame_delta: float) -> void:
 		_auto_reload -= frame_delta
 		if _auto_reload <= 0.0:
 			reload()
+	for i in range(_events.size() - 1, -1, -1):
+		_events[i][0] -= frame_delta
+		if _events[i][0] <= 0.0:
+			var cb: Callable = _events[i][1]
+			_events.remove_at(i)
+			cb.call()
+	if reloading:
+		_reload_left -= frame_delta
+		if _reload_left <= 0.0:
+			reloading = false
+			var d := current.def
+			current.ammo = d.capacity if d.pellets > 1 or current.ammo > 0 else d.capacity - 1
+			ammo_changed.emit(current.ammo, d.capacity)
 
 	if not player.touch_mode and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		if Input.is_action_just_pressed("fire"):
 			trigger()
 		if Input.is_action_just_pressed("reload"):
 			reload()
+		if Input.is_action_just_pressed("weapon_1"):
+			select(0)
+		if Input.is_action_just_pressed("weapon_2"):
+			select(1)
+		if Input.is_action_just_pressed("weapon_next"):
+			next_weapon()
 		aiming = Input.is_action_pressed("aim")
 
 	var aim_target := 1.0 if aiming and not reloading else 0.0
 	aim_t = move_toward(aim_t, aim_target, delta * 6.0)
 	var a := smoothstep(0.0, 1.0, aim_t)
 
-	# flash
 	if _flash_time > 0.0:
 		_flash_time -= frame_delta
+		_place_flash()
 		if _flash_time <= 0.0:
 			_flash_root.visible = false
 			_flash_light.visible = false
-
-	# recoil spring
-	_recoil_vel += (-_recoil * 260.0 - _recoil_vel * 22.0) * delta
-	_recoil = clampf(_recoil + _recoil_vel * delta, -0.6, 1.6)
-
-	# slide: snaps back instantly, returns quickly (unless locked open on empty)
-	if not _slide_locked:
-		_slide = move_toward(_slide, 0.0, delta * 14.0)
-	for i in _slide_nodes.size():
-		_slide_nodes[i].position = _slide_rest[i] + Vector3(0, 0, -SLIDE_TRAVEL * _slide)
-
-	# reload
-	var reload_pose := 0.0
-	if reloading:
-		_reload_t += frame_delta
-		reload_pose = sin(clampf(_reload_t / RELOAD_TIME, 0.0, 1.0) * PI)
-		if _reload_t >= RELOAD_TIME * 0.85 and _slide_locked:
-			_slide_locked = false
-		if _reload_t >= RELOAD_TIME:
-			reloading = false
-			ammo = MAG_SIZE + (1 if ammo > 0 else 0)
-			ammo_changed.emit(ammo, MAG_SIZE)
 
 	# sway from looking + bob from walking
 	var look := player.consume_look_delta()
@@ -389,21 +465,12 @@ func _process(frame_delta: float) -> void:
 	var cam := get_viewport().get_camera_3d()
 	var wall := 0.0
 	if cam:
-		var q := PhysicsRayQueryParameters3D.create(cam.global_position, cam.global_position - cam.global_basis.z * 0.75, 1 | 2)
+		var reach := 0.75 if current.def.pellets == 1 else 1.0
+		var q := PhysicsRayQueryParameters3D.create(cam.global_position, cam.global_position - cam.global_basis.z * reach, 1 | 2)
 		var hit := get_world_3d().direct_space_state.intersect_ray(q)
 		if not hit.is_empty():
-			wall = 0.75 - cam.global_position.distance_to(hit.position)
+			wall = reach - cam.global_position.distance_to(hit.position)
 	_wall_push = lerpf(_wall_push, wall, clampf(delta * 12.0, 0.0, 1.0))
 
-	var base_pos := HIP_POS.lerp(ADS_POS, a)
-	var base_rot := HIP_ROT.lerp(Vector3.ZERO, a)
-	var recoil_scale := lerpf(1.0, 0.55, a)
-	var pos := base_pos + bob + Vector3(_sway.x, _sway.y, 0.0)
-	pos += Vector3(0.0, 0.004, 0.045) * _recoil * recoil_scale
-	pos += Vector3(0.0, -0.09, 0.06) * reload_pose
-	pos += Vector3(0.0, -0.02, _wall_push * 0.6)
-	var rot := base_rot + Vector3(0.22 * _recoil * recoil_scale, 0.0, 0.0)
-	rot += Vector3(0.5, 0.25, 0.7) * reload_pose
-	rot.x += _wall_push * 1.2
-	_gun_root.position = pos
-	_gun_root.rotation = rot
+	var offset := Transform3D(Basis(Vector3.RIGHT, _wall_push * 1.0), bob + Vector3(_sway.x * (1.0 - a * 0.6), _sway.y * (1.0 - a * 0.6), _wall_push * 0.5))
+	_holder.transform = offset * Transform3D.IDENTITY.interpolate_with(current.ads, a)

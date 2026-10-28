@@ -19,6 +19,7 @@ var _pause_layer := CanvasLayer.new()
 var _pause_panel: Control
 var _slowmo_button: Button
 var _auto_button: Button
+var _ai_button: Button
 
 
 func _ready() -> void:
@@ -176,6 +177,15 @@ func _process(_delta: float) -> void:
 			spawn_in_front()
 		if Input.is_action_just_pressed("slowmo"):
 			toggle_slowmo()
+		if Input.is_action_just_pressed("toggle_ai"):
+			toggle_ai()
+
+
+## AI on/off: with AI off mannequins stand still (they still react to hits).
+func toggle_ai() -> void:
+	Npc.ai_enabled = not Npc.ai_enabled
+	if _ai_button:
+		_ai_button.text = "ИИ манекенов: ВКЛ" if Npc.ai_enabled else "ИИ манекенов: ВЫКЛ"
 
 
 func toggle_slowmo() -> void:
@@ -258,7 +268,12 @@ func _build_pause_menu() -> void:
 		auto_spawn = not auto_spawn
 		_auto_button.text = "Авто-спавн: ВКЛ" if auto_spawn else "Авто-спавн: ВЫКЛ")
 	left.add_child(_auto_button)
+	_ai_button = UiKit.button("ИИ манекенов: ВКЛ" if Npc.ai_enabled else "ИИ манекенов: ВЫКЛ", toggle_ai)
+	left.add_child(_ai_button)
 	left.add_child(UiKit.button("Главное меню", _to_menu))
+	for b in left.get_children():
+		if b is Button:
+			b.custom_minimum_size.y = 50
 
 	var right := VBoxContainer.new()
 	right.custom_minimum_size.x = 560

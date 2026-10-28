@@ -14,7 +14,6 @@ var _pos := PackedVector3Array()
 var _vel := PackedVector3Array()
 var _size := PackedFloat32Array()
 var _age := PackedFloat32Array()
-var _flags := PackedByteArray()
 var _count := 0
 
 var _mm: MultiMesh
@@ -33,7 +32,6 @@ var _splats: Array = []
 var _splat_i := 0
 var _holes: Array = []
 var _hole_i := 0
-var _drip_cd := 0.0
 
 
 func _ready() -> void:
@@ -41,7 +39,6 @@ func _ready() -> void:
 	_vel.resize(MAX_DROPS)
 	_size.resize(MAX_DROPS)
 	_age.resize(MAX_DROPS)
-	_flags.resize(MAX_DROPS)
 	_ray.collision_mask = DROP_MASK
 	_ray.hit_back_faces = false
 
@@ -120,7 +117,7 @@ func _scene_root() -> Node:
 
 ## Fires `count` droplets from `origin` roughly along `dir`.
 func spray(origin: Vector3, dir: Vector3, count: int, speed_min: float, speed_max: float,
-		spread := 0.35, size_min := 0.012, size_max := 0.03, sound := false) -> void:
+		spread := 0.35, size_min := 0.012, size_max := 0.03) -> void:
 	count = int(round(count * Settings.blood_amount))
 	dir = dir.normalized()
 	for i in count:
@@ -131,7 +128,6 @@ func spray(origin: Vector3, dir: Vector3, count: int, speed_min: float, speed_ma
 		_vel[_count] = d * randf_range(speed_min, speed_max)
 		_size[_count] = randf_range(size_min, size_max)
 		_age[_count] = 0.0
-		_flags[_count] = 1 if sound else 0
 		_count += 1
 
 
@@ -143,12 +139,10 @@ func drip(origin: Vector3, size := 0.02) -> void:
 	_vel[_count] = Vector3(randf_range(-0.15, 0.15), -0.3, randf_range(-0.15, 0.15))
 	_size[_count] = size
 	_age[_count] = 0.0
-	_flags[_count] = 1
 	_count += 1
 
 
 func _physics_process(delta: float) -> void:
-	_drip_cd -= delta
 	if _count == 0:
 		_mm.visible_instance_count = 0
 		return
@@ -168,15 +162,11 @@ func _physics_process(delta: float) -> void:
 				var s := _size[i] * randf_range(14.0, 24.0)
 				var parent: Node3D = hit.collider if hit.collider is RigidBody3D else null
 				splat(hit.position, hit.normal, s, parent)
-				if _flags[i] == 1 and _drip_cd <= 0.0:
-					_drip_cd = 0.12
-					Sfx.play_3d("drip", hit.position, -14.0, 0.2)
 			_count -= 1
 			_pos[i] = _pos[_count]
 			_vel[i] = _vel[_count]
 			_size[i] = _size[_count]
 			_age[i] = _age[_count]
-			_flags[i] = _flags[_count]
 			continue
 		_pos[i] = np
 		_vel[i] = v

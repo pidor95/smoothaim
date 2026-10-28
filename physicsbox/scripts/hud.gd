@@ -55,9 +55,7 @@ func popup(text: String) -> void:
 func _on_hit(kind: int) -> void:
 	_hit_kind = kind
 	_hit_t = 0.28 if kind == 0 else 0.45
-	if kind == 2:
-		popup("ХЕДШОТ")
-	elif kind == 1:
+	if kind >= 1:
 		popup("УБИТ")
 
 
@@ -73,6 +71,8 @@ func _buttons() -> Dictionary:
 		"pause": {"pos": Vector2(s.x - 50, 50), "r": 32.0, "text": "II"},
 		"spawn": {"pos": Vector2(s.x - 130, 50), "r": 32.0, "text": "+"},
 		"slowmo": {"pos": Vector2(s.x - 210, 50), "r": 32.0, "text": "x0.3"},
+		"ai": {"pos": Vector2(s.x - 290, 50), "r": 32.0, "text": "ИИ"},
+		"switch": {"pos": Vector2(s.x - 320, s.y - 250), "r": 42.0, "text": "СМЕНА"},
 	}
 
 
@@ -114,6 +114,10 @@ func _touch_down(i: int, p: Vector2) -> void:
 					game.spawn_in_front()
 				"slowmo":
 					game.toggle_slowmo()
+				"ai":
+					game.toggle_ai()
+				"switch":
+					player.weapon.next_weapon()
 			return
 	if p.x < size.x * 0.42 and p.y > size.y * 0.25 and _joy_index == -1:
 		_joy_index = i
@@ -207,18 +211,22 @@ func _draw() -> void:
 	# counters
 	_text(Vector2(24, 44), "УБИЙСТВ: %d" % _kills, 28, Color(1, 1, 1, 0.9))
 	_text(Vector2(24, 78), "МАНЕКЕНОВ: %d" % _alive, 22, Color(1, 1, 1, 0.7))
+	var status_y := 108.0
 	if _slowmo:
-		_text(Vector2(24, 108), "ЗАМЕДЛЕНИЕ", 22, Color(1, 0.35, 0.3, 0.9))
+		_text(Vector2(24, status_y), "ЗАМЕДЛЕНИЕ", 22, Color(1, 0.35, 0.3, 0.9))
+		status_y += 28.0
+	if not Npc.ai_enabled:
+		_text(Vector2(24, status_y), "ИИ ОТКЛЮЧЁН", 22, Color(1, 0.75, 0.3, 0.9))
 	if Settings.show_fps:
 		_text(Vector2(24, size.y - 20), "FPS %d" % Engine.get_frames_per_second(), 20, Color(0.6, 1, 0.6, 0.9))
-	var ammo_text := "%d / ∞" % _ammo if not player.weapon.reloading else "ПЕРЕЗАРЯДКА"
-	var ammo_pos := Vector2(size.x * 0.5 - 60, size.y - 28)
+	var ammo_text := "%s   %d / ∞" % [player.weapon.weapon_name(), _ammo] if not player.weapon.reloading else "ПЕРЕЗАРЯДКА"
+	var ammo_pos := Vector2(size.x * 0.5 - 110, size.y - 28)
 	if not player.touch_mode:
 		ammo_pos = Vector2(size.x - 220, size.y - 30)
 	_text(ammo_pos, ammo_text, 30, Color(1, 1, 1, 0.9) if _ammo > 0 else Color(1, 0.3, 0.25, 0.95))
 	if not player.touch_mode:
 		_text(Vector2(24, size.y - 50), "WASD — ходьба, ЛКМ — огонь, ПКМ — прицел, R — перезарядка", 18, Color(1, 1, 1, 0.55))
-		_text(Vector2(24, size.y - 26), "E — манекен, Q — замедление, Esc — пауза", 18, Color(1, 1, 1, 0.55))
+		_text(Vector2(24, size.y - 26), "1/2/F — оружие, E — манекен, Q — замедление, T — ИИ, Esc — пауза", 18, Color(1, 1, 1, 0.55))
 		return
 
 	# joystick
@@ -233,14 +241,14 @@ func _draw() -> void:
 	var buttons := _buttons()
 	for key in buttons:
 		var b: Dictionary = buttons[key]
-		var held: bool = _held.has(key) or (key == "aim" and player.weapon.aiming) or (key == "slowmo" and _slowmo)
+		var held: bool = _held.has(key) or (key == "aim" and player.weapon.aiming) or (key == "slowmo" and _slowmo) or (key == "ai" and not Npc.ai_enabled)
 		var fill := Color(0.75, 0.05, 0.08, 0.45) if held else Color(0, 0, 0, 0.25)
 		if key == "fire":
 			fill = Color(0.75, 0.05, 0.08, 0.55 if held else 0.3)
 		draw_circle(b.pos, b.r, fill)
 		draw_arc(b.pos, b.r, 0, TAU, 48, Color(1, 1, 1, 0.5), 2.0, true)
 		var fs := 22 if b.r > 45 else 18
-		if key in ["pause", "spawn", "slowmo", "reload"]:
+		if key in ["pause", "spawn", "slowmo", "reload", "ai"]:
 			fs = 26 if b.text.length() <= 2 else 18
 		var w := _font.get_string_size(b.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		draw_string(_font, b.pos + Vector2(-w * 0.5, fs * 0.35), b.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, 0.85))

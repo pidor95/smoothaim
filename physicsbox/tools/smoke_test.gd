@@ -1,146 +1,148 @@
 extends SceneTree
-## Dev smoke test: loads the house, shoots mannequins and saves screenshots.
+## Dev smoke test: loads the house, exercises both weapons on mannequins
+## (hit reactions, knockdown + get-up, shotgun guts) and saves screenshots.
 ## Run: godot -s res://tools/smoke_test.gd   (env SHOTS=<dir> to save PNGs)
 
 var frame := 0
 var game: Node
 var npc: Npc
 var shots_dir := OS.get_environment("SHOTS")
-var log_lines: Array[String] = []
+var _wait := 0
+var _step := 0
+var _knocked_seen := false
 
 
 func _initialize() -> void:
 	change_scene_to_file("res://scenes/game.tscn")
 
 
-func _shot(name: String) -> void:
+func _shot(shot_name: String) -> void:
 	if shots_dir == "":
 		return
-	var img := root.get_texture().get_image()
-	img.save_png(shots_dir.path_join(name + ".png"))
-	print("shot ", name)
+	root.get_texture().get_image().save_png(shots_dir.path_join(shot_name + ".png"))
+	print("shot ", shot_name)
 
 
 func _aim_at(target: Vector3) -> void:
 	var p: Player = game.player
-	var eye := p.camera.global_position
-	var d := (target - eye).normalized()
+	var d := (target - p.camera.global_position).normalized()
 	p.yaw = atan2(-d.x, -d.z)
 	p.pitch = asin(clampf(d.y, -1, 1))
 	p.rotation.y = p.yaw
 	p.head.rotation = Vector3(p.pitch, 0, 0)
 
 
+func _fire() -> void:
+	var w: Weapon = game.player.weapon
+	w._cooldown = 0.0
+	w.trigger()
+
+
+func _spawn(pos: Vector3) -> Npc:
+	var n: Npc = game.spawn_npc(pos)
+	n.rotation.y = 0.0
+	return n
+
+
 func _process(_delta: float) -> bool:
 	frame += 1
 	if frame == 5:
 		game = current_scene
-	if frame == 20:
-		game.player.touch_mode = true # show touch HUD, avoid mouse-capture logic
-		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	if game == null:
+	if game == null or frame < 30:
 		return false
 	var p: Player = game.player
-	match frame:
-		60:
-			print("npcs: ", get_nodes_in_group("npcs").size())
-			_shot("01_spawn")
-		61:
-			# step into the house through the front door
-			p.global_position = Vector3(-4.0, 0.05, -4.5)
-			p.yaw = 0.0
-		70:
-			_shot("02_living")
-		80:
-			for n in get_nodes_in_group("npcs"):
-				n.queue_free()
-		82:
-			npc = game.spawn_npc(Vector3(-4.0, 0.05, -1.4))
-			npc.rotation.y = 0.0
-			npc.display_only = true
-		100:
+	if frame == 30:
+		p.touch_mode = true
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		Npc.ai_enabled = false
+		for n in get_nodes_in_group("npcs"):
+			n.queue_free()
+		p.global_position = Vector3(-4.0, 0.05, -4.5)
+		p.yaw = 0.0
+	if _wait > 0:
+		_wait -= 1
+		return false
+	match _step:
+		0:
+			npc = _spawn(Vector3(-4.0, 0.05, -1.4))
+			_wait = 20
+		1:
 			_aim_at(npc.chest.global_position)
-		101:
+			_shot("01_pistol_idle")
+			_fire()
+			print("pistol chest hit: health=", npc.health, " balance=", snappedf(npc.balance, 0.01), " reacts=", npc._reacts.size(), " state=", npc.state)
+			_wait = 6
+		2:
+			_shot("02_reaction")
+			_wait = 30
+		3:
 			p.weapon.set_aiming(true)
-		125:
-			_shot("03_ads")
-			p.weapon.trigger()
-			print("after body shot: health=", npc.health, " dead=", npc.dead)
-		128:
-			_shot("04_fire")
-			_report_ragdoll()
-		150:
-			_aim_at(npc.head.global_position)
-		152:
-			p.weapon.trigger()
-			print("after head shot: dead=", npc.dead)
-		156:
-			_shot("05_headshot")
-		175:
-			_shot("06_falling")
-		260:
-			_shot("07_ragdoll")
-			_report_ragdoll()
-		261:
+			_wait = 25
+		4:
+			_aim_at(npc.thigh_l.global_position)
+			_shot("03_pistol_ads")
+			_fire()
+			_wait = 6
+		5:
+			_shot("04_leg_reaction")
+			_wait = 3
+		6:
+			_aim_at(npc.thigh_r.global_position)
+			_fire()
+			print("after 3 hits: health=", npc.health, " balance=", snappedf(npc.balance, 0.01), " state=", npc.state)
+			_wait = 20
+		7:
+			print("state (3=KNOCKED): ", npc.state, " dead=", npc.dead)
+			_shot("05_knocked")
+			_wait = 1
+		8:
+			if npc.state == Npc.State.KNOCKED:
+				_knocked_seen = true
+			if npc.state == Npc.State.GETUP:
+				_shot("06_getting_up")
+				_step += 1
+			elif npc.state == Npc.State.IDLE and _knocked_seen:
+				_step += 1
+			_wait = 2
+			return false
+		9:
+			_wait = 1
+			if npc.state != Npc.State.IDLE:
+				return false
+			print("got back up: state=", npc.state, " pos=", npc.global_position.snapped(Vector3.ONE * 0.01), " health=", npc.health)
+			_shot("07_standing_again")
 			p.weapon.set_aiming(false)
-			_aim_at(npc.chest.global_position)
-		262:
-			p.weapon.trigger()
-		268:
-			p.weapon.trigger()
-		275:
-			p.weapon.trigger()
-		400:
-			_shot("08_pool")
-			_report_ragdoll()
-			print("ammo ", p.weapon.ammo)
-		401:
-			p.global_position = Vector3(0.0, 0.05, -12)
-			p.yaw = 0.0
-			p.pitch = deg_to_rad(5)
+			p.weapon.select(1)
+			_wait = 30
+		10:
+			_shot("08_shotgun_idle")
+			p.global_position = npc.global_position + Vector3(0, 0, -2.0)
+			p.velocity = Vector3.ZERO
+			_wait = 3
+		11:
+			_aim_at(npc.pelvis.global_position + Vector3.UP * 0.15)
+			_fire()
+			print("shotgun 2m: dead=", npc.dead, " guts=", npc._guts_spilled, " state=", npc.state)
+			_wait = 4
+		12:
+			_shot("09_shotgun_blast")
+			_wait = 14
+		13:
+			_shot("10_pump")
+			_wait = 80
+		14:
+			_shot("11_guts")
 			p.weapon.reload()
-		420:
-			_shot("09_outside")
-		421:
-			p.global_position = Vector3(4.5, 0.05, 0.2)
-			p.yaw = 0.0
-			p.pitch = deg_to_rad(-12)
-		440:
-			_shot("10_kitchen")
-		441:
-			for i in 3:
-				game.spawn_npc(Vector3(4.5 + i * 0.6, 0.05, -1.0))
-		450:
-			p.global_position = Vector3(2.0, 3.35, 0.0)
-			p.yaw = PI * 0.75
-			p.pitch = deg_to_rad(-20)
-		470:
-			_shot("11_roof")
-		700:
-			var moved := 0
-			for n in get_nodes_in_group("npcs"):
-				if not n.dead:
-					print("npc ", n.name, " state=", n.state, " pos=", n.global_position.snapped(Vector3.ONE * 0.1))
-			print("fps=", Engine.get_frames_per_second())
+			_wait = 20
+		15:
+			_shot("12_shotgun_reload")
+			_wait = 50
+		16:
+			p.weapon.set_aiming(true)
+			_wait = 25
+		17:
+			_shot("13_shotgun_ads")
+			print("ammo m500=", p.weapon.ammo, " fps=", Engine.get_frames_per_second())
 			quit()
+	_step += 1
 	return false
-
-
-func _report_ragdoll() -> void:
-	var pl: Player = game.player
-	print("player pos=", pl.global_position.snapped(Vector3.ONE * 0.01), " cam=", pl.camera.global_position.snapped(Vector3.ONE * 0.01), " wall=", pl.weapon._wall_push, " aim=", pl.weapon.aim_t, " reloading=", pl.weapon.reloading)
-	for c in game.get_children():
-		if c is CPUParticles3D:
-			print("particles at ", c.global_position.snapped(Vector3.ONE * 0.01), " amount=", c.amount, " color=", c.color)
-	var t_thigh := npc.thigh_l.global_transform
-	var t_shin := npc.shin_l.global_transform
-	var rel := t_thigh.basis.inverse() * t_shin.basis
-	var e := rel.get_euler()
-	print("knee L rel euler(deg)=", Vector3(rad_to_deg(e.x), rad_to_deg(e.y), rad_to_deg(e.z)).snapped(Vector3.ONE))
-	var t_u := npc.uarm_l.global_transform
-	var t_f := npc.farm_l.global_transform
-	var e2 := (t_u.basis.inverse() * t_f.basis).get_euler()
-	print("elbow L rel euler(deg)=", Vector3(rad_to_deg(e2.x), rad_to_deg(e2.y), rad_to_deg(e2.z)).snapped(Vector3.ONE))
-	print("chest pos=", npc.chest.global_position.snapped(Vector3.ONE * 0.01), " head pos=", npc.head.global_position.snapped(Vector3.ONE * 0.01))
-	var d := npc.head.global_position.distance_to(npc.chest.global_position)
-	print("head-chest dist=", snappedf(d, 0.01), " (rest 0.39)")

@@ -116,6 +116,7 @@ func _physics_process(delta: float) -> void:
 	_push_bodies(wish * speed)
 	_footsteps(delta)
 
+	camera.fov = lerpf(Settings.fov, Settings.fov * weapon.current.def.ads_fov, smoothstep(0.0, 1.0, weapon.aim_t))
 	# camera recoil recovers over time; it never changes where you aim permanently
 	_recoil = _recoil.lerp(Vector2.ZERO, clampf(delta * 9.0, 0.0, 1.0))
 	head.rotation = Vector3(pitch + _recoil.x, _recoil.y, 0.0)
