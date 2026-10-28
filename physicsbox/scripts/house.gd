@@ -212,34 +212,15 @@ func _window(horizontal: bool, fixed: float, s: float, e: float, y0: float, y1: 
 
 
 func _door(horizontal: bool, fixed: float, s: float, e: float) -> void:
-	var width := e - s - 0.06
-	var leaf := RigidBody3D.new()
-	leaf.mass = 16.0
-	leaf.angular_damp = 2.5
-	leaf.collision_layer = 2
-	leaf.collision_mask = 1 | 2 | 4
-	leaf.set_meta("surface", "wood")
+	var leaf := Door.new()
+	leaf.width = e - s - 0.06
+	leaf.height = DOOR_H - 0.04
 	var along := (s + e) * 0.5
 	leaf.position = Vector3(along, DOOR_H * 0.5 + 0.01, fixed) if horizontal else Vector3(fixed, DOOR_H * 0.5 + 0.01, along)
 	if not horizontal:
 		leaf.rotation.y = PI / 2
-	var size := Vector3(width, DOOR_H - 0.04, 0.05)
-	var mi := MeshInstance3D.new()
-	mi.mesh = _mesh_box(size)
-	mi.material_override = mats.light_wood
-	leaf.add_child(mi)
-	var handle := MeshInstance3D.new()
-	handle.mesh = _mesh_box(Vector3(0.12, 0.03, 0.12))
-	handle.material_override = mats.metal
-	handle.position = Vector3(width * 0.5 - 0.1, 0.0, 0.0)
-	leaf.add_child(handle)
-	var cs := CollisionShape3D.new()
-	var sh := BoxShape3D.new()
-	sh.size = size
-	cs.shape = sh
-	leaf.add_child(cs)
 	add_child(leaf)
-	var hinge_local := Vector3(-width * 0.5, 0, 0)
+	var hinge_local := Vector3(-leaf.width * 0.5, 0, 0)
 	var joint := HingeJoint3D.new()
 	add_child(joint)
 	joint.global_transform = Transform3D(Basis(Vector3.RIGHT, -PI / 2), leaf.global_transform * hinge_local)
@@ -247,6 +228,7 @@ func _door(horizontal: bool, fixed: float, s: float, e: float) -> void:
 	joint.set_param(HingeJoint3D.PARAM_LIMIT_LOWER, deg_to_rad(-95))
 	joint.set_param(HingeJoint3D.PARAM_LIMIT_UPPER, deg_to_rad(95))
 	joint.node_b = joint.get_path_to(leaf)
+	leaf.joint = joint
 
 
 func _light(pos: Vector3, energy := 0.7, light_range := 7.0) -> void:

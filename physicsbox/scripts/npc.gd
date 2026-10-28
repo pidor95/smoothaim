@@ -61,6 +61,7 @@ const OUTFITS := [
 ]
 
 static var _mesh_cache := {}
+static var _ragdoll_material: PhysicsMaterial
 static var _mat_cache := {}
 
 var state := State.IDLE
@@ -723,10 +724,21 @@ func _go_limp(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> 
 	_reacts.clear()
 	if _joints.is_empty():
 		_make_joints()
+	if _ragdoll_material == null:
+		# grippy, dead-weight bodies: they slump and stay instead of sliding
+		_ragdoll_material = PhysicsMaterial.new()
+		_ragdoll_material.friction = 0.9
+		_ragdoll_material.bounce = 0.0
 	for p in parts:
 		p.freeze = false
 		p.collision_mask = LAYER_WORLD | LAYER_PROPS | LAYER_PARTS
+		p.physics_material_override = _ragdoll_material
+		p.linear_damp = 0.12
+		p.angular_damp = 1.8
 		p.linear_velocity = vel
+	# small fast parts must not tunnel through the floor when blasted
+	for p in [head, farm_l, farm_r, shin_l, shin_r]:
+		p.continuous_cd = true
 	part.apply_impulse(dir * impulse, pos - part.global_position)
 
 

@@ -15,25 +15,28 @@ const MAX_SHELLS := 24
 const DEFS := [
 	{
 		"id": "m1911", "name": "M1911", "scene": "res://assets/weapons/m1911_fp.glb",
-		"capacity": 8, "pellets": 1, "impulse": 11.0, "cooldown": 0.12,
+		"capacity": 8, "pellets": 1, "impulse": 11.0, "cooldown": 0.12, "power": 1.0,
 		"damage": {"head": 100.0, "chest": 40.0, "pelvis": 34.0, "uarm_l": 22.0, "uarm_r": 22.0, "farm_l": 18.0,
 				"farm_r": 18.0, "thigh_l": 28.0, "thigh_r": 28.0, "shin_l": 20.0, "shin_r": 20.0},
 		"spread_hip": 1.4, "spread_ads": 0.0, "falloff_start": 40.0, "falloff_min": 0.6,
-		"sound": "gunshot", "reload_sound": "reload", "pump_sound": "", "pump_at": 0.0,
+		"sound": "gunshot",
 		"shell": "pistol", "shell_at": 0.0, "alert": 26.0, "flash": 1.0, "cam_recoil": 2.6,
 		"yaw": 4.0, "ads_dist": 0.25, "ads_fov": 0.72, "fire_last": "fire_last", "reload_empty": "reload_empty",
 	},
 	{
 		"id": "m500", "name": "M500", "scene": "res://assets/weapons/m500_fp.glb",
-		"capacity": 6, "pellets": 8, "impulse": 5.5, "cooldown": 0.95,
+		"capacity": 6, "pellets": 8, "impulse": 5.5, "cooldown": 0.95, "power": 0.55,
 		"damage": {"head": 45.0, "chest": 16.0, "pelvis": 15.0, "uarm_l": 9.0, "uarm_r": 9.0, "farm_l": 8.0,
 				"farm_r": 8.0, "thigh_l": 11.0, "thigh_r": 11.0, "shin_l": 9.0, "shin_r": 9.0},
 		"spread_hip": 3.6, "spread_ads": 2.4, "falloff_start": 7.0, "falloff_min": 0.3,
-		"sound": "shotgun_shot", "reload_sound": "shotgun_reload", "pump_sound": "shotgun_pump", "pump_at": 0.38,
+		"sound": "shotgun_shot",
 		"shell": "shotgun", "shell_at": 0.55, "alert": 12.0, "flash": 0.45, "cam_recoil": 6.5,
 		"yaw": 3.5, "ads_dist": 0.36, "ads_fov": 0.8, "fire_last": "", "reload_empty": "",
 	},
 ]
+## Bullet power lost going through each body part (power 1 = pistol round).
+const FLESH_COST := {"head": 0.9, "chest": 0.8, "pelvis": 0.8, "uarm_l": 0.45, "uarm_r": 0.45,
+		"farm_l": 0.35, "farm_r": 0.35, "thigh_l": 0.55, "thigh_r": 0.55, "shin_l": 0.45, "shin_r": 0.45}
 ## Close shotgun blasts that put this many pellets into the torso spill the
 ## organs; into a limb, tear it off.
 const GORE_PELLETS := 3
@@ -238,8 +241,6 @@ func trigger() -> void:
 		_eject_shell()
 	else:
 		_events.append([d.shell_at, _eject_shell])
-	if d.pump_sound != "":
-		_events.append([d.pump_at, Sfx.play.bind(d.pump_sound, -2.0, 0.03)])
 	_shoot()
 	_alert_npcs(d.alert)
 	fired.emit()
@@ -258,7 +259,6 @@ func reload() -> void:
 	current.anim.play(anim_name)
 	current.anim.queue("idle")
 	_reload_left = current.anim.get_animation(anim_name).length
-	Sfx.play(d.reload_sound)
 
 
 func set_aiming(value: bool) -> void:
@@ -290,7 +290,9 @@ func _shoot() -> void:
 		var dir := fwd.rotated(cam.global_basis.x, sin(a) * r).rotated(cam.global_basis.y, cos(a) * r).normalized()
 		var q := PhysicsRayQueryParameters3D.create(from, from + dir * 300.0, RAY_MASK)
 		q.exclude = [player.get_rid()]
-		for _i in 4:
+		# the bullet keeps going through flesh, glass and doors while it has power
+		var power: float = d.power
+		for _i in 6:
 			var hit := space.intersect_ray(q)
 			if hit.is_empty():
 				break
@@ -298,7 +300,8 @@ func _shoot() -> void:
 			var pos: Vector3 = hit.position
 			var normal: Vector3 = hit.normal
 			var dist := from.distance_to(pos)
-			var falloff := clampf(1.0 - (dist - d.falloff_start) / 20.0, d.falloff_min, 1.0)
+			var falloff := clampf(1.0 - (dist - d.falloff_start) / 20.0, d.falloff_min, 1.0) * minf(power, 1.0)
+			var cost := 99.0
 			if collider.has_meta("npc"):
 				var npc = collider.get_meta("npc")
 				if is_instance_valid(npc):
@@ -312,18 +315,28 @@ func _shoot() -> void:
 					var e: Array = part_hits[npc].get(part, [0, collider, pos, normal, dist])
 					e[0] += 1
 					part_hits[npc][part] = e
-				break
-			var surface: String = collider.get_meta("surface", "concrete")
-			if surface == "glass" and collider.has_method("shatter"):
+					cost = FLESH_COST.get(part, 0.8)
+			elif collider.get_meta("surface", "") == "glass" and collider.has_method("shatter"):
 				collider.shatter(pos, dir)
-				var ex: Array[RID] = q.exclude
-				ex.append(collider.get_rid())
-				q.exclude = ex
-				q.from = pos
-				continue
-			_impact(collider, pos, normal, dir, surface, not played_impact, falloff)
-			played_impact = true
-			break
+				cost = 0.05
+			elif collider.has_meta("penetration"):
+				cost = collider.get_meta("penetration")
+				_impact(collider, pos, normal, dir, collider.get_meta("surface", "wood"), not played_impact, falloff)
+				played_impact = true
+				if power > cost:
+					_exit_hole(collider, pos, dir)
+				if collider.has_method("take_bullet"):
+					collider.take_bullet(pos, dir, d.damage.chest * falloff)
+			else:
+				_impact(collider, pos, normal, dir, collider.get_meta("surface", "concrete"), not played_impact, falloff)
+				played_impact = true
+			if power <= cost:
+				break
+			power -= cost
+			var ex: Array[RID] = q.exclude
+			ex.append(collider.get_rid())
+			q.exclude = ex
+			q.from = pos + dir * 0.01
 	for npc in part_hits:
 		if not is_instance_valid(npc):
 			continue
@@ -339,6 +352,17 @@ func _shoot() -> void:
 	if best_kind >= 0:
 		hit_confirmed.emit(best_kind)
 		Sfx.play("hitmarker", -6.0 if best_kind == 0 else -2.0)
+
+
+## Exit hole + splinters on the far side of something the bullet went through.
+func _exit_hole(collider: Object, pos: Vector3, dir: Vector3) -> void:
+	var body := collider as CollisionObject3D
+	var q := PhysicsRayQueryParameters3D.create(pos + dir * 0.4, pos, body.collision_layer)
+	var hit := get_world_3d().direct_space_state.intersect_ray(q)
+	if hit.is_empty() or hit.collider != collider:
+		return
+	Blood.bullet_hole(hit.position, hit.normal, body as Node3D)
+	Blood.dust(hit.position, dir, Color(0.75, 0.6, 0.4))
 
 
 func _impact(collider: Object, pos: Vector3, normal: Vector3, dir: Vector3, surface: String, sound: bool, power: float) -> void:

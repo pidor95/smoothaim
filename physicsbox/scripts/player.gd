@@ -21,6 +21,7 @@ var _look_accum := Vector2.ZERO
 var _recoil := Vector2.ZERO
 var _step_dist := 0.0
 var _spawn: Transform3D
+var _feet := Area3D.new()
 
 
 func _ready() -> void:
@@ -37,6 +38,19 @@ func _ready() -> void:
 	cs.shape = cap
 	cs.position = Vector3(0, 0.9, 0)
 	add_child(cs)
+
+	# feet zone: walking through bodies and gore shoves them around
+	_feet.collision_layer = 0
+	_feet.collision_mask = 4 | 32
+	_feet.monitorable = false
+	var fs := CollisionShape3D.new()
+	var cyl := CylinderShape3D.new()
+	cyl.radius = 0.5
+	cyl.height = 0.7
+	fs.shape = cyl
+	fs.position = Vector3(0, 0.35, 0)
+	_feet.add_child(fs)
+	add_child(_feet)
 
 	head.position = Vector3(0, EYE_HEIGHT, 0)
 	add_child(head)
@@ -114,6 +128,7 @@ func _physics_process(delta: float) -> void:
 
 	move_and_slide()
 	_push_bodies(wish * speed)
+	_kick_loose_bodies()
 	_footsteps(delta)
 
 	camera.fov = lerpf(Settings.fov, Settings.fov * weapon.current.def.ads_fov, smoothstep(0.0, 1.0, weapon.aim_t))
@@ -143,6 +158,21 @@ func _push_bodies(wish_vel: Vector3) -> void:
 		var need := target - current
 		if need > 0.0:
 			body.apply_impulse(push * need * minf(body.mass, 20.0) * 0.35, c.get_position() - body.global_position)
+
+
+func _kick_loose_bodies() -> void:
+	var hv := Vector3(velocity.x, 0.0, velocity.z)
+	var speed := hv.length()
+	if speed < 0.5:
+		return
+	for b in _feet.get_overlapping_bodies():
+		var rb := b as RigidBody3D
+		if rb == null or rb.freeze:
+			continue
+		var away := rb.global_position - global_position
+		away.y = 0.0
+		var push := (hv / speed * 0.7 + away.normalized() * 0.3) * speed * minf(rb.mass, 6.0) * 0.05
+		rb.apply_central_impulse(push + Vector3.UP * 0.02 * minf(rb.mass, 6.0))
 
 
 func _footsteps(delta: float) -> void:

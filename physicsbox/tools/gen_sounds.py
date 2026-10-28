@@ -1,6 +1,6 @@
 """Procedurally synthesises the game's sound effects into assets/sounds/*.wav.
 
-The shotgun sounds (shotgun_*.wav) are recorded samples and are not generated here.
+The shotgun shot (shotgun_shot.wav) is a recorded sample and are not generated here.
 
 Run: python3 tools/gen_sounds.py  (needs numpy)
 """
@@ -99,14 +99,6 @@ def dry_fire():
     return mix(click(3200, 0.05, 300, 0.8), at(click(1800, 0.04, 260, 0.4), 0.02))
 
 
-def reload_snd():
-    mag_out = mix(click(1400, 0.06, 120, 0.7), at(lowpass(noise(0.12), 2500) * env(0.12, 0.002, 30) * 0.4, 0.02))
-    mag_in = mix(click(1100, 0.07, 90, 1.0), at(click(2600, 0.04, 220, 0.6), 0.03))
-    slide_back = mix(highpass(noise(0.14), 1200) * env(0.14, 0.03, 10) * 0.35, click(1700, 0.05, 150, 0.6))
-    slide_fwd = mix(click(900, 0.1, 60, 1.1), at(click(2900, 0.05, 200, 0.5), 0.01))
-    return mix(mag_out, at(mag_in, 0.55), at(slide_back, 1.05), at(slide_fwd, 1.25))
-
-
 def wall_hit(variant):
     dur = 0.3
     t = t_axis(dur)
@@ -161,7 +153,6 @@ if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     save("gunshot", gunshot(), 0.95)
     save("dry_fire", dry_fire(), 0.6)
-    save("reload", reload_snd(), 0.7)
     for i in range(2):
         save(f"wall_hit_{i}", wall_hit(i), 0.6)
     save("wood_hit", wood_hit(), 0.6)

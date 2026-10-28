@@ -11,6 +11,7 @@ const LAYER_DEBRIS := 32
 static var _meshes := {}
 static var _shapes := {}
 static var _live: Array[RigidBody3D] = []
+static var _material: PhysicsMaterial
 
 
 static func _load() -> void:
@@ -42,10 +43,15 @@ static func spawn(piece: String, xform: Transform3D, vel: Vector3, skin: Materia
 	var b := RigidBody3D.new()
 	b.mass = mass
 	b.collision_layer = LAYER_DEBRIS
-	b.collision_mask = 1 | 2
+	b.collision_mask = 1 | 2 | 4 | 32
 	b.linear_damp = 0.15
 	b.angular_damp = 0.8
 	b.set_meta("surface", "flesh")
+	if _material == null:
+		_material = PhysicsMaterial.new()
+		_material.friction = 0.95
+		_material.bounce = 0.15
+	b.physics_material_override = _material
 	var mi := MeshInstance3D.new()
 	mi.mesh = _meshes[piece]
 	if skin:

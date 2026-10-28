@@ -4,10 +4,7 @@ extends Node
 const SOUNDS := {
 	"gunshot": ["gunshot"],
 	"dry_fire": ["dry_fire"],
-	"reload": ["reload"],
 	"shotgun_shot": ["shotgun_shot"],
-	"shotgun_reload": ["shotgun_reload"],
-	"shotgun_pump": ["shotgun_pump"],
 	"wall_hit": ["wall_hit_0", "wall_hit_1"],
 	"wood_hit": ["wood_hit"],
 	"metal_hit": ["metal_hit"],
