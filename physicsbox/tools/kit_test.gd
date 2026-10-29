@@ -1,9 +1,8 @@
 extends SceneTree
 ## Dev test of the kit (war paused): the gun put away and taken back out,
 ## items left out of the kit (hotbar), the PBS-1 suppressor (no flash, a
-## short alert radius), the drop drone (climbs on launch, hangs with no
-## input, lets an F-1 go that goes off on impact near a soldier, flies home)
-## and the weapon menu's pages; a look along the longer western trench.
+## short alert radius) and the weapon menu's pages; a look along the
+## longer western trench.
 ## Run: godot -s res://tools/kit_test.gd   (env SHOTS=<dir> for PNGs)
 
 var frame := 0
@@ -120,68 +119,6 @@ func _process(_delta: float) -> bool:
 			npc.queue_free()
 			_wait = 10
 		7:
-			# the drop drone: up it goes, then it hangs
-			p.yaw = 0.0
-			print("bombers before launch: %d" % p.bombers)
-			game.hud.use_slot(4)
-			print("bomber launched: piloting=%s bombers=%d" % [p.piloting is BombDrone, p.bombers])
-			_mark.y = p.piloting.global_position.y
-			_wait = 300
-		8:
-			var d := p.piloting as BombDrone
-			print("bomber climbed %.1f m (agl %.1f)" % [d.global_position.y - _mark.y, d.agl])
-			_mark.pos = d.global_position
-			_wait = 60
-		9:
-			var d := p.piloting as BombDrone
-			print("bomber hovering: moved %.2f m in 1 s with no input" % d.global_position.distance_to(_mark.pos))
-			_shot("k04_bomber_view")
-			# a soldier right under it
-			var below: Vector3 = d.impact_point
-			npc = game.spawn_npc(below + Vector3(0.6, 0.1, 0.0), 1)
-			d.zoomed = true # ЗУМ: the soldier is more than a dot
-			_wait = 30
-		10:
-			var d := p.piloting as BombDrone
-			print("impact predicted at %s (valid %s)" % [d.impact_point, d.impact_valid])
-			_shot("k05_bomber_marker")
-			p.weapon.trigger() # СБРОС
-			print("dropped: grenades left on the drone %d, F-1s falling %d" % [d.grenades, get_nodes_in_group("grenades").size()])
-			_wait = 20
-		11:
-			_shot("k06_bomber_falling")
-			_wait = 70
-		12:
-			_shot("k06b_bomber_boom")
-			_wait = 120
-		13:
-			print("after the drop: npc dead=%s down=%s grenades in the air %d" % [npc.dead, npc._downed or npc.state == Npc.State.KNOCKED,
-					get_nodes_in_group("grenades").size()])
-			_shot("k07_bomber_hit")
-			# fly forward a little, then home
-			p.drone_arrows = Vector2(0, 1)
-			_mark.pos = p.piloting.global_position
-			_wait = 60
-		14:
-			p.drone_arrows = Vector2.ZERO
-			print("bomber flew %.1f m forward in 1 s" % p.piloting.global_position.distance_to(_mark.pos))
-			game.hud._touch_down(0, game.hud._buttons().exit.pos)
-			game.hud._touch_up(0)
-			print("home: piloting=%s bombers=%d" % [p.piloting != null, p.bombers])
-			_wait = 10
-		15:
-			# drone model from the outside
-			var d := BombDrone.new()
-			game.add_child(d)
-			d.global_position = p.camera.global_position + Vector3(0, 0.1, -1.0)
-			d.set_physics_process(false)
-			d.rotation.y = 0.6
-			_mark.d = d
-			p.pitch = -0.05
-			_wait = 5
-		16:
-			_shot("k08_bomber_model")
-			(_mark.d as Node).queue_free()
 			# along the western stretch of the front trench
 			var f: Array = game.house.team_posts[0].filter(func(q): return q.x < -200.0)
 			print("western posts: %d" % f.size())
@@ -190,19 +127,19 @@ func _process(_delta: float) -> bool:
 				p.yaw = PI / 2
 				p.pitch = 0.0
 			_wait = 30
-		17:
+		8:
 			_shot("k09_west_trench")
 			game.toggle_weapon_menu()
 			_wait = 3
-		18:
+		9:
 			_shot("k10_menu_guns")
 			game._show_weapon_tab(game._weapon_tabs[1][1])
 			_wait = 3
-		19:
+		10:
 			_shot("k11_menu_kit")
 			game._show_weapon_tab(game._weapon_tabs[2][1])
 			_wait = 3
-		20:
+		11:
 			_shot("k12_menu_mods")
 			game.toggle_weapon_menu()
 			print("kit test done")

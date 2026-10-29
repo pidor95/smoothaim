@@ -608,8 +608,7 @@ func _build_weapon_menu() -> void:
 	kit.alignment = BoxContainer.ALIGNMENT_CENTER
 	col.add_child(kit)
 	for it in [["grenade", "Гранаты РГД-5", "Бросок анимацией, ×4,\nпополняются со временем."],
-			["fpv", "FPV-дрон", "Камикадзе с зарядом ПГ-7:\nлетишь через его камеру."],
-			["bomber", "Дрон-сброс", "Mavic с двумя Ф-1 на сбросе:\nвисит, сбрасывает и летит домой."]]:
+			["fpv", "FPV-дрон", "Камикадзе с зарядом ПГ-7:\nлетишь через его камеру."]]:
 		var v := _card(kit)
 		v.add_child(_icon(it[0], Vector2(250, 125)))
 		v.add_child(UiKit.label(it[1], 26, Color(1, 1, 1)))

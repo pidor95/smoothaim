@@ -74,24 +74,20 @@ https://github.com/pidor95/smoothaim/releases/download/latest/PhysicsBox.apk
   раскачка, дыхание от пульса, `_jolt`/`cam_kick` на выстрел/попадание/приземление),
   `scope_shift` для оптики. Граната — анимация `grenade_fp.glb`
   "throw", отпуск на `THROW_RELEASE` → `player.release_grenade()`.
-- Sketchfab (CC-BY, авторы в README и меню): АК-74М, РГД-5, FPV-дрон, СВД, «Кобра», Mavic 2 Pro,
-  Ф-1, ПБС-1. Токен — у пользователя (в репо не класть):
+- Sketchfab (CC-BY, авторы в README и меню): АК-74М, РГД-5, FPV-дрон, СВД, «Кобра», ПБС-1. Токен — у пользователя (в репо не класть):
   `SKETCHFAB_TOKEN=... python3 tools/fetch_sketchfab.py [имена]`
   → `tools/model_sources/` (gitignore) → `build_sketchfab_kit.py` (АК FP, бросок,
   `npc_rifle.glb` — `RIFLE_MUZZLE` печатает скрипт, `grenade.glb`, `fpv_drone.glb` с Prop0..3).
 - Меню оружия (`game._build_weapon_menu`): вкладки ОРУЖИЕ (взять / убрать из снаряжения / убрать из рук),
-  СНАРЯЖЕНИЕ (гранаты, FPV, дрон-сброс), МОДИФИКАЦИИ (глушитель ПБС-1), БЕССМЕРТИЕ.
+  СНАРЯЖЕНИЕ (гранаты, FPV), МОДИФИКАЦИИ (глушитель ПБС-1), БЕССМЕРТИЕ.
   `Settings.loadout` / `Settings.suppressed` (сохраняются), `Settings.carries(id)`;
   `Weapon.holstered`/`holster()`/`toggle(i)`/`apply_mods()`; хотбар (`Hud._slots()`) — только взятое.
 - Глушитель: `suppressor.glb` (ПБС-1, Sketchfab 3dYaroslav) на BoneAttachment3D кости `muzzle`, размер — DEFS
   "suppressor"; без вспышки/света, звук `rifle_sup`/`sniper_sup` (`build_suppressed_sounds.py`),
   `alert × SUPPRESSED_ALERT`.
-- Дрон-сброс (пользователь прислал фото: Mavic 3 с белым печатным сбросом и двумя Ф-1 по бокам —
-  не самолёт-UAV и не FPV!): `bomb_drone.gd` (`BombDrone extends FpvDrone`, висит, сам взлетает на 22 м,
-  камера-подвес вниз, `trigger_pressed` = сброс, `exit_pressed` = домой → `player.bomber_back`),
-  модель `build_drone_kit.py` (Mavic 2 Pro MattMaksymowicz + Ф-1 notcplkerry), падающая Ф-1 —
-  `Grenade.throw(..., f1.glb, impact=true)`. Только у игрока, клавиша X.
-- Тесты: `tools/war_test.gd`, `tools/kit_test.gd` (кобура, снаряжение, глушитель, дрон-сброс, меню),
+- Дрон-сброс (Mavic с двумя Ф-1) был сделан и по просьбе пользователя УБРАН целиком — не возвращать.
+  Глушитель строит `build_suppressor.py`. У FpvDrone остались хуки `trigger_pressed`/`exit_pressed`.
+- Тесты: `tools/war_test.gd`, `tools/kit_test.gd` (кобура, снаряжение, глушитель, меню),
   `tools/mechanics_test.gd` (обморок, судороги,
   шея 5 с, авто-огонь, граната, стрелки FPV, смерть игрока), `tools/explosives_test.gd`.
   В контейнере Vulkan нет — Godot сам падает на OpenGL (llvmpipe), это медленно.

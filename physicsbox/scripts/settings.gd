@@ -14,7 +14,7 @@ var show_fps := false
 var bodycam := true
 ## What the player takes into battle (weapon menu: ОРУЖИЕ / СНАРЯЖЕНИЕ):
 ## item id -> carried; and which rifles wear the PBS-1 suppressor.
-var loadout := {"ak74": true, "svd": true, "grenade": true, "fpv": true, "bomber": true}
+var loadout := {"ak74": true, "svd": true, "grenade": true, "fpv": true}
 var suppressed := {"ak74": false, "svd": false}
 ## Resources the menu loaded on background threads for the battle (kept
 ## referenced so they stay in the cache).
@@ -97,7 +97,6 @@ func _setup_input() -> void:
 	_key_action("weapon_menu", [KEY_B, KEY_TAB])
 	_key_action("grenade", [KEY_G])
 	_key_action("drone", [KEY_V])
-	_key_action("bomber", [KEY_X])
 	_key_action("holster", [KEY_H])
 	_key_action("fpv_climb", [KEY_E])
 	_key_action("fpv_sink", [KEY_Q])

@@ -16,8 +16,8 @@ var _loading: Label
 const PRELOAD := ["res://scenes/game.tscn", "res://assets/maps/trenches.glb", "res://assets/maps/buildings.glb",
 		"res://assets/maps/trenches_nav.res", "res://assets/weapons/ak74_fp.glb", "res://assets/weapons/svd_fp.glb",
 		"res://assets/weapons/grenade_fp.glb", "res://assets/npc/npc_rifle.glb", "res://assets/npc/npc_svd.glb",
-		"res://assets/npc/soldier_gear.glb", "res://assets/npc/mannequin_anims.glb", "res://assets/weapons/suppressor.glb",
-		"res://assets/weapons/bomb_drone.glb", "res://assets/weapons/f1.glb"]
+		"res://assets/npc/soldier_gear.glb", "res://assets/npc/mannequin_anims.glb",
+		"res://assets/weapons/suppressor.glb"]
 
 
 func _ready() -> void:
@@ -199,8 +199,6 @@ func _build_ui() -> void:
 			"«FPV kamikaze drone Low-poly» — Kvasovich (sketchfab.com/Kvasovich)",
 			"«SVD \"Dragunov\"» — Sergei3D (sketchfab.com/Sergei3D)",
 			"«Low-Poly EKP-1S-03 Kobra Red Dot Sight» — Mivoriss57 (sketchfab.com/Mivoriss57)",
-			"«DJI Mavic 2 Pro» — MattMaksymowicz (sketchfab.com/mattmaksymowicz)",
-			"«Low-Poly F-1 Grenade» — notcplkerry (sketchfab.com/notcplkerry)",
 			"«PBS-1 Silencer for AK-74 5.45x39» — 3dYaroslav (sketchfab.com/3dYaroslav)",
 			"Остальное — сделано в Blender скриптами проекта."]:
 		_credits_box.add_child(UiKit.label(line, 22, Color(0.8, 0.8, 0.8)))

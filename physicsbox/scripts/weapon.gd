@@ -49,7 +49,7 @@ const FLESH_COST := {"head": 0.9, "chest": 0.8, "pelvis": 0.8, "uarm_l": 0.45, "
 const GORE_PELLETS := 3
 const GUTS_RANGE := 4.0
 const SEVER_RANGE := 3.5
-## The PBS-1 (Blender, tools/blender/build_drone_kit.py): 1 m long along -Z,
+## The PBS-1 (Blender, tools/blender/build_suppressor.py): 1 m long along -Z,
 ## scaled per rifle by DEFS "suppressor" (diameter, diameter, length).
 const SUPPRESSOR_SCENE := "res://assets/weapons/suppressor.glb"
 const SUPPRESSOR_MODEL_D := 0.266 # its diameter at 1 m length
