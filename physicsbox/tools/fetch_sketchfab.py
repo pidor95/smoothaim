@@ -1,0 +1,34 @@
+"""Downloads the Sketchfab source models (glTF) used by
+tools/blender/build_sketchfab_kit.py into tools/model_sources/<name>/.
+
+Run:  SKETCHFAB_TOKEN=<api token> python3 tools/fetch_sketchfab.py
+(the token is the user's own; it is not stored in the repository)
+"""
+import io
+import json
+import os
+import urllib.request
+import zipfile
+
+MODELS = {
+    "ak74m": "84bb0a58a18047069706047639b82899",  # AK-74M by SeveN, CC-BY-4.0
+    "rgd5": "886637c9482b4cc4960d0112684baac6",  # Grenade RGD-5 by _Alexandr, CC-BY-4.0
+    "fpv": "87f5bbb5b08641b782bc084ddd4082a7",  # FPV kamikaze drone Low-poly by Kvasovich, CC-BY-4.0
+}
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_sources")
+
+
+def main():
+    token = os.environ["SKETCHFAB_TOKEN"]
+    for name, uid in MODELS.items():
+        req = urllib.request.Request("https://api.sketchfab.com/v3/models/%s/download" % uid,
+                                     headers={"Authorization": "Token " + token})
+        url = json.load(urllib.request.urlopen(req))["gltf"]["url"]
+        data = urllib.request.urlopen(url).read()
+        dest = os.path.join(OUT, name)
+        os.makedirs(dest, exist_ok=True)
+        zipfile.ZipFile(io.BytesIO(data)).extractall(dest)
+        print("fetched", name, len(data))
+
+
+main()

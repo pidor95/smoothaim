@@ -3,9 +3,9 @@ config_version=5
 
 [application]
 
-config/name="Physics Box"
-config/description="Physics sandbox shooter"
-config/version="0.1.0"
+config/name="NPC War"
+config/description="Trench war shooter with ragdoll physics"
+config/version="0.2.0"
 run/main_scene="res://scenes/main_menu.tscn"
 config/features=PackedStringArray("4.5", "Mobile")
 config/icon="res://assets/icon/icon_512.png"

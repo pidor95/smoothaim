@@ -6,7 +6,6 @@ extends Node3D
 ## flash and ejected shells.
 
 signal fired
-signal hit_confirmed(kind: int) # 0 hit, 1 kill, 2 headshot
 signal ammo_changed(ammo: int, capacity: int)
 signal weapon_changed(weapon_name: String)
 
@@ -14,16 +13,16 @@ const RAY_MASK := 1 | 2 | 4
 const MAX_SHELLS := 24
 const DEFS := [
 	{
-		"id": "m1911", "name": "M1911", "scene": "res://assets/weapons/m1911_fp.glb",
-		"title": "Colt M1911", "desc": "Пистолет .45 ACP. Точный, быстрый.",
-		"stats": ["Урон: 40 (голова — насмерть)", "Магазин: 7+1", "Пробитие: высокое"],
-		"capacity": 8, "pellets": 1, "impulse": 11.0, "cooldown": 0.12, "power": 1.0,
-		"damage": {"head": 100.0, "chest": 40.0, "pelvis": 34.0, "uarm_l": 22.0, "uarm_r": 22.0, "farm_l": 18.0,
-				"farm_r": 18.0, "thigh_l": 28.0, "thigh_r": 28.0, "shin_l": 20.0, "shin_r": 20.0},
-		"spread_hip": 1.4, "spread_ads": 0.0, "falloff_start": 40.0, "falloff_min": 0.6,
-		"sound": "gunshot",
-		"shell": "pistol", "shell_at": 0.0, "alert": 26.0, "flash": 1.0, "cam_recoil": 2.6,
-		"yaw": 4.0, "ads_dist": 0.25, "ads_fov": 0.72, "fire_last": "fire_last", "reload_empty": "reload_empty",
+		"id": "ak74", "name": "АК-74М", "scene": "res://assets/weapons/ak74_fp.glb",
+		"title": "АК-74М", "desc": "Автомат 5,45 мм, как у солдат. Очередями.",
+		"stats": ["Урон: 36 (голова — насмерть)", "Магазин: 30", "Темп: 650 выстр/мин"],
+		"capacity": 30, "pellets": 1, "impulse": 12.0, "cooldown": 0.092, "power": 1.4, "auto": true,
+		"damage": {"head": 100.0, "chest": 36.0, "pelvis": 32.0, "uarm_l": 20.0, "uarm_r": 20.0, "farm_l": 16.0,
+				"farm_r": 16.0, "thigh_l": 26.0, "thigh_r": 26.0, "shin_l": 18.0, "shin_r": 18.0},
+		"spread_hip": 1.8, "spread_ads": 0.12, "falloff_start": 120.0, "falloff_min": 0.7,
+		"sound": "rifle",
+		"shell": "rifle", "shell_at": 0.0, "alert": 30.0, "flash": 1.1, "cam_recoil": 1.35,
+		"yaw": 3.0, "ads_dist": 0.2, "ads_fov": 0.75, "fire_last": "", "reload_empty": "reload_empty",
 	},
 	{
 		"id": "m500", "name": "M500", "scene": "res://assets/weapons/m500_fp.glb",
@@ -32,7 +31,7 @@ const DEFS := [
 		"capacity": 6, "pellets": 8, "impulse": 5.5, "cooldown": 0.95, "power": 0.55,
 		"damage": {"head": 45.0, "chest": 16.0, "pelvis": 15.0, "uarm_l": 9.0, "uarm_r": 9.0, "farm_l": 8.0,
 				"farm_r": 8.0, "thigh_l": 11.0, "thigh_r": 11.0, "shin_l": 9.0, "shin_r": 9.0},
-		"spread_hip": 3.6, "spread_ads": 2.4, "falloff_start": 7.0, "falloff_min": 0.3,
+		"spread_hip": 3.6, "spread_ads": 2.4, "falloff_start": 7.0, "falloff_min": 0.3, "auto": false,
 		"sound": "shotgun_shot",
 		"shell": "shotgun", "shell_at": 0.55, "alert": 12.0, "flash": 0.45, "cam_recoil": 6.5,
 		"yaw": 3.5, "ads_dist": 0.36, "ads_fov": 0.8, "fire_last": "", "reload_empty": "",
@@ -59,7 +58,12 @@ class Slot:
 	var ads := Transform3D.IDENTITY
 
 
+## The grenade throw (grenade_fp.glb, "throw"): the hand lets go at this time.
+const THROW_SCENE := "res://assets/weapons/grenade_fp.glb"
+const THROW_RELEASE := 25.0 / 30.0
+
 var player: Player
+var trigger_held := false # touch fire button held (automatic fire)
 var aiming := false
 var aim_t := 0.0
 var reloading := false
@@ -84,6 +88,11 @@ var _auto_reload := -1.0
 var _shells: Array[RigidBody3D] = []
 var _shell_meshes := {}
 var _shell_shapes := {}
+var _throw_root: Node3D
+var _throw_anim: AnimationPlayer
+var _throw_t := -1.0
+var _released := false
+var _lower := 0.0 # gun lowered out of view while the other hand throws
 
 
 func _ready() -> void:
@@ -110,6 +119,12 @@ func _ready() -> void:
 		slots.append(s)
 	_build_flash()
 	_build_shells()
+	_throw_root = load(THROW_SCENE).instantiate()
+	add_child(_throw_root)
+	_throw_anim = _throw_root.find_children("*", "AnimationPlayer", true, false)[0]
+	for mi in _throw_root.find_children("*", "MeshInstance3D", true, false):
+		(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_throw_root.visible = false
 	select(0, false)
 
 
@@ -161,16 +176,20 @@ func _build_shells() -> void:
 	var hull := StandardMaterial3D.new()
 	hull.albedo_color = Color(0.62, 0.06, 0.05)
 	hull.roughness = 0.45
-	for kind in ["pistol", "shotgun"]:
-		var r := 0.0065 if kind == "pistol" else 0.0105
-		var h := 0.024 if kind == "pistol" else 0.068
+	var steel := StandardMaterial3D.new() # lacquered steel 5.45 cases
+	steel.albedo_color = Color(0.42, 0.36, 0.2)
+	steel.metallic = 0.7
+	steel.roughness = 0.4
+	for kind in ["rifle", "shotgun"]:
+		var r := 0.005 if kind == "rifle" else 0.0105
+		var h := 0.039 if kind == "rifle" else 0.068
 		var m := CylinderMesh.new()
 		m.top_radius = r
 		m.bottom_radius = r
 		m.height = h
 		m.radial_segments = 8
 		m.rings = 1
-		m.material = brass if kind == "pistol" else hull
+		m.material = steel if kind == "rifle" else hull
 		_shell_meshes[kind] = m
 		var sh := CylinderShape3D.new()
 		sh.radius = r
@@ -202,6 +221,27 @@ func select(index: int, animate := true) -> void:
 	ammo_changed.emit(s.ammo, s.def.capacity)
 
 
+## Starts the grenade throw: the gun drops out of view, the right hand comes
+## up with the grenade, the left pulls the ring, the arm swings over and
+## lets go (player.release_grenade). False when busy.
+func start_throw() -> bool:
+	if _throw_t >= 0.0 or player.dead:
+		return false
+	_throw_t = 0.0
+	_released = false
+	reloading = false
+	_events.clear()
+	current.anim.play("idle")
+	_throw_root.visible = true
+	_throw_anim.stop()
+	_throw_anim.play("throw")
+	return true
+
+
+func throwing() -> bool:
+	return _throw_t >= 0.0
+
+
 func next_weapon() -> void:
 	select((slots.find(current) + 1) % slots.size())
 
@@ -217,7 +257,7 @@ func trigger() -> void:
 	if player.piloting:
 		player.piloting.detonate()
 		return
-	if reloading or _cooldown > 0.0 or player.dead:
+	if reloading or _cooldown > 0.0 or player.dead or _throw_t >= 0.0:
 		return
 	var d := current.def
 	if current.ammo <= 0:
@@ -250,6 +290,7 @@ func trigger() -> void:
 		_events.append([d.shell_at, _eject_shell])
 	_shoot()
 	_alert_npcs(d.alert)
+	player.add_stress(0.06)
 	fired.emit()
 	ammo_changed.emit(current.ammo, d.capacity)
 
@@ -287,7 +328,6 @@ func _shoot() -> void:
 	var spread := deg_to_rad(spread_deg)
 	var fwd := -cam.global_basis.z
 	var space := get_world_3d().direct_space_state
-	var best_kind := -1
 	var part_hits := {} # npc -> {part name: [count, part, pos, normal, dist]}
 	var played_impact := false
 	for pellet in d.pellets:
@@ -316,8 +356,7 @@ func _shoot() -> void:
 					var fx := 1.0 if d.pellets == 1 else 0.45
 					var impulse: float = d.impulse * (1.0 if not npc.dead else 0.7) * falloff
 					npc.last_hit_by_player = true
-					var kind: int = npc.take_hit(collider, pos, normal, dir, d.damage.get(part, 10.0) * falloff, impulse, fx)
-					best_kind = maxi(best_kind, kind)
+					npc.take_hit(collider, pos, normal, dir, d.damage.get(part, 10.0) * falloff, impulse, fx)
 					if not part_hits.has(npc):
 						part_hits[npc] = {}
 					var e: Array = part_hits[npc].get(part, [0, collider, pos, normal, dist])
@@ -326,7 +365,6 @@ func _shoot() -> void:
 					cost = FLESH_COST.get(part, 0.8)
 			elif collider.has_meta("drone"):
 				collider.take_bullet(pos, dir, 0.0)
-				best_kind = maxi(best_kind, 0)
 			elif collider.get_meta("surface", "") == "glass" and collider.has_method("shatter"):
 				collider.shatter(pos, dir)
 				cost = 0.05
@@ -360,9 +398,6 @@ func _shoot() -> void:
 					npc.spill_organs(e[1], e[2], e[3], fwd)
 			elif part != "head" and e[4] < SEVER_RANGE:
 				npc.sever(e[1], fwd)
-	if best_kind >= 0:
-		hit_confirmed.emit(best_kind)
-		Sfx.play("hitmarker", -6.0 if best_kind == 0 else -2.0)
 
 
 ## Exit hole + splinters on the far side of something the bullet went through.
@@ -420,7 +455,7 @@ func _place_flash() -> void:
 func _eject_shell() -> void:
 	var kind: String = current.def.shell
 	var s := RigidBody3D.new()
-	s.mass = 0.012 if kind == "pistol" else 0.03
+	s.mass = 0.012 if kind == "rifle" else 0.03
 	s.collision_layer = 32
 	s.collision_mask = 1 | 2
 	s.continuous_cd = true
@@ -464,10 +499,24 @@ func _process(frame_delta: float) -> void:
 		if _reload_left <= 0.0:
 			reloading = false
 			var d := current.def
-			current.ammo = d.capacity if d.pellets > 1 or current.ammo > 0 else d.capacity - 1
+			current.ammo = d.capacity
 			ammo_changed.emit(current.ammo, d.capacity)
 
+	if _throw_t >= 0.0:
+		_throw_t += frame_delta
+		if not _released and _throw_t >= THROW_RELEASE:
+			_released = true
+			player.release_grenade()
+		if _throw_t >= _throw_anim.current_animation_length:
+			_throw_t = -1.0
+			_throw_root.visible = false
+			current.anim.play("draw")
+			current.anim.queue("idle")
+			_cooldown = 0.3
+	_lower = move_toward(_lower, 1.0 if _throw_t >= 0.0 and _throw_t < _throw_anim.current_animation_length - 0.25 else 0.0, delta * 5.0)
+	var held := trigger_held
 	if not player.touch_mode and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and not player.dead:
+		held = held or Input.is_action_pressed("fire")
 		if Input.is_action_just_pressed("fire"):
 			trigger()
 		if Input.is_action_just_pressed("reload"):
@@ -479,8 +528,10 @@ func _process(frame_delta: float) -> void:
 		if Input.is_action_just_pressed("weapon_next"):
 			next_weapon()
 		aiming = Input.is_action_pressed("aim")
+	if held and current.def.auto and _cooldown <= 0.0 and current.ammo > 0:
+		trigger()
 
-	var aim_target := 1.0 if aiming and not reloading else 0.0
+	var aim_target := 1.0 if aiming and not reloading and _throw_t < 0.0 else 0.0
 	aim_t = move_toward(aim_t, aim_target, delta * 6.0)
 	var a := smoothstep(0.0, 1.0, aim_t)
 
@@ -511,5 +562,6 @@ func _process(frame_delta: float) -> void:
 			wall = reach - cam.global_position.distance_to(hit.position)
 	_wall_push = lerpf(_wall_push, wall, clampf(delta * 12.0, 0.0, 1.0))
 
-	var offset := Transform3D(Basis(Vector3.RIGHT, _wall_push * 1.0), bob + Vector3(_sway.x * (1.0 - a * 0.6), _sway.y * (1.0 - a * 0.6), _wall_push * 0.5))
+	var low := smoothstep(0.0, 1.0, _lower)
+	var offset := Transform3D(Basis(Vector3.RIGHT, _wall_push * 1.0 - low * 0.9), bob + Vector3(_sway.x * (1.0 - a * 0.6), _sway.y * (1.0 - a * 0.6) - low * 0.35, _wall_push * 0.5))
 	_holder.transform = offset * Transform3D.IDENTITY.interpolate_with(current.ads, a)

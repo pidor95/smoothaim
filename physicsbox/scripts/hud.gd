@@ -1,24 +1,30 @@
 class_name Hud
 extends Control
-## In-game HUD: crosshair, hit markers, counters and the multitouch controls
-## (floating joystick, look area, fire / aim / jump / reload buttons, the
-## list of orders).
+## In-game HUD: crosshair, the status panel (heart rate, blood,
+## consciousness, bottom left), the hotbar, counters, the death and
+## fainting overlays and the multitouch controls (floating joystick, look
+## area, fire / aim / jump / reload buttons, drone arrows, the list of
+## orders).
 
 const JOY_RADIUS := 80.0
 
 var player: Player
 var game: Node
 
+const SLOT_W := 104.0
+const SLOT_H := 66.0
+const ECG_N := 110
+
 var _font: Font
-var _hit_t := 0.0
-var _hit_kind := 0
-var _ammo := 8
-var _mag := 7
+var _ammo := 30
+var _mag := 30
 var _kills := 0
 var _tickets := [0, 0]
 var _winner := -1
-var _slowmo := false
 var _fire_flash := 0.0
+var _icons := {}
+var _ecg := PackedFloat32Array()
+var _ecg_t := 0.0
 
 var _joy_index := -1
 var _joy_origin := Vector2.ZERO
@@ -40,18 +46,19 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_font = ThemeDB.fallback_font
-	player.weapon.hit_confirmed.connect(_on_hit)
+	for id in ["ak74", "m500", "grenade", "fpv"]:
+		_icons[id] = load("res://assets/ui/icon_%s.png" % id)
+	_ecg.resize(ECG_N)
 	player.weapon.ammo_changed.connect(func(a, m):
 		_ammo = a
 		_mag = m)
 	player.weapon.fired.connect(func(): _fire_flash = 1.0)
 
 
-func set_stats(kills: int, tickets: Array, winner: int, slowmo: bool) -> void:
+func set_stats(kills: int, tickets: Array, winner: int) -> void:
 	_kills = kills
 	_tickets = tickets
 	_winner = winner
-	_slowmo = slowmo
 
 
 ## Shows what was shouted (and how it went) for a moment.
@@ -61,36 +68,51 @@ func order_feedback(text: String, note: String) -> void:
 	_order_t = 1.8
 
 
-func _on_hit(kind: int) -> void:
-	_hit_kind = kind
-	_hit_t = 0.28 if kind == 0 else 0.45
+## Hotbar slots: the two guns, the grenade, the FPV drone.
+func _slot_rects() -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	var n := 4
+	var gap := 8.0
+	var x0 := size.x * 0.5 - (n * SLOT_W + (n - 1) * gap) * 0.5
+	for i in n:
+		out.append(Rect2(x0 + i * (SLOT_W + gap), size.y - SLOT_H - 12.0, SLOT_W, SLOT_H))
+	return out
 
+
+func use_slot(i: int) -> void:
+	match i:
+		0, 1:
+			player.weapon.select(i)
+		2:
+			player.throw_grenade()
+		3:
+			reset_touches()
+			player.launch_drone()
 
 
 func _buttons() -> Dictionary:
 	var s := size
 	if player.piloting:
-		# flying the drone: sticks, the trigger and a way back
+		# flying the drone: speed on the stick, the arrows steer, the trigger and a way back
+		var a := Vector2(s.x - 400, s.y - 210)
 		return {
-			"fire": {"pos": Vector2(s.x - 170, s.y - 175), "r": 76.0, "text": "ПОДРЫВ"},
+			"fire": {"pos": Vector2(s.x - 150, s.y - 175), "r": 76.0, "text": "ПОДРЫВ"},
 			"fpv": {"pos": Vector2(s.x - 80, s.y - 430), "r": 40.0, "text": "ВЫХОД"},
+			"up": {"pos": a + Vector2(0, -78), "r": 38.0, "text": "▲"},
+			"down": {"pos": a + Vector2(0, 78), "r": 38.0, "text": "▼"},
+			"left": {"pos": a + Vector2(-78, 0), "r": 38.0, "text": "◀"},
+			"right": {"pos": a + Vector2(78, 0), "r": 38.0, "text": "▶"},
 		}
 	var aim_on := player.weapon.aiming
 	return {
-		"nade": {"pos": Vector2(s.x - 430, s.y - 170), "r": 40.0, "text": "ГРАНАТА %d" % player.grenades},
-		"fpv": {"pos": Vector2(s.x - 80, s.y - 430), "r": 40.0, "text": "FPV %d" % player.drones},
-		"fire": {"pos": Vector2(s.x - 170, s.y - 175), "r": 76.0, "text": "ОГОНЬ"},
-		"aim": {"pos": Vector2(s.x - 335, s.y - 92), "r": 48.0, "text": "ПРИЦЕЛ" if not aim_on else "[ ПРИЦЕЛ ]"},
-		"jump": {"pos": Vector2(s.x - 72, s.y - 335), "r": 44.0, "text": "ПРЫЖОК"},
-		"reload": {"pos": Vector2(s.x - 200, s.y - 365), "r": 40.0, "text": "R"},
-		"fire_left": {"pos": Vector2(110, s.y - 360), "r": 50.0, "text": "ОГОНЬ"},
+		"fire": {"pos": Vector2(s.x - 170, s.y - 185), "r": 76.0, "text": "ОГОНЬ"},
+		"aim": {"pos": Vector2(s.x - 335, s.y - 110), "r": 48.0, "text": "ПРИЦЕЛ" if not aim_on else "[ ПРИЦЕЛ ]"},
+		"jump": {"pos": Vector2(s.x - 72, s.y - 345), "r": 44.0, "text": "ПРЫЖОК"},
+		"reload": {"pos": Vector2(s.x - 200, s.y - 375), "r": 40.0, "text": "R"},
+		"fire_left": {"pos": Vector2(110, s.y - 380), "r": 50.0, "text": "ОГОНЬ"},
 		"pause": {"pos": Vector2(s.x - 50, 50), "r": 32.0, "text": "II"},
-		"spawn": {"pos": Vector2(s.x - 130, 50), "r": 32.0, "text": "+"},
-		"slowmo": {"pos": Vector2(s.x - 210, 50), "r": 32.0, "text": "x0.3"},
-		"ai": {"pos": Vector2(s.x - 290, 50), "r": 32.0, "text": "ИИ"},
-		"weapons": {"pos": Vector2(s.x - 375, 50), "r": 36.0, "text": "ОРУЖ."},
-		"orders": {"pos": Vector2(s.x - 462, 50), "r": 36.0, "text": "ПРИКАЗ"},
-		"switch": {"pos": Vector2(s.x - 320, s.y - 250), "r": 42.0, "text": "СМЕНА"},
+		"weapons": {"pos": Vector2(s.x - 135, 50), "r": 36.0, "text": "ОРУЖ."},
+		"orders": {"pos": Vector2(s.x - 222, 50), "r": 36.0, "text": "ПРИКАЗ"},
 	}
 
 
@@ -119,6 +141,12 @@ func _order_rects() -> Array[Rect2]:
 
 
 func _touch_down(i: int, p: Vector2) -> void:
+	if not player.piloting:
+		var slots := _slot_rects()
+		for k in slots.size():
+			if slots[k].grow(4).has_point(p):
+				use_slot(k)
+				return
 	if _orders_open:
 		var rects := _order_rects()
 		for k in rects.size():
@@ -135,6 +163,7 @@ func _touch_down(i: int, p: Vector2) -> void:
 			match key:
 				"fire", "fire_left":
 					player.weapon.trigger()
+					player.weapon.trigger_held = true
 					if key == "fire" and _fire_index == -1:
 						_fire_index = i
 						_fire_last = p
@@ -146,23 +175,14 @@ func _touch_down(i: int, p: Vector2) -> void:
 					player.weapon.reload()
 				"pause":
 					game.toggle_pause()
-				"spawn":
-					game.spawn_in_front()
-				"slowmo":
-					game.toggle_slowmo()
-				"ai":
-					game.toggle_ai()
-				"switch":
-					player.weapon.next_weapon()
 				"weapons":
 					game.toggle_weapon_menu()
 				"orders":
 					_orders_open = not _orders_open
-				"nade":
-					player.throw_grenade()
 				"fpv":
 					reset_touches()
 					player.launch_drone()
+			_update_held()
 			return
 	if p.x < size.x * 0.42 and p.y > size.y * 0.25 and _joy_index == -1:
 		_joy_index = i
@@ -198,6 +218,22 @@ func _touch_up(i: int) -> void:
 	for key in _held.keys():
 		if _held[key] == i:
 			_held.erase(key)
+	_update_held()
+
+
+## Held buttons drive automatic fire and the drone's arrows.
+func _update_held() -> void:
+	player.weapon.trigger_held = _held.has("fire") or _held.has("fire_left")
+	var arrows := Vector2.ZERO
+	if _held.has("left"):
+		arrows.x -= 1.0
+	if _held.has("right"):
+		arrows.x += 1.0
+	if _held.has("up"):
+		arrows.y += 1.0
+	if _held.has("down"):
+		arrows.y -= 1.0
+	player.drone_arrows = arrows
 
 
 ## Drop every touch (used when pausing).
@@ -208,12 +244,19 @@ func reset_touches() -> void:
 	_held.clear()
 	if player:
 		player.touch_move = Vector2.ZERO
+		player.weapon.trigger_held = false
+		player.drone_arrows = Vector2.ZERO
 
 
 # ------------------------------------------------------------------ drawing
 
 func _process(delta: float) -> void:
-	_hit_t = maxf(_hit_t - delta, 0.0)
+	# ECG trace: one sample every 1/40 s from where the heart is in its beat
+	_ecg_t += delta
+	while _ecg_t > 0.025:
+		_ecg_t -= 0.025
+		_ecg = _ecg.slice(1)
+		_ecg.append(_ecg_value(player.heart_phase) if player.bpm > 1.0 else randf_range(-0.02, 0.02))
 	_order_t = maxf(_order_t - delta, 0.0)
 	_order_pressed_t = maxf(_order_pressed_t - delta, 0.0)
 	_fire_flash = maxf(_fire_flash - delta * 6.0, 0.0)
@@ -231,20 +274,22 @@ func _draw() -> void:
 	else:
 		_draw_grenade_warning()
 
-	# taking fire / down
-	if player.dead:
-		draw_rect(Rect2(Vector2.ZERO, size), Color(0.35, 0.0, 0.0, 0.55))
-		var t := "ВЫ ПОГИБЛИ"
-		var tw := _font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 44).x
-		_text(Vector2(c.x - tw * 0.5, c.y - 10), t, 44, Color(1, 0.85, 0.85, 0.95))
-	elif player.hurt_flash > 0.0:
+	# fading out: dark tunnel closing in as blood runs out
+	var faint := 1.0 - player.consciousness
+	if not player.dead and faint > 0.15:
+		var f := (faint - 0.15) / 0.85
+		for k in 8:
+			var inset := k * 26.0
+			draw_rect(Rect2(Vector2(inset, inset), size - Vector2(inset, inset) * 2.0), Color(0, 0, 0, 0.11 * f), false, 26.0)
+		draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.3 * f * (0.8 + 0.2 * sin(Time.get_ticks_msec() * 0.004))))
+	if not player.dead and player.hurt_flash > 0.0:
 		var f := player.hurt_flash
 		for k in 6: # red vignette: bands darker towards the edges
 			var inset := k * 18.0
 			draw_rect(Rect2(Vector2(inset, inset), size - Vector2(inset, inset) * 2.0), Color(0.8, 0.0, 0.0, 0.07 * f), false, 18.0)
 
 	# crosshair
-	if aim < 0.6 and not player.piloting:
+	if aim < 0.6 and not player.piloting and not player.dead:
 		var a := 1.0 - aim / 0.6
 		var spread := 7.0 + _fire_flash * 10.0 + Vector2(player.velocity.x, player.velocity.z).length() * 2.0
 		var col := Color(1, 1, 1, 0.9 * a)
@@ -252,29 +297,11 @@ func _draw() -> void:
 			_line_outlined(c + d * spread, c + d * (spread + 9.0), col, 2.0)
 		draw_circle(c, 1.5, Color(1, 1, 1, 0.8 * a))
 
-	# hit marker
-	if _hit_t > 0.0:
-		var t := _hit_t / (0.28 if _hit_kind == 0 else 0.45)
-		var col := Color(1, 1, 1, t) if _hit_kind == 0 else Color(1, 0.15, 0.1, t)
-		var g := 7.0 + (1.0 - t) * 4.0
-		var l := 9.0 if _hit_kind == 0 else 13.0
-		for d in [Vector2(1, 1), Vector2(-1, 1), Vector2(1, -1), Vector2(-1, -1)]:
-			var n: Vector2 = d.normalized()
-			_line_outlined(c + n * g, c + n * (g + l), col, 2.5)
-
 	# counters
-	_text(Vector2(24, 44), "УБИЙСТВ: %d" % _kills, 28, Color(1, 1, 1, 0.9))
+	_text(Vector2(24, 44), "УБИЙСТВ: %d" % _kills, 26, Color(1, 1, 1, 0.9))
 	_draw_score()
-	var status_y := 108.0
-	if _slowmo:
-		_text(Vector2(24, status_y), "ЗАМЕДЛЕНИЕ", 22, Color(1, 0.35, 0.3, 0.9))
-		status_y += 28.0
-	if not Npc.ai_enabled:
-		_text(Vector2(24, status_y), "ИИ ОТКЛЮЧЁН", 22, Color(1, 0.75, 0.3, 0.9))
-		status_y += 28.0
 	if Player.immortal:
-		_text(Vector2(24, status_y), "БЕССМЕРТИЕ", 22, Color(0.5, 1, 0.6, 0.9))
-		status_y += 28.0
+		_text(Vector2(24, 76), "БЕССМЕРТИЕ", 20, Color(0.5, 1, 0.6, 0.9))
 	# the last order shouted
 	if _order_t > 0.0:
 		var a := clampf(_order_t / 0.4, 0.0, 1.0)
@@ -284,20 +311,19 @@ func _draw() -> void:
 			var nw := _font.get_string_size(_order_note, HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x
 			_text(Vector2(c.x - nw * 0.5, 182), _order_note, 22, Color(1, 1, 1, 0.75 * a))
 	if Settings.show_fps:
-		_text(Vector2(24, size.y - 20), "FPS %d" % Engine.get_frames_per_second(), 20, Color(0.6, 1, 0.6, 0.9))
-	var ammo_text := "%s   %d / ∞" % [player.weapon.weapon_name(), _ammo] if not player.weapon.reloading else "ПЕРЕЗАРЯДКА"
-	var ammo_pos := Vector2(size.x * 0.5 - 110, size.y - 28)
+		_text(Vector2(24, 104), "FPS %d" % Engine.get_frames_per_second(), 20, Color(0.6, 1, 0.6, 0.9))
+	_draw_status()
+	if not player.piloting:
+		_draw_hotbar()
+	if player.weapon.reloading:
+		var t := "ПЕРЕЗАРЯДКА"
+		_text(Vector2(c.x - _font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x * 0.5, size.y - SLOT_H - 30), t, 24, Color(1, 0.85, 0.4, 0.95))
+	if player.dead:
+		_draw_death()
+		return
 	if not player.touch_mode:
-		ammo_pos = Vector2(size.x - 220, size.y - 30)
-	_text(ammo_pos, ammo_text, 30, Color(1, 1, 1, 0.9) if _ammo > 0 else Color(1, 0.3, 0.25, 0.95))
-	if not Player.immortal:
-		var hp_pos := Vector2(size.x * 0.5 - 330, size.y - 28) if player.touch_mode else Vector2(size.x - 220, size.y - 66)
-		var hp := int(ceil(player.health))
-		_text(hp_pos, "ЗДОРОВЬЕ %d" % hp, 26, Color(1, 1, 1, 0.85) if hp > 35 else Color(1, 0.25, 0.2, 0.95))
-	if not player.touch_mode:
-		_text(Vector2(24, size.y - 50), "WASD — ходьба, ЛКМ — огонь, ПКМ — прицел, R — перезарядка", 18, Color(1, 1, 1, 0.55))
-		_text(Vector2(24, size.y - 26), "1/2/F — оружие, G — граната, V — FPV-дрон (ещё раз — подрыв), B — меню оружия, E — враг, Q — замедление, T — ИИ, Esc — пауза", 18, Color(1, 1, 1, 0.55))
-		_text(Vector2(24, size.y - 74), "Приказы: 3 стоять, 4 руки вверх, 5 на колени, 6 брось оружие, 7 ко мне, 8 проваливай, 9 вольно, 0 застрелись", 18, Color(1, 1, 1, 0.55))
+		_text(Vector2(24, 132), "WASD ход · ЛКМ огонь · ПКМ прицел · R перезарядка · 1/2 оружие · G граната · V FPV (стрелки — руль) · B меню · Esc пауза", 16, Color(1, 1, 1, 0.5))
+		_text(Vector2(24, 154), "Приказы: 3 стоять, 4 руки вверх, 5 на колени, 6 брось оружие, 7 ко мне, 8 проваливай, 9 вольно, 0 застрелись", 16, Color(1, 1, 1, 0.5))
 		return
 
 	# order list
@@ -314,7 +340,7 @@ func _draw() -> void:
 			draw_string(_font, r.get_center() + Vector2(-lw * 0.5, fs * 0.35), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, 0.9))
 
 	# joystick
-	var base := _joy_origin if _joy_index != -1 else Vector2(190, size.y - 175)
+	var base := _joy_origin if _joy_index != -1 else Vector2(420, size.y - 230)
 	var knob := _joy_pos if _joy_index != -1 else base
 	knob = base + (knob - base).limit_length(JOY_RADIUS)
 	draw_circle(base, JOY_RADIUS, Color(0, 0, 0, 0.18))
@@ -325,20 +351,143 @@ func _draw() -> void:
 	var buttons := _buttons()
 	for key in buttons:
 		var b: Dictionary = buttons[key]
-		var held: bool = _held.has(key) or (key == "aim" and player.weapon.aiming) or (key == "slowmo" and _slowmo) \
-				or (key == "ai" and not Npc.ai_enabled) or (key == "orders" and _orders_open)
+		var held: bool = _held.has(key) or (key == "aim" and player.weapon.aiming) or (key == "orders" and _orders_open)
 		var fill := Color(0.75, 0.05, 0.08, 0.45) if held else Color(0, 0, 0, 0.25)
 		if key == "fire":
 			fill = Color(0.75, 0.05, 0.08, 0.55 if held else 0.3)
 		draw_circle(b.pos, b.r, fill)
 		draw_arc(b.pos, b.r, 0, TAU, 48, Color(1, 1, 1, 0.5), 2.0, true)
 		var fs := 22 if b.r > 45 else 18
-		if key in ["pause", "spawn", "slowmo", "reload", "ai"]:
-			fs = 26 if b.text.length() <= 2 else 18
-		elif key == "nade" or key == "fpv":
-			fs = 15
+		if key in ["pause", "reload", "up", "down", "left", "right"]:
+			fs = 26
 		var w := _font.get_string_size(b.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		draw_string(_font, b.pos + Vector2(-w * 0.5, fs * 0.35), b.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, 0.85))
+
+
+## ECG shape over one beat (phase 0..1): P wave, QRS spike, T wave.
+func _ecg_value(ph: float) -> float:
+	var v := 0.0
+	v += 0.12 * exp(-pow((ph - 0.06) / 0.025, 2.0))
+	v -= 0.12 * exp(-pow((ph - 0.135) / 0.008, 2.0))
+	v += 1.0 * exp(-pow((ph - 0.15) / 0.01, 2.0))
+	v -= 0.25 * exp(-pow((ph - 0.17) / 0.01, 2.0))
+	v += 0.22 * exp(-pow((ph - 0.36) / 0.045, 2.0))
+	return v
+
+
+## Bottom-left panel like a soldier's vitals: state, heart rate (pulsing
+## heart and an ECG trace), blood volume, consciousness.
+func _draw_status() -> void:
+	var p := player
+	var w := 340.0
+	var h := 132.0
+	var o := Vector2(14, size.y - h - 14)
+	draw_rect(Rect2(o, Vector2(w, h)), Color(0.04, 0.045, 0.05, 0.72))
+	draw_rect(Rect2(o, Vector2(w, h)), Color(1, 1, 1, 0.08), false, 1.0)
+	var state := "Боеспособен"
+	var scol := Color(0.92, 0.95, 0.92)
+	if p.dead:
+		state = "Погиб"
+		scol = Color(1, 0.3, 0.25)
+	elif Player.immortal:
+		state = "Бессмертие"
+		scol = Color(0.5, 1, 0.6)
+	elif p.consciousness < 0.35:
+		state = "Теряет сознание"
+		scol = Color(1, 0.45, 0.3)
+	elif p.hits >= 3:
+		state = "Тяжело ранен (%d)" % p.hits
+		scol = Color(1, 0.55, 0.35)
+	elif p.hits > 0:
+		state = "Ранен (%d)" % p.hits
+		scol = Color(1, 0.85, 0.45)
+	# person icon
+	var pi := o + Vector2(22, 24)
+	draw_circle(pi + Vector2(0, -5), 5.0, scol)
+	draw_rect(Rect2(pi + Vector2(-8, 2), Vector2(16, 8)), scol)
+	draw_string(_font, o + Vector2(40, 31), state, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, scol)
+	# ECG trace in the top right corner of the panel
+	var ex := o.x + w - 128.0
+	var ey := o.y + 22.0
+	var pts := PackedVector2Array()
+	for i in ECG_N:
+		pts.append(Vector2(ex + i * (120.0 / ECG_N), ey - _ecg[i] * 15.0))
+	draw_polyline(pts, Color(0.35, 0.95, 0.5, 0.9), 1.6, true)
+	var rows := [
+		["heart", "%d уд/мин" % int(round(p.bpm)), clampf(p.bpm / 180.0, 0.0, 1.0), Color(0.36, 0.86, 0.45)],
+		["blood", "%d мл" % int(round(p.blood)), clampf(p.blood / Player.BLOOD_FULL, 0.0, 1.0), Color(0.86, 0.16, 0.16)],
+		["eye", "%d%%" % int(round(p.consciousness * 100.0)), p.consciousness, Color(0.45, 0.65, 1.0)],
+	]
+	for k in rows.size():
+		var r: Array = rows[k]
+		var y := o.y + 58.0 + k * 26.0
+		var ic := Vector2(o.x + 22, y - 6)
+		var col: Color = r[3]
+		match r[0]:
+			"heart":
+				var beat := 1.0 + 0.3 * exp(-p.heart_phase * 9.0) if p.bpm > 1.0 else 1.0
+				var hs := 6.0 * beat
+				draw_circle(ic + Vector2(-hs * 0.5, -hs * 0.3), hs * 0.55, Color(0.9, 0.2, 0.22))
+				draw_circle(ic + Vector2(hs * 0.5, -hs * 0.3), hs * 0.55, Color(0.9, 0.2, 0.22))
+				draw_colored_polygon(PackedVector2Array([ic + Vector2(-hs * 1.05, -hs * 0.1), ic + Vector2(hs * 1.05, -hs * 0.1), ic + Vector2(0, hs * 1.1)]), Color(0.9, 0.2, 0.22))
+			"blood":
+				draw_circle(ic + Vector2(0, 2), 5.0, Color(0.85, 0.12, 0.12))
+				draw_colored_polygon(PackedVector2Array([ic + Vector2(-4.6, 0.5), ic + Vector2(4.6, 0.5), ic + Vector2(0, -8)]), Color(0.85, 0.12, 0.12))
+			"eye":
+				draw_arc(ic, 7.0, PI * 1.15, PI * 1.85, 10, Color(0.85, 0.9, 1.0), 2.0, true)
+				draw_arc(ic + Vector2(0, -6), 7.0, PI * 0.15, PI * 0.85, 10, Color(0.85, 0.9, 1.0), 2.0, true)
+				draw_circle(ic + Vector2(0, -3), 2.6, Color(0.85, 0.9, 1.0))
+		draw_string(_font, Vector2(o.x + 40, y), r[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(0.95, 0.95, 0.95))
+		var bx := o.x + 150.0
+		var bw := w - 166.0
+		draw_rect(Rect2(bx, y - 9, bw, 6), Color(1, 1, 1, 0.12))
+		draw_rect(Rect2(bx, y - 9, bw * float(r[2]), 6), col)
+
+
+## Hotbar: AK-74M, M500, grenades, drones; the held gun is outlined.
+func _draw_hotbar() -> void:
+	var slots := _slot_rects()
+	var held := player.weapon.slots.find(player.weapon.current)
+	var counts := ["%d" % (_ammo if held == 0 else player.weapon.slots[0].ammo),
+		"%d" % (_ammo if held == 1 else player.weapon.slots[1].ammo), "×%d" % player.grenades, "×%d" % player.drones]
+	var keys := ["1", "2", "G", "V"]
+	var ids := ["ak74", "m500", "grenade", "fpv"]
+	for k in slots.size():
+		var r: Rect2 = slots[k]
+		var on := k == held
+		draw_rect(r, Color(0.05, 0.05, 0.06, 0.7 if on else 0.5))
+		draw_rect(r, Color(1, 0.8, 0.3, 0.95) if on else Color(1, 1, 1, 0.25), false, 2.0 if on else 1.0)
+		var tex: Texture2D = _icons[ids[k]]
+		var tr := r.grow(-6)
+		tr.size.y -= 12
+		var ts := tex.get_size()
+		var sc := minf(tr.size.x / ts.x, tr.size.y / ts.y)
+		var dst := Rect2(tr.get_center() - ts * sc * 0.5, ts * sc)
+		var empty := (k == 2 and player.grenades == 0) or (k == 3 and player.drones == 0)
+		draw_texture_rect(tex, dst, false, Color(1, 1, 1, 0.35 if empty else 1.0))
+		draw_string(_font, r.position + Vector2(5, 15), keys[k], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.6))
+		var cnt: String = counts[k]
+		var cw := _font.get_string_size(cnt, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+		draw_string(_font, r.end - Vector2(cw + 6, 6), cnt, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.92))
+
+
+## Dying: ringing ears, the picture goes black round a white point that
+## shrinks and goes out.
+func _draw_death() -> void:
+	var t := player.death_t
+	var c := size * 0.5
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.25, 0.0, 0.0, clampf(0.5 - t, 0.0, 0.5)))
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, clampf((t - 0.15) / 1.2, 0.0, 1.0)))
+	var dot := clampf(1.0 - (t - 1.2) / 3.0, 0.0, 1.0)
+	if t > 0.4 and dot > 0.0:
+		var r := lerpf(3.0, 26.0, dot * dot)
+		for k in 4:
+			draw_circle(c, r * (2.6 - k * 0.5), Color(1, 1, 1, 0.06 * dot))
+		draw_circle(c, r, Color(1, 1, 1, dot))
+	if t > 4.2:
+		var a := clampf((t - 4.2) / 0.8, 0.0, 0.8)
+		var txt := "ВЫ ПОГИБЛИ"
+		_text(Vector2(c.x - _font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x * 0.5, c.y + 60), txt, 30, Color(0.8, 0.8, 0.8, a))
 
 
 ## Flying the FPV drone: analog video look (scan lines, noise, dark edges)
@@ -375,7 +524,7 @@ func _draw_fpv() -> void:
 	draw_arc(c, 16, 0, TAU, 24, w, 2.0, true)
 	for dir in [Vector2.LEFT, Vector2.RIGHT]:
 		draw_line(c + dir * 22, c + dir * 46, w, 2.0)
-	var t2 := "ДЖОЙСТИК: вперёд — быстрее, назад — медленнее · свайп — курс · ПОДРЫВ"
+	var t2 := "ДЖОЙСТИК: вперёд — быстрее, назад — медленнее · СТРЕЛКИ или свайп — курс и высота · ПОДРЫВ"
 	if player.touch_mode:
 		draw_string(_font, Vector2(c.x - _font.get_string_size(t2, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x * 0.5, size.y - 18), t2, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.6))
 

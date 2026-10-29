@@ -156,8 +156,10 @@ func _damage(power: float, by_player: bool) -> void:
 		var pc := player.global_position + Vector3.UP * 1.0
 		var d := pc.distance_to(center)
 		if d < radius * 0.85 and _clear(space, center, pc):
-			player.take_damage(130.0 * pow(1.0 - d / (radius * 0.85), 1.4), (pc - center).normalized())
+			player.take_damage(130.0 * pow(1.0 - d / (radius * 0.85), 1.4), (pc - center).normalized(), "blast")
 		player.add_shake(clampf(1.3 - d / 22.0, 0.0, 1.0) * power)
+		player.ear_ring = maxf(player.ear_ring, clampf(1.0 - d / 14.0, 0.0, 1.0) * power)
+		player.add_stress(clampf(1.0 - d / 30.0, 0.0, 1.0))
 	# loose bodies, gore and props are thrown about
 	var sphere := SphereShape3D.new()
 	sphere.radius = radius

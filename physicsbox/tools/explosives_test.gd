@@ -1,5 +1,5 @@
 extends SceneTree
-## Dev test for grenades and FPV drones on the trench map: a grenade among
+## Dev test for grenades and FPV drones (town yard of the front): a grenade among
 ## enemy soldiers, an enemy drone hunting the player, and the player flying
 ## his own drone into the enemy. Run: godot -s res://tools/explosives_test.gd
 ## (env SHOTS=<dir> to save PNGs)
@@ -15,7 +15,6 @@ var _hp0 := 0.0
 
 
 func _initialize() -> void:
-	root.get_node("Settings").level = "trenches"
 	change_scene_to_file("res://scenes/game.tscn")
 
 
@@ -65,10 +64,10 @@ func _process(_delta: float) -> bool:
 	if frame == 30:
 		p.touch_mode = true
 		Npc.ai_enabled = false
-		game.auto_spawn = false
+		game.set_physics_process(false) # no reinforcements, no drones
 		for n in get_nodes_in_group("npcs"):
 			n.queue_free()
-		p.global_position = Vector3(0, 0.4, 9.0)
+		p.global_position = Vector3(0 + 97.0, 0.4, 9.0)
 		return false
 	if _drone and is_instance_valid(_drone) and _drone.pilot and _men.size() > 0 and is_instance_valid(_men[0]):
 		# steer the player's drone over the trees, then down onto the group
@@ -83,12 +82,12 @@ func _process(_delta: float) -> bool:
 	match _step:
 		0:
 			for i in 4:
-				var m: Npc = game.spawn_npc(Vector3(-1.5 + i, 0.4, 0.0 + (i % 2) * 0.8), 1)
+				var m: Npc = game.spawn_npc(Vector3(-1.5 + i + 97.0, 0.4, 0.0 + (i % 2) * 0.8), 1)
 				_men.append(m)
 			_wait(0.6)
 		1:
-			_look(p, Vector3(0, 0.8, 0))
-			Grenade.throw(self, Vector3(0.2, 0.5, 0.4), Vector3.ZERO, true, 0.8)
+			_look(p, Vector3(0 + 97.0, 0.8, 0))
+			Grenade.throw(self, Vector3(0.2 + 97.0, 0.5, 0.4), Vector3.ZERO, true, 0.8)
 			_wait(0.82)
 		2:
 			_shot("x01_grenade_blast")
@@ -101,10 +100,10 @@ func _process(_delta: float) -> bool:
 		4:
 			_shot("x03_smoke")
 			Player.immortal = false
-			_hp0 = p.health
+			_hp0 = p.blood
 			_drone = game.send_enemy_drone()
 			_drone.target = p
-			_drone.global_position = Vector3(0, 8, -20)
+			_drone.global_position = Vector3(0 + 97.0, 8, -20)
 			_wait(1.0)
 		5:
 			_look(p, _drone.global_position)
@@ -112,7 +111,7 @@ func _process(_delta: float) -> bool:
 			_wait(0.1)
 		6:
 			if not is_instance_valid(_drone):
-				print("enemy drone hit: player hp ", _hp0, " -> ", p.health, " dead ", p.dead)
+				print("enemy drone hit: player blood ", _hp0, " -> ", p.blood, " hits ", p.hits, " dead ", p.dead)
 				_drone = null
 				_wait(0.5)
 				_step = 7
@@ -121,13 +120,13 @@ func _process(_delta: float) -> bool:
 			if p.dead:
 				p._respawn()
 			Player.immortal = true
-			p.global_position = Vector3(0, 0.4, 14.0)
+			p.global_position = Vector3(0 + 97.0, 0.4, 14.0)
 			_men.clear()
 			for i in 3:
-				_men.append(game.spawn_npc(Vector3(-1.0 + i, 0.4, -6.0), 1))
+				_men.append(game.spawn_npc(Vector3(-1.0 + i + 97.0, 0.4, -6.0), 1))
 			_wait(0.5)
 		8:
-			_look(p, Vector3(0, 1, -6))
+			_look(p, Vector3(0 + 97.0, 1, -6))
 			p.launch_drone()
 			_drone = p.piloting
 			print("piloting: ", _drone != null, " drones left ", p.drones)

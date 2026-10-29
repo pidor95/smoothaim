@@ -189,10 +189,39 @@ def ui_click():
     return tick + fit(band(noise(0.01), 2000, 9000) * env(0.01, 0.0001, 0.0008) * 0.4, total)
 
 
-def hitmarker():
-    total = 0.06
-    tick = fit(band(noise(0.02), 3000, 10000) * env(0.02, 0.0001, 0.0012), total)
-    return tick + fit(modes(0.03, [1900, 3900], [0.006, 0.003], [0.35, 0.15]), total)
+def tinnitus():
+    """Ringing in the ears after a blast or a hit: two close high tones
+    beating slowly over a hiss. Every component fits a whole number of
+    cycles into the clip, so it loops without a seam."""
+    dur = 2.0
+    t = t_axis(dur)
+    x = np.sin(2 * np.pi * 3950 * t) + 0.6 * np.sin(2 * np.pi * 4121.5 * t) + 0.25 * np.sin(2 * np.pi * 7900 * t)
+    hiss = band(noise(dur), 5000, 9000)
+    hiss = np.roll(hiss, 0) * 0.15
+    return x * (0.85 + 0.15 * np.sin(2 * np.pi * 0.5 * t)) + hiss
+
+
+def heartbeat():
+    """One beat as heard from inside: a low "lub" then a softer "dub"."""
+    total = 0.6
+
+    def thump(f0, dur, gain):
+        t = t_axis(dur)
+        f = f0 * (1.0 + 0.6 * np.exp(-t / 0.02))
+        ph = 2 * np.pi * np.cumsum(f) / SR
+        return np.sin(ph) * env(dur, 0.006, 0.05) * gain
+
+    return at(thump(55, 0.25, 1.0), 0.0, total) + at(thump(68, 0.2, 0.6), 0.2, total)
+
+
+def save_loop(name, x, peak=0.5):
+    x = np.asarray(x, dtype=np.float64)
+    x = x / (np.max(np.abs(x)) or 1.0) * peak
+    buf = aud.Sound.buffer(x.astype(np.float32).reshape(-1, 1), SR)
+    path = os.path.join(OUT, name + ".wav")
+    buf.write(path, rate=SR, channels=aud.CHANNELS_MONO, format=aud.FORMAT_S16,
+              container=aud.CONTAINER_WAV, codec=aud.CODEC_PCM)
+    print("wrote", name, "%.2fs (loop)" % (len(x) / SR))
 
 
 def main():
@@ -206,7 +235,8 @@ def main():
     for i in range(3):
         save("footstep_%d" % i, footstep(i), 0.32)
     save("ui_click", ui_click(), 0.45)
-    save("hitmarker", hitmarker(), 0.45)
+    save_loop("tinnitus", tinnitus(), 0.5)
+    save("heartbeat", heartbeat(), 0.8)
 
 
 main()

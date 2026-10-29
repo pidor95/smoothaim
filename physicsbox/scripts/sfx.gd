@@ -15,7 +15,6 @@ const SOUNDS := {
 	"glass_break": ["glass_break_0", "glass_break_1", "glass_break_2", "glass_break_3", "glass_break_4"],
 	"footstep": ["footstep_0", "footstep_1", "footstep_2"],
 	"ui_click": ["ui_click"],
-	"hitmarker": ["hitmarker"],
 }
 const VOICES_3D := 24
 const VOICES_2D := 8

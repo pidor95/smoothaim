@@ -1,20 +1,21 @@
 extends Node3D
-## Level controller: environment, level, player, HUD, the war (two teams of
-## soldiers with tickets and reinforcements), the player's orders, slow
-## motion and the pause menu.
+## Level controller: environment, the front, player, HUD, the war (two
+## teams of soldiers with tickets and reinforcements that keep coming on
+## their own), the player's orders and the pause menu.
 
-const MAX_BODIES := 14
-## Soldiers on the field per side, and each side's tickets (lives).
-const TEAM_ALIVE := 6
-const TICKETS := 40
+const MAX_BODIES := 12
+## Soldiers on their feet per side, and each side's tickets (lives).
+const TEAM_ALIVE := 9
+const TICKETS := 120
+## The war is fought round the player: reinforcements come up and posts are
+## taken this close to him (the front is far bigger than that).
+const ACTION_RADIUS := 75.0
 
-var house: House
+var house: TrenchLevel
 var player: Player
 var hud: Hud
 var sun := DirectionalLight3D.new()
 var kills := 0
-var slowmo := false
-var auto_spawn := true
 var tickets := [TICKETS, TICKETS]
 var winner := -1 # side that won the round, while the banner shows
 var _round_end_t := 0.0
@@ -25,9 +26,6 @@ var _team_points: Array = [[], []] # [team] -> reinforcement points
 var _bodies: Array[Npc] = []
 var _pause_layer := CanvasLayer.new()
 var _pause_panel: Control
-var _slowmo_button: Button
-var _auto_button: Button
-var _ai_button: Button
 var _weapon_layer := CanvasLayer.new()
 var _weapon_panel: Control
 var _weapon_cards: Array = [] # [button, slot index]
@@ -44,13 +42,7 @@ func _ready() -> void:
 	AudioServer.playback_speed_scale = 1.0
 	_build_environment()
 
-	match Settings.level:
-		"shop":
-			house = ShopLevel.new()
-		"house":
-			house = House.new()
-		_:
-			house = TrenchLevel.new()
+	house = TrenchLevel.new()
 	add_child(house)
 
 	player = Player.new()
@@ -63,6 +55,7 @@ func _ready() -> void:
 	hud.player = player
 	hud.game = self
 	hud_layer.add_child(hud)
+	add_child(Bodycam.new())
 	_build_pause_menu()
 	_build_weapon_menu()
 	player.capture_mouse()
@@ -73,7 +66,7 @@ func _ready() -> void:
 	await get_tree().physics_frame
 	for t in 2:
 		for i in TEAM_ALIVE:
-			spawn_soldier(t)
+			spawn_soldier(t, -1, true)
 
 
 func _build_environment() -> void:
@@ -107,7 +100,7 @@ func _build_environment() -> void:
 	sun.rotation_degrees = Vector3(-52, -38, 0)
 	sun.light_energy = 1.5
 	sun.light_color = Color(1.0, 0.97, 0.92)
-	if Settings.level == "trenches":
+	if true:
 		# overcast autumn front: low brown-grey sky, haze, weak sun
 		sm.sky_top_color = Color(0.36, 0.35, 0.34)
 		sm.sky_horizon_color = Color(0.62, 0.58, 0.53)
@@ -128,7 +121,7 @@ func _build_environment() -> void:
 	add_child(we)
 
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-	sun.directional_shadow_max_distance = 45.0
+	sun.directional_shadow_max_distance = 55.0
 	sun.shadow_blur = 1.5
 	add_child(sun)
 	on_settings_changed()
@@ -140,29 +133,38 @@ func on_settings_changed() -> void:
 
 # ------------------------------------------------------------------ NPCs
 
-## Reinforcement points and firing posts per side. The trench map has its
-## own; other levels split their spawn points by distance from the player.
+## Reinforcement points and firing posts per side (empties in the map).
 func _setup_teams() -> void:
-	if house is TrenchLevel:
-		_team_points = (house as TrenchLevel).team_spawns
-		Npc.war_posts = (house as TrenchLevel).team_posts
-		return
-	var pts: Array[Vector3] = house.npc_spawns.duplicate()
-	pts.sort_custom(func(a, b): return a.distance_to(house.player_spawn.origin) < b.distance_to(house.player_spawn.origin))
-	var half := pts.size() / 2
-	_team_points = [pts.slice(0, half), pts.slice(half)]
-	Npc.war_posts = _team_points
+	_team_points = house.team_spawns
+	Npc.war_posts = house.team_posts
 
 
-## A soldier of `team` at a reinforcement point: some hold their own line,
-## the rest go over the top for the enemy's.
-## `assault`: -1 = by chance, 0 / 1 = force.
-func spawn_soldier(team: int, assault_mode := -1) -> Npc:
-	var pts: Array = _team_points[team]
-	var npc := spawn_npc(pts[randi() % pts.size()] + Vector3(randf_range(-0.4, 0.4), 0, randf_range(-0.4, 0.4)), team)
-	var assault := randf() < (0.45 if team == 0 else 0.6) if assault_mode < 0 else assault_mode == 1
+## The points of `pts` within ACTION_RADIUS of the player (the nearest few
+## when none are).
+func _near_player(pts: Array, radius := ACTION_RADIUS) -> Array:
+	var at := player.global_position
+	var out := pts.filter(func(p): return Vector2(p.x - at.x, p.z - at.z).length() < radius)
+	if out.size() < 3:
+		out = pts.duplicate()
+		out.sort_custom(func(a, b): return a.distance_squared_to(at) < b.distance_squared_to(at))
+		out = out.slice(0, mini(6, out.size()))
+	return out
+
+
+## A soldier of `team` at a reinforcement point near the fighting: some hold
+## their own line, the rest go over the top for the enemy's.
+## `assault`: -1 = by chance, 0 / 1 = force. `start`: the first wave also
+## takes the front posts straight away.
+func spawn_soldier(team: int, assault_mode := -1, start := false) -> Npc:
+	var pts: Array = _near_player(_team_points[team])
+	var assault := randf() < (0.4 if team == 0 else 0.55) if assault_mode < 0 else assault_mode == 1
+	var posts: Array = _near_player(Npc.war_posts[1 - team if assault else team], ACTION_RADIUS * 0.8)
+	var at: Vector3 = pts[randi() % pts.size()]
+	if start and not assault:
+		var own: Array = _near_player(Npc.war_posts[team], ACTION_RADIUS * 0.8)
+		at = own[randi() % own.size()]
+	var npc := spawn_npc(at + Vector3(randf_range(-0.4, 0.4), 0, randf_range(-0.4, 0.4)), team)
 	npc.role = "assault" if assault else "hold"
-	var posts: Array = Npc.war_posts[1 - team if assault else team]
 	if not posts.is_empty():
 		npc.post = posts[randi() % posts.size()]
 	return npc
@@ -197,35 +199,19 @@ func spawn_npc(pos: Vector3, team := 1) -> Npc:
 	return npc
 
 
-## Spawns an enemy soldier a few metres in front of the player (snapped to
-## the navmesh); he holds that spot.
-func spawn_in_front() -> void:
-	var cam := player.camera
-	var fwd := -cam.global_basis.z
-	fwd.y = 0.0
-	fwd = fwd.normalized()
-	var from := cam.global_position
-	var dist := 4.0
-	var q := PhysicsRayQueryParameters3D.create(from, from + fwd * dist, 1)
-	var hit := get_world_3d().direct_space_state.intersect_ray(q)
-	if not hit.is_empty():
-		dist = maxf(from.distance_to(hit.position) - 0.6, 1.2)
-	var target := player.global_position + fwd * dist
-	var map := get_world_3d().navigation_map
-	var p := NavigationServer3D.map_get_closest_point(map, target)
-	if p == Vector3.ZERO or p.distance_to(target) > 3.0:
-		p = target
-	var npc := spawn_npc(p + Vector3.UP * 0.05, 1)
-	npc.post = npc.position
-	var to_player := player.global_position - npc.global_position
-	npc.rotation.y = atan2(-to_player.x, -to_player.z)
-	Sfx.play("ui_click")
-
-
+## Soldiers of `team` still in the fight (not dead, down or out cold).
 func _alive(team: int) -> int:
 	var n := 0
 	for npc in get_tree().get_nodes_in_group("npcs"):
-		if not npc.dead and npc.team == team:
+		if npc.team == team and npc.is_combatant():
+			n += 1
+	return n
+
+
+func _living(team: int) -> int:
+	var n := 0
+	for npc in get_tree().get_nodes_in_group("npcs"):
+		if npc.team == team and not npc.dead:
 			n += 1
 	return n
 
@@ -305,8 +291,6 @@ func _physics_process(delta: float) -> void:
 			winner = -1
 			tickets = [TICKETS, TICKETS]
 		return
-	if not auto_spawn:
-		return
 	_drone_t -= delta
 	if _drone_t <= 0.0:
 		_drone_t = randf_range(35.0, 70.0)
@@ -315,39 +299,18 @@ func _physics_process(delta: float) -> void:
 		_reinforce_t[t] -= delta
 		if _reinforce_t[t] <= 0.0:
 			_reinforce_t[t] = randf_range(2.5, 5.0)
-			if _alive(t) < TEAM_ALIVE and tickets[t] > _alive(t):
+			if _alive(t) < TEAM_ALIVE and _living(t) < TEAM_ALIVE + 5 and tickets[t] > _living(t):
 				spawn_soldier(t)
 
 
 func _process(_delta: float) -> void:
-	hud.set_stats(kills, tickets, winner, slowmo)
+	hud.set_stats(kills, tickets, winner)
 	if not player.touch_mode:
-		if Input.is_action_just_pressed("spawn_npc"):
-			spawn_in_front()
-		if Input.is_action_just_pressed("slowmo"):
-			toggle_slowmo()
-		if Input.is_action_just_pressed("toggle_ai"):
-			toggle_ai()
 		if Input.is_action_just_pressed("weapon_menu"):
 			toggle_weapon_menu()
 		for i in Npc.ORDERS.size():
 			if Input.is_action_just_pressed("order_%d" % (i + 1)):
 				give_order(i)
-
-
-## AI on/off: with AI off mannequins stand still (they still react to hits).
-func toggle_ai() -> void:
-	Npc.ai_enabled = not Npc.ai_enabled
-	if _ai_button:
-		_ai_button.text = "ИИ солдат: ВКЛ" if Npc.ai_enabled else "ИИ солдат: ВЫКЛ"
-
-
-func toggle_slowmo() -> void:
-	slowmo = not slowmo
-	Engine.time_scale = 0.3 if slowmo else 1.0
-	AudioServer.playback_speed_scale = 0.55 if slowmo else 1.0
-	if _slowmo_button:
-		_slowmo_button.text = "Замедление: ВКЛ" if slowmo else "Замедление: ВЫКЛ"
 
 
 # ------------------------------------------------------------------ pause
@@ -423,19 +386,7 @@ func _build_pause_menu() -> void:
 	left.add_child(UiKit.button("Оружие", func():
 		toggle_pause()
 		toggle_weapon_menu()))
-	left.add_child(UiKit.button("+1 враг перед собой", func(): spawn_in_front()))
-	left.add_child(UiKit.button("+3 врага в атаку", func():
-		for i in 3:
-			spawn_soldier(1, 1)))
 	left.add_child(UiKit.button("Убрать тела и кровь", clear_bodies))
-	_slowmo_button = UiKit.button("Замедление: ВЫКЛ", toggle_slowmo)
-	left.add_child(_slowmo_button)
-	_auto_button = UiKit.button("Подкрепления: ВКЛ", func():
-		auto_spawn = not auto_spawn
-		_auto_button.text = "Подкрепления: ВКЛ" if auto_spawn else "Подкрепления: ВЫКЛ")
-	left.add_child(_auto_button)
-	_ai_button = UiKit.button("ИИ солдат: ВКЛ" if Npc.ai_enabled else "ИИ солдат: ВЫКЛ", toggle_ai)
-	left.add_child(_ai_button)
 	left.add_child(UiKit.button("Главное меню", _to_menu))
 	for b in left.get_children():
 		if b is Button:
@@ -518,7 +469,7 @@ func _build_weapon_menu() -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 24)
 	col.add_child(row)
-	var immortal_page := _toggle_page("Пули манекенов не наносят вам урона.\nБез бессмертия: 100 здоровья, раны медленно\nзатягиваются, при смерти — возрождение на старте.")
+	var immortal_page := _toggle_page("Пули и осколки не наносят вам урона.\nБез бессмертия: пятая пуля убивает, раны кровоточат,\nпри смерти — возрождение в своей траншее.")
 	_immortal_button = immortal_page.get_child(1)
 	_immortal_button.pressed.connect(func():
 		Player.immortal = not Player.immortal
@@ -563,8 +514,6 @@ func _build_weapon_menu() -> void:
 func _to_menu() -> void:
 	Settings.save_settings()
 	get_tree().paused = false
-	Engine.time_scale = 1.0
-	AudioServer.playback_speed_scale = 1.0
 	Blood.clear()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")

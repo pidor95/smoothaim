@@ -25,13 +25,28 @@ var _feet := Area3D.new()
 
 ## Immortality (weapon menu): NPC bullets do no harm.
 static var immortal := false
-const MAX_HEALTH := 100.0
-const RESPAWN_TIME := 3.0
-var health := MAX_HEALTH
+## Wounds: every bullet (or fragment) that hits bleeds; the fifth kills.
+## Heart rate, blood and consciousness feed the status panel (HUD, bottom
+## left); too little blood also kills.
+const LETHAL_HITS := 5
+const BLOOD_FULL := 5000.0
+const BLOOD_DEATH := 2400.0
+const RESPAWN_TIME := 6.5
+var hits := 0
+var blood := BLOOD_FULL
+var bleed_rate := 0.0 # ml per second, clots slowly
+var bpm := 72.0
+var consciousness := 1.0
 var dead := false
+var death_t := 0.0 # seconds since death: the HUD fades to black round a white dot
+var ear_ring := 0.0 # 0..1 ringing in the ears (blasts, hits, death)
 var hurt_flash := 0.0 # 1 on a hit, fades (HUD red vignette)
-var _dead_t := 0.0
-var _regen_wait := 0.0
+var heart_phase := 0.0 # 0..1 within the current beat (HUD ECG)
+var _stress := 0.0
+var _ring_player := AudioStreamPlayer.new()
+var _heart_player := AudioStreamPlayer.new()
+var _muffle := AudioEffectLowPassFilter.new()
+var _muffle_idx := -1
 
 ## Grenades and FPV drones carried; one more comes back every so often.
 const MAX_GRENADES := 4
@@ -41,6 +56,8 @@ var drones := MAX_DRONES
 var piloting: FpvDrone # flying a drone through its camera
 var signal_lost := 0.0 # HUD static after the drone is gone
 var shake := 0.0
+var drone_arrows := Vector2.ZERO # on-screen arrows while flying the drone (HUD)
+var _cam_bob := 0.0
 var _grenade_regen := 0.0
 var _drone_regen := 0.0
 
@@ -76,7 +93,7 @@ func _ready() -> void:
 	head.position = Vector3(0, EYE_HEIGHT, 0)
 	add_child(head)
 	camera.near = 0.03
-	camera.far = 400.0
+	camera.far = 260.0
 	camera.current = true
 	head.add_child(camera)
 	weapon = Weapon.new()
@@ -87,6 +104,26 @@ func _ready() -> void:
 	_spawn = global_transform
 	touch_mode = DisplayServer.is_touchscreen_available() or OS.has_feature("mobile")
 	on_settings_changed()
+
+	# ringing ears and a pounding heart; blasts and wounds muffle the world
+	var ring: AudioStreamWAV = load("res://assets/sounds/tinnitus.wav").duplicate()
+	ring.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	ring.loop_end = int(ring.get_length() * ring.mix_rate)
+	_ring_player.stream = ring
+	_ring_player.volume_db = -80.0
+	add_child(_ring_player)
+	_heart_player.stream = load("res://assets/sounds/heartbeat.wav")
+	add_child(_heart_player)
+	_muffle.cutoff_hz = 20000.0
+	_muffle_idx = AudioServer.get_bus_effect_count(0)
+	AudioServer.add_bus_effect(0, _muffle)
+
+
+func _exit_tree() -> void:
+	for i in AudioServer.get_bus_effect_count(0):
+		if AudioServer.get_bus_effect(0, i) == _muffle:
+			AudioServer.remove_bus_effect(0, i)
+			break
 
 
 func on_settings_changed() -> void:
@@ -128,39 +165,60 @@ func _unhandled_input(event: InputEvent) -> void:
 		capture_mouse()
 
 
-## A bullet from an armed mannequin.
-func take_damage(amount: float, dir: Vector3) -> void:
+## Hit by a bullet or a fragment (`kind` "bullet"), or caught in a blast
+## ("blast": `amount` 0..130 by how close).
+func take_damage(amount: float, dir: Vector3, kind := "bullet") -> void:
 	if dead:
 		return
 	hurt_flash = 1.0
+	_stress = 1.0
 	add_recoil(deg_to_rad(randf_range(1.5, 3.0)), deg_to_rad(randf_range(-2.0, 2.0)))
 	if immortal:
 		return
-	health -= amount
-	_regen_wait = 5.0
 	velocity += Vector3(dir.x, 0.0, dir.z) * 1.2
-	if health <= 0.0:
-		health = 0.0
-		dead = true
-		_dead_t = RESPAWN_TIME
-		weapon.visible = false
-		if piloting:
-			piloting.detonate()
+	if kind == "blast":
+		ear_ring = maxf(ear_ring, clampf(amount / 50.0, 0.4, 1.0))
+		blood -= amount * 6.0
+		bleed_rate += amount * 0.08
+		if amount >= 75.0:
+			die()
+		return
+	hits += 1
+	blood -= randf_range(120.0, 260.0)
+	bleed_rate += randf_range(4.0, 7.0)
+	ear_ring = maxf(ear_ring, 0.3)
+	if hits >= LETHAL_HITS:
+		die()
+
+
+func die() -> void:
+	if dead:
+		return
+	dead = true
+	death_t = 0.0
+	ear_ring = 1.0
+	weapon.visible = false
+	if piloting:
+		piloting.detonate()
 
 
 func add_shake(amount: float) -> void:
 	shake = maxf(shake, amount)
 
 
-## Pulls the pin and lobs a grenade where he looks.
+## Pulls the pin and lobs a grenade where he looks: the arm animation
+## (Weapon.start_throw) lets go of it in release_grenade().
 func throw_grenade() -> void:
 	if grenades <= 0 or dead or piloting:
 		return
-	grenades -= 1
+	if weapon.start_throw():
+		grenades -= 1
+
+
+func release_grenade() -> void:
 	var b := camera.global_basis
-	var from := camera.global_position - b.z * 0.4 + b.x * 0.15 - b.y * 0.1
-	Grenade.throw(get_tree(), from, -b.z * 13.0 + Vector3.UP * 2.5 + velocity, true)
-	Sfx.play("ui_click", -8.0)
+	var from := camera.global_position - b.z * 0.45 + b.x * 0.12 + b.y * 0.05
+	Grenade.throw(get_tree(), from, -b.z * 14.0 + Vector3.UP * 3.0 + velocity, true, 3.1)
 
 
 ## Sends an FPV drone up from his position and flies it through its camera.
@@ -193,7 +251,12 @@ func drone_lost(d: FpvDrone) -> void:
 
 func _respawn() -> void:
 	dead = false
-	health = MAX_HEALTH
+	hits = 0
+	blood = BLOOD_FULL
+	bleed_rate = 0.0
+	bpm = 80.0
+	consciousness = 1.0
+	ear_ring = 0.0
 	global_transform = _spawn
 	velocity = Vector3.ZERO
 	yaw = _spawn.basis.get_euler().y
@@ -220,19 +283,17 @@ func _physics_process(delta: float) -> void:
 			throw_grenade()
 		if Input.is_action_just_pressed("drone"):
 			launch_drone()
+	_body_process(delta)
 	if dead:
-		# down on the floor; back at the start after a moment
-		_dead_t -= delta
+		# down on the floor; back at the start after a while
+		death_t += delta
 		head.position.y = move_toward(head.position.y, 0.3, delta * 2.5)
 		head.rotation.z = move_toward(head.rotation.z, 1.2, delta * 2.0)
 		velocity = Vector3(0, velocity.y - GRAVITY * delta, 0) if not is_on_floor() else Vector3.ZERO
 		move_and_slide()
-		if _dead_t <= 0.0:
+		if death_t >= RESPAWN_TIME:
 			_respawn()
 		return
-	_regen_wait -= delta
-	if _regen_wait <= 0.0:
-		health = minf(health + delta * 6.0, MAX_HEALTH)
 	var input := touch_move
 	if not touch_mode:
 		input += Input.get_vector("move_left", "move_right", "move_forward", "move_back")
@@ -262,16 +323,65 @@ func _physics_process(delta: float) -> void:
 	_kick_loose_bodies()
 	_footsteps(delta)
 
-	camera.fov = lerpf(Settings.fov, Settings.fov * weapon.current.def.ads_fov, smoothstep(0.0, 1.0, weapon.aim_t))
+	# the bodycam's wide lens
+	var fov := Settings.fov + (14.0 if Settings.bodycam else 0.0)
+	camera.fov = lerpf(fov, fov * weapon.current.def.ads_fov, smoothstep(0.0, 1.0, weapon.aim_t))
 	# camera recoil recovers over time; it never changes where you aim permanently
 	_recoil = _recoil.lerp(Vector2.ZERO, clampf(delta * 9.0, 0.0, 1.0))
 	var sh := shake * shake * 0.07
 	head.rotation = Vector3(pitch + _recoil.x + randf_range(-sh, sh), _recoil.y + randf_range(-sh, sh), randf_range(-sh, sh) * 0.5)
+	# a camera on the chest rocks with every step
+	var hspeed := Vector2(velocity.x, velocity.z).length()
+	if is_on_floor():
+		_cam_bob += delta * hspeed * 1.9
+	var amt := clampf(hspeed / SPEED, 0.0, 1.0) * (1.0 - weapon.aim_t * 0.7) * (1.0 if Settings.bodycam else 0.35)
+	head.position = Vector3(sin(_cam_bob) * 0.022 * amt, EYE_HEIGHT - absf(cos(_cam_bob)) * 0.035 * amt, 0.0)
+	head.rotation.z += sin(_cam_bob) * 0.014 * amt
 
 	if global_position.y < -30.0:
 		global_transform = _spawn
 		velocity = Vector3.ZERO
 		yaw = _spawn.basis.get_euler().y
+
+
+## Bleeding, heart rate, consciousness, the ringing in the ears.
+func _body_process(delta: float) -> void:
+	if not dead:
+		blood -= bleed_rate * delta
+		bleed_rate *= exp(-delta / 30.0) # clotting
+		if blood <= BLOOD_DEATH and not immortal:
+			blood = BLOOD_DEATH
+			die()
+	consciousness = 0.0 if dead else clampf((blood - BLOOD_DEATH) / (4300.0 - BLOOD_DEATH), 0.0, 1.0) * (1.0 - ear_ring * 0.25)
+	_stress = maxf(_stress - delta * 0.06, 0.0)
+	var target := 72.0 + Vector2(velocity.x, velocity.z).length() * 5.0 + _stress * 38.0 + hits * 8.0 \
+			+ (BLOOD_FULL - blood) / 35.0
+	if dead:
+		target = maxf(0.0, 40.0 - death_t * 25.0) # the heart stops
+	bpm = move_toward(bpm, target, delta * (14.0 if target > bpm else 4.0))
+	if bpm > 1.0:
+		heart_phase += delta * bpm / 60.0
+		if heart_phase >= 1.0:
+			heart_phase = fmod(heart_phase, 1.0)
+			# you hear your own heart once it pounds or you are badly hurt
+			var loud := clampf((bpm - 105.0) / 50.0, 0.0, 1.0) + (1.0 - consciousness) * 0.8 + (0.6 if dead else 0.0)
+			if loud > 0.05:
+				_heart_player.volume_db = linear_to_db(clampf(loud, 0.0, 1.0)) - 4.0
+				_heart_player.play()
+	ear_ring = move_toward(ear_ring, 0.0, delta * (0.05 if dead else 0.09))
+	var ring_v := ear_ring * (1.0 if not dead else clampf(1.0 - death_t / RESPAWN_TIME, 0.0, 1.0))
+	_ring_player.volume_db = linear_to_db(maxf(ring_v * 0.6, 0.0001))
+	if ring_v > 0.01 and not _ring_player.playing:
+		_ring_player.play()
+	elif ring_v <= 0.01 and _ring_player.playing:
+		_ring_player.stop()
+	# the world goes dull and far away
+	var dull := maxf(ear_ring, 1.0 - consciousness)
+	_muffle.cutoff_hz = lerpf(20000.0, 450.0, clampf(dull, 0.0, 1.0) ** 0.7)
+
+
+func add_stress(amount: float) -> void:
+	_stress = clampf(_stress + amount, 0.0, 1.0)
 
 
 func _push_bodies(wish_vel: Vector3) -> void:

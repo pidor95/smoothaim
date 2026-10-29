@@ -92,6 +92,10 @@ func _physics_process(delta: float) -> void:
 			stick += Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 		_speed = clampf(_speed - stick.y * 18.0 * delta, 4.0, MAX_SPEED)
 		strafe = stick.x
+		# the arrows (on screen or on the keyboard): turn and climb / dive
+		var arrows := pilot.drone_arrows + Input.get_vector("fpv_left", "fpv_right", "fpv_down", "fpv_up")
+		_yaw -= clampf(arrows.x, -1.0, 1.0) * 1.9 * delta
+		_pitch = clampf(_pitch + clampf(arrows.y, -1.0, 1.0) * 1.3 * delta, -1.3, 1.0)
 	elif is_instance_valid(target) and not (target is Npc and target.dead):
 		# hunts its target: stays high over the trees, weaving a little, then
 		# dives onto it from above

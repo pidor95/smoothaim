@@ -4,7 +4,8 @@ animations in Blender, exported as glTF for Godot.
 Run:
   blender -b --python tools/blender/build_weapons.py -- <m500.usdz> [preview_dir]
 
-Outputs assets/weapons/m1911_fp.glb and assets/weapons/m500_fp.glb.
+Outputs assets/weapons/m500_fp.glb (the AK-74M viewmodel is made by
+build_sketchfab_kit.py with the helpers here).
 
 Coordinates are camera space (Blender axes): +Y forward, +Z up, +X right; the
 exporter converts them to Godot's -Z forward / +Y up. Each viewmodel is an
@@ -219,8 +220,8 @@ def preview(name, frames_by_action):
     scene.render.engine = "CYCLES"
     scene.cycles.samples = 12
     scene.cycles.device = "CPU"
-    scene.render.resolution_x = 640
-    scene.render.resolution_y = 360
+    scene.render.resolution_x = 960
+    scene.render.resolution_y = 540
     arm = bpy.data.objects["VM"]
     for action_name, frame in frames_by_action:
         arm.animation_data.action = bpy.data.actions[action_name]
@@ -239,135 +240,6 @@ def preview(name, frames_by_action):
 def gloves():
     return (material("Glove", (0.03, 0.03, 0.035), roughness=0.85),
             material("Sleeve", (0.045, 0.045, 0.05), roughness=0.95))
-
-
-# ---------------------------------------------------------------- M1911
-
-def build_m1911():
-    reset()
-    bpy.ops.import_scene.fbx(filepath=os.path.join(ROOT, "assets", "m1911", "m1911.fbx"))
-    parts = [o for o in bpy.context.scene.objects if o.type == "MESH"]
-    s = 0.0626  # model is 3.45 units long; a real M1911 is 0.216 m
-    tex = material("M1911", (1, 1, 1), metallic=0.3, roughness=0.5,
-                   image=os.path.join(ROOT, "assets", "m1911", "m1911_albedo.jpg"))
-    grip = Vector((0.15, 0.36, -0.165))  # camera-space hip position of the gun origin
-    yaw = math.radians(4)
-    to_cam = Matrix.Translation(grip) @ Matrix.Rotation(yaw, 4, "Z") @ Matrix.Rotation(math.pi, 4, "Z") @ Matrix.Scale(s, 4)
-    for o in parts:
-        o.matrix_world = to_cam @ o.matrix_world
-        apply_all(o)
-        o.data.materials.clear()
-        o.data.materials.append(tex)
-        # keep only the first UV map (the albedo atlas)
-        while len(o.data.uv_layers) > 1:
-            o.data.uv_layers.remove(o.data.uv_layers[-1])
-
-    def g(v):  # gun-local (unrotated, metres) -> camera space
-        return grip + Matrix.Rotation(yaw, 3, "Z") @ Vector(v)
-
-    slide_names = ("Plane.007", "Plane.010", "Plane.012", "Cylinder.001", "Plane.011")
-    mag_names = ("Circle", "Plane.002")
-    slide_objs = [o for o in parts if o.name in slide_names]
-    mag_objs = [o for o in parts if o.name in mag_names]
-    body_objs = [o for o in parts if o.name not in slide_names + mag_names]
-    slide = join(slide_objs, "Slide")
-    mag = join(mag_objs, "Mag")
-    body = join(body_objs, "Frame")
-
-    glove, sleeve = gloves()
-    hand_r = fist("HandR", g((0.0, -0.04, -0.038)), glove, rot=(-18, 0, 0), scale=(1.05, 1.0, 1.35))
-    thumb = capsule("ThumbR", 0.009, 0.05, glove)
-    thumb.matrix_world = Matrix.Translation(g((-0.016, -0.012, -0.008))) @ Matrix.Rotation(math.radians(10), 4, "X")
-    apply_all(thumb)
-    arm_r = limb_between("ArmR", g((0.0, -0.075, -0.06)), (0.27, -0.12, -0.42), 0.042, sleeve)
-    hand_l = fist("HandL", g((-0.035, -0.03, -0.075)), glove, rot=(-10, 0, 25))
-    arm_l = limb_between("ArmL", g((-0.035, -0.06, -0.09)), (-0.2, -0.1, -0.45), 0.042, sleeve)
-    mag_new = mag.copy()
-    mag_new.data = mag.data.copy()
-    mag_new.name = "MagNew"
-    bpy.context.scene.collection.objects.link(mag_new)
-
-    arm = make_armature([
-        ("gun", grip, None),
-        ("slide", grip, "gun"),
-        ("mag", grip, "gun"),
-        ("hand_l", g((-0.035, -0.03, -0.075)), "gun"),
-        ("mag_new", g((-0.035, -0.03, -0.075)), "hand_l"),
-        ("muzzle", g((0.0, 0.15, 0.030)), "gun"),
-        ("eject", g((0.012, 0.03, 0.05)), "gun"),
-        ("sight", g((0.0, 0.02, 0.063)), "gun"),
-    ])
-    for o, b in [(body, "gun"), (hand_r, "gun"), (thumb, "gun"), (arm_r, "gun"), (slide, "slide"),
-                 (mag, "mag"), (hand_l, "hand_l"), (arm_l, "hand_l"), (mag_new, "mag_new")]:
-        bind(o, arm, b)
-
-    SLIDE = (0, -0.047, 0)
-    AWAY = (-0.12, -0.25, -0.35)  # support hand parked off screen
-
-    def base(c, frames):
-        c.key("hand_l", frames[0], loc=AWAY, scale=0.0)
-        c.key("mag_new", frames[0], scale=0.0)
-
-    c = Clip(arm, "idle")
-    base(c, [0])
-    c.hold_all([0, 1])
-    c.finish()
-
-    for name, keep_back in (("fire", False), ("fire_last", True)):
-        c = Clip(arm, name)
-        base(c, [0])
-        c.hold_all([0])
-        c.key("slide", 0, loc=(0, 0, 0))
-        c.key("slide", 1, loc=SLIDE)
-        c.key("slide", 3, loc=SLIDE if keep_back else (0, 0, 0))
-        c.key("slide", 8, loc=SLIDE if keep_back else (0, 0, 0))
-        c.key("gun", 0, loc=(0, 0, 0), rot=(0, 0, 0))
-        c.key("gun", 1, loc=(0, -0.035, 0.012), rot=(16, 0, -2))
-        c.key("gun", 4, loc=(0, -0.012, 0.004), rot=(5, 0, -1))
-        c.key("gun", 8, loc=(0, 0, 0), rot=(0, 0, 0))
-        c.finish()
-
-    for name, empty in (("reload", False), ("reload_empty", True)):
-        c = Clip(arm, name)
-        c.hold_all([0])
-        tilt = dict(loc=(-0.05, 0.0, 0.035), rot=(14, -24, 6))
-        c.key("gun", 0, loc=(0, 0, 0), rot=(0, 0, 0))
-        c.key("gun", 7, **tilt)
-        c.key("gun", 34, **tilt)
-        c.key("gun", 40, loc=(-0.02, 0.0, 0.02), rot=(8, -10, 2))
-        c.key("gun", 45, loc=(0, 0, 0), rot=(0, 0, 0))
-        c.key("slide", 0, loc=SLIDE if empty else (0, 0, 0))
-        c.key("slide", 36, loc=SLIDE if empty else (0, 0, 0))
-        c.key("slide", 38, loc=(0, 0, 0))
-        # old magazine drops out
-        c.key("mag", 0, loc=(0, 0, 0), scale=1.0)
-        c.key("mag", 8, loc=(0, 0, 0))
-        c.key("mag", 14, loc=(0, -0.01, -0.28))
-        c.step("mag", 14, scale=0.0)
-        c.step("mag", 28, scale=1.0)
-        c.key("mag", 28, loc=(0, 0, 0))
-        # support hand brings the new one
-        c.step("hand_l", 0, loc=AWAY, scale=0.0)
-        c.step("hand_l", 10, loc=AWAY, scale=1.0)
-        c.key("hand_l", 22, loc=(0.0, 0.0, -0.09))
-        c.key("hand_l", 27, loc=(0.0, 0.0, -0.01))
-        c.key("hand_l", 29, loc=(0.0, 0.0, -0.005))
-        c.key("hand_l", 38, loc=(-0.04, -0.03, -0.06))
-        c.key("hand_l", 44, loc=AWAY)
-        c.step("hand_l", 45, scale=0.0)
-        c.step("mag_new", 0, scale=1.0)
-        c.step("mag_new", 28, scale=0.0)
-        c.finish()
-
-    c = Clip(arm, "draw")
-    base(c, [0])
-    c.hold_all([0])
-    c.key("gun", 0, loc=(0, -0.05, -0.2), rot=(-55, 0, 20))
-    c.key("gun", 12, loc=(0, 0, 0), rot=(0, 0, 0))
-    c.finish()
-
-    preview("m1911", [("idle", 0), ("fire", 1), ("reload", 20), ("reload", 28)])
-    export(os.path.join(OUT_DIR, "m1911_fp.glb"))
 
 
 # ---------------------------------------------------------------- M500
@@ -511,6 +383,5 @@ def build_m500():
 
 
 if __name__ == "__main__":
-    build_m1911()
     if USDZ:
         build_m500()

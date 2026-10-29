@@ -1,3 +1,5 @@
 .godot/
 build/
 *.tmp
+tools/model_sources/
+__pycache__/

@@ -15,7 +15,6 @@ var _downed_seen := 0
 
 
 func _initialize() -> void:
-	root.get_node("Settings").level = "trenches"
 	change_scene_to_file("res://scenes/game.tscn")
 
 
@@ -54,11 +53,12 @@ func _process(_delta: float) -> bool:
 		_downed_seen = maxi(_downed_seen, downed)
 		print("t=%.0f alive %s tickets %s states %s downed %d kills %d" % [t, teams, game.tickets, counts, downed, game.kills])
 		# look at the fight: from the player's trench towards the enemy, then from above
-		var cam_pos: Vector3 = [Vector3(2, -0.6, 27), Vector3(0, 12, 34)][_shot_k % 2]
+		var sp: Vector3 = game.house.player_spawn.origin
+		var cam_pos: Vector3 = [sp + Vector3(0, 1.3, -0.2), sp + Vector3(0, 14, 8), Vector3(97, 1.6, 8), Vector3(97, 6.6, 18.8)][_shot_k % 4]
 		p.global_position = cam_pos - Vector3(0, 1.62, 0)
 		p.velocity = Vector3.ZERO
-		p.yaw = 0.0
-		p.pitch = -0.05 if _shot_k % 2 == 0 else -0.45
+		p.yaw = 0.0 if _shot_k % 4 != 2 else PI
+		p.pitch = [-0.05, -0.45, 0.1, -0.1][_shot_k % 4]
 		p.rotation.y = p.yaw
 		p.head.rotation = Vector3(p.pitch, 0, 0)
 	if t >= _next_report - 4.9 and t < _next_report - 4.8 and _shot_k < 12:

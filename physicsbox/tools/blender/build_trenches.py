@@ -1,19 +1,26 @@
-"""Builds the war map: two trench lines facing each other across a cratered
-no-man's land, exported as assets/maps/trenches.glb.
+"""Builds the war map: a front several hundred metres long - two trench
+systems facing each other across a cratered no-man's land, a town sector on
+the east flank with two five-storey panel blocks (like in the user's video)
+on either side of the line, abandoned villages behind both lines and ruins
+in no-man's land. Exported as assets/maps/trenches.glb.
 
-Run:  blender -b --python tools/blender/build_trenches.py
+Run (after build_buildings.py):  blender -b --python tools/blender/build_trenches.py
 
 Everything is laid out in the game's frame (Godot axes: +Y up; the allied
 line is at +Z, the enemy at -Z). Objects in the glb:
-  Terrain           heightfield with the trenches, craters and exits cut in
-                    (vertex colours darken the trench floors and craters)
-  Planks, Posts     plank revetments lining the trench walls
-  Backing           earth walls (bare stretches and the earth behind planks)
-  Duckboards, Steps walkway boards and exit steps
-  Logs, Mounds      roofed dugout stretches
-  Sandbags, Wire    sandbag rows, barbed wire fences
+  Terrain_<i>_<j>   heightfield chunks with the trenches, craters, exits,
+                    building pads and tracks (vertex colours darken trench
+                    floors, craters and roads); finer where there is detail,
+                    with skirts hiding the seams
+  Planks_*, Posts_* plank revetments lining the trench walls (by map cell)
+  Backing_*         earth walls (bare stretches and the earth behind planks)
+  Duckboards_*, Steps_*   walkway boards and exit steps
+  Logs_*, Mounds_*  roofed dugout stretches
+  Sandbags_*, Wire_*, WireStakes_*
   Tree*             dead trees (linked copies of a few variants)
-  C_Walls, C_Roofs  collision-only meshes (the game makes them static bodies)
+  C_*               collision-only meshes (the game makes them static bodies)
+  B_<Proto>_<side>_<k>    empties: where buildings.glb prototypes stand
+                    (side A / B / N: whose positions their windows are)
   SpawnA_*, SpawnB_*, PostA_*, PostB_*   empties: reinforcement points and
                     firing positions of each side; Player = player start
 """
@@ -32,8 +39,9 @@ random.seed(1916)
 rng = np.random.default_rng(1916)
 
 C = Matrix(((1, 0, 0), (0, 0, -1), (0, 1, 0)))  # Godot -> Blender axes
-X0, X1, Z0, Z1 = -46.0, 46.0, -52.0, 52.0
-STEP = 0.5
+X0, X1, Z0, Z1 = -150.0, 150.0, -170.0, 170.0
+CHX, CHZ = 30.0, 34.0  # terrain chunk size
+CELL = 60.0  # furniture meshes are split into cells this big (culling)
 WALL = 0.92        # half width of the trench floor (inner face of the walls)
 WALL_T = 0.8       # wall thickness (hides the terrain slope behind it)
 FLAT = WALL + 0.3  # the floor stays flat this far out (under the wall), so it is level wall to wall
@@ -47,43 +55,75 @@ def gv(x, y, z):
 
 # ---------------------------------------------------------------- layout
 
-def mirror(points, dx=0.0):
-    return [(x + dx, -z) for x, z in points]
+def zigzag(xa, xb, step, z, amp):
+    pts = []
+    x = xa
+    k = 0
+    while x < xb + 0.1:
+        pts.append((round(x, 2), round(z + (amp if k % 2 else -amp) * random.uniform(0.5, 1.0), 2)))
+        x += step * random.uniform(0.85, 1.15)
+        k += 1
+    pts[-1] = (xb, pts[-1][1])
+    return pts
 
 
-FRONT_A = [(-44, 27), (-32, 24), (-21, 29), (-10, 25), (0, 30), (10, 25.5), (20, 29.5), (31, 24), (44, 27)]
-REAR_A = [(-40, 44), (-24, 41.5), (-8, 45), (8, 42), (24, 45), (42, 43)]
-COMMS_A = [
-    [(-32, 24), (-31, 33), (-24, 41.5)],
-    [(0, 30), (2, 37), (-8, 45)],
-    [(31, 24), (30, 34), (24, 45)],
-]
+def nearest(pts, x):
+    return min(pts, key=lambda q: abs(q[0] - x))
+
+
 TRENCHES = []  # [points, depths]
-for side, (front, rear, comms) in enumerate([
-        (FRONT_A, REAR_A, COMMS_A),
-        (mirror(FRONT_A, 3.0), mirror(REAR_A, -2.0), [mirror(c, 3.0 if i < 1 else 0.0) for i, c in enumerate(COMMS_A)])]):
+FRONTS = []
+REARS = []
+for side, sgn in ((0, 1.0), (1, -1.0)):
+    front = zigzag(-142.0, 42.0, 11.0, sgn * 29.0, 2.6)
+    rear = zigzag(-138.0, 38.0, 17.0, sgn * 50.0, 2.0)
+    FRONTS.append(len(TRENCHES))
     TRENCHES.append([front, [FRONT_D] * len(front)])
+    REARS.append(len(TRENCHES))
     TRENCHES.append([rear, [DEEP_D] * len(rear)])
-    for c in comms:
-        TRENCHES.append([c, [FRONT_D] + [DEEP_D] * (len(c) - 1)])
-# the enemy comm trenches must start on the enemy front line: re-anchor them
-ef = TRENCHES[5][0]
-for k, t in enumerate(TRENCHES[7:10]):
-    p = t[0]
-    p[0] = min(ef, key=lambda q: (q[0] - p[0][0]) ** 2 + (q[1] - p[0][1]) ** 2)
-    p[-1] = min(TRENCHES[6][0], key=lambda q: (q[0] - p[-1][0]) ** 2 + (q[1] - p[-1][1]) ** 2)
+    for x in (-118.0, -74.0, -31.0, 14.0):
+        f = nearest(front, x)
+        r = nearest(rear, x + random.uniform(-6, 6))
+        mid = ((f[0] + r[0]) / 2 + random.uniform(-4, 4), (f[1] + r[1]) / 2)
+        TRENCHES.append([[f, mid, r], [FRONT_D, DEEP_D, DEEP_D]])
 
 # exits: from the front trench up into no-man's land (towards the enemy)
 EXITS = []
-for side, front in ((0, TRENCHES[0][0]), (1, TRENCHES[5][0])):
+for side in (0, 1):
+    front = TRENCHES[FRONTS[side]][0]
     toward = -1.0 if side == 0 else 1.0
-    for k in (1, 3, 5, 7):
+    for k in range(1, len(front) - 1, 2):
         a, b = front[k], front[k + 1]
         m = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
         EXITS.append([m, (m[0], m[1] + toward * 4.4), FRONT_D])
 
 # roofed dugout stretches: [trench index, segment, t0, t1]
-ROOFS = [[1, 1, 0.3, 0.6], [1, 3, 0.4, 0.7], [6, 2, 0.3, 0.6], [6, 4, 0.2, 0.5]]
+ROOFS = []
+for side in (0, 1):
+    n = len(TRENCHES[REARS[side]][0])
+    for seg in range(1, n - 1, 3):
+        ROOFS.append([REARS[side], seg, 0.3, 0.6])
+
+# buildings (prototypes from buildings.glb): name, x, z, yaw, half extents
+# (x, z-front, z-back in local axes) for the ground pad
+EXTENT = {"Panel5": (19.0, -2.5, 13.0), "HouseBrick": (4.8, -5.2, 4.6), "HouseWood": (4.2, -5.5, 3.8),
+          "Ruin2": (7.8, -6.5, 5.2), "Garages": (10.8, -4.5, 3.6), "CarWreck": (1.2, -2.4, 2.4)}
+BUILDINGS = [
+    ("Panel5", 97.0, 16.0, 0.0), ("Panel5", 97.0, -16.0, math.pi),
+    ("Garages", 61.0, 0.0, math.pi / 2), ("Ruin2", 133.0, 1.0, -math.pi / 2),
+    ("HouseBrick", 68.0, -47.0, math.pi), ("HouseBrick", 126.0, 47.0, 0.1),
+    ("CarWreck", 88.0, 5.0, 0.4), ("CarWreck", 108.0, -4.0, 2.1), ("CarWreck", 77.0, -9.0, 1.2),
+    ("Ruin2", -55.0, 2.0, 0.15), ("HouseBrick", -6.0, -3.0, math.pi), ("HouseWood", -101.0, 4.0, 0.5),
+    ("HouseWood", -122.0, 86.0, 0.3), ("HouseBrick", -95.0, 97.0, -0.2), ("HouseWood", -62.0, 82.0, 0.1),
+    ("Ruin2", -22.0, 102.0, 0.0), ("HouseBrick", 24.0, 86.0, 0.4), ("Garages", 62.0, 96.0, 0.0),
+    ("HouseWood", 98.0, 92.0, -0.3), ("CarWreck", 40.0, 70.0, 0.9),
+    ("HouseWood", -116.0, -90.0, math.pi + 0.2), ("HouseBrick", -71.0, -86.0, math.pi), ("Ruin2", -26.0, -104.0, math.pi),
+    ("HouseWood", 19.0, -91.0, math.pi - 0.3), ("HouseBrick", 58.0, -96.0, math.pi + 0.2),
+    ("Garages", 100.0, -94.0, math.pi), ("CarWreck", -40.0, -70.0, 2.5),
+]
+TOWN = (52.0, 146.0, -62.0, 62.0)  # flat ground of the town sector
+ROADS = [[(-148.0, 64.0), (148.0, 64.0)], [(-148.0, -64.0), (148.0, -64.0)],
+         [(97.0, 64.0), (97.0, 30.0)], [(97.0, -64.0), (97.0, -30.0)], [(55.0, 0.0), (140.0, 0.0)]]
 
 
 # ---------------------------------------------------------------- geometry maths
@@ -113,31 +153,90 @@ def trench_field(px, pz):
     return best, depth
 
 
+def pad_local(px, pz, b):
+    """Point in a building's local axes."""
+    _n, bx, bz, yaw = b
+    dx, dz = px - bx, pz - bz
+    c, s_ = math.cos(yaw), math.sin(yaw)
+    # Godot yaw about +Y: local x = dx cos - dz sin ... (inverse rotation)
+    return dx * c - dz * s_, dx * s_ + dz * c
+
+
+def in_pad(x, z, margin=1.5):
+    for b in BUILDINGS:
+        lx, lz = pad_local(x, z, b)
+        ex, ez0, ez1 = EXTENT[b[0]]
+        if abs(lx) < ex + margin and ez0 - margin < lz < ez1 + margin:
+            return True
+    return False
+
+
+def in_town(x, z, margin=0.0):
+    return TOWN[0] - margin < x < TOWN[1] + margin and TOWN[2] - margin < z < TOWN[3] + margin
+
+
 CRATERS = []
-while len(CRATERS) < 34:
-    x, z = random.uniform(-42, 42), random.uniform(-20, 20)
-    if all(math.hypot(x - c[0], z - c[1]) > 4.5 for c in CRATERS):
+while len(CRATERS) < 170:
+    x, z = random.uniform(-146, 50), random.uniform(-22, 22)
+    if all(math.hypot(x - c[0], z - c[1]) > 4.0 for c in CRATERS) and not in_pad(x, z, 3.0):
         CRATERS.append((x, z, random.uniform(1.4, 3.4), random.uniform(0.5, 1.3)))
-for _ in range(10):  # shell holes behind the lines too
-    x, z = random.uniform(-42, 42), random.choice([random.uniform(33, 40), random.uniform(-40, -33)])
-    CRATERS.append((x, z, random.uniform(1.2, 2.4), random.uniform(0.4, 0.9)))
+while len(CRATERS) < 260:  # shell holes behind the lines and in the town too
+    x, z = random.uniform(-146, 146), random.uniform(-160, 160)
+    if abs(z) < 22 and x < 50:
+        continue
+    if in_pad(x, z, 3.0) or any(math.hypot(x - c[0], z - c[1]) < 4.0 for c in CRATERS):
+        continue
+    CRATERS.append((x, z, random.uniform(1.2, 2.6), random.uniform(0.4, 0.9)))
 
 
-def base_height(px, pz):
+def town_mask(px, pz):
+    """1 inside the flat town ground, fading out over 12 m."""
+    dx = np.maximum(np.maximum(TOWN[0] - px, px - TOWN[1]), 0.0)
+    dz = np.maximum(np.maximum(TOWN[2] - pz, pz - TOWN[3]), 0.0)
+    return np.clip(1.0 - np.hypot(dx, dz) / 12.0, 0.0, 1.0)
+
+
+def base_height(px, pz, pads=True):
+    px = np.asarray(px, dtype=float)
+    pz = np.asarray(pz, dtype=float)
     h = (0.18 * np.sin(px * 0.21 + 1.3) * np.cos(pz * 0.17) + 0.12 * np.sin(px * 0.53 + pz * 0.41)
          + 0.06 * np.sin(px * 1.3 - pz * 0.9))
+    # broad rolling ground away from the trench lines and the town
+    h = h + (1.1 * np.sin(px * 0.021 + 0.4) * np.cos(pz * 0.018 - 0.3) + 0.6 * np.sin(px * 0.047 - pz * 0.033)) \
+        * np.clip((np.abs(pz) - 60.0) / 30.0, 0.0, 1.0)
+    h = h * (1.0 - town_mask(px, pz) * 0.85)
     for cx, cz, r, d in CRATERS:
+        if np.ndim(px) and (np.min(np.abs(px - cx)) > r + 2.5 or np.min(np.abs(pz - cz)) > r + 2.5):
+            continue
         rr = np.hypot(px - cx, pz - cz)
         bowl = np.where(rr < r, -d * (1 - (rr / r) ** 2), 0.0)
         rim = 0.22 * d * np.exp(-((rr - r) / 0.7) ** 2)
         h = h + bowl + rim
     # spoil heaps behind each front line (the parados)
-    for pts, toward in ((TRENCHES[0][0], -1.0), (TRENCHES[5][0], 1.0)):
+    for pts, toward in ((TRENCHES[FRONTS[0]][0], -1.0), (TRENCHES[FRONTS[1]][0], 1.0)):
         for i in range(len(pts) - 1):
             d, t = seg_dist(px, pz, pts[i], pts[i + 1])
             behind = (pz - (pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t)) * -toward > 0
             h = h + np.where(behind, 0.35 * np.exp(-((d - 2.3) / 0.8) ** 2), 0.0)
+    # level pads under the buildings
+    for b in (BUILDINGS if pads else ()):
+        ex, ez0, ez1 = EXTENT[b[0]]
+        _n, bx, bz, yaw = b
+        if np.ndim(px) and (np.min(np.abs(px - bx)) > ex + ez1 + 8 or np.min(np.abs(pz - bz)) > ex + ez1 + 8):
+            continue
+        c, s_ = math.cos(yaw), math.sin(yaw)
+        lx = (px - bx) * c - (pz - bz) * s_
+        lz = (px - bx) * s_ + (pz - bz) * c
+        ox = np.maximum(np.abs(lx) - ex, 0.0)
+        oz = np.maximum(np.maximum(ez0 - lz, lz - ez1), 0.0)
+        w = np.clip(1.0 - np.hypot(ox, oz) / 4.0, 0.0, 1.0)
+        h = h * (1.0 - w) + PAD_Y.get(b, 0.0) * w
     return h
+
+
+PAD_Y = {}
+for _b in BUILDINGS:
+    PAD_Y[_b] = float(base_height(np.array(_b[1]), np.array(_b[2]), pads=False))
 
 
 def height(px, pz):
@@ -157,6 +256,25 @@ def height(px, pz):
 
 
 # ---------------------------------------------------------------- mesh helpers
+
+class Cells:
+    """Several MeshBuilders of one kind, one per map cell (so the game can
+    cull what is out of view): name_<i>_<j>."""
+
+    def __init__(self, name, material):
+        self.name = name
+        self.material = material
+        self.cells = {}
+
+    def at(self, x, z):
+        key = (int((x - X0) // CELL), int((z - Z0) // CELL))
+        if key not in self.cells:
+            self.cells[key] = MeshBuilder("%s_%d_%d" % (self.name, key[0], key[1]), self.material)
+        return self.cells[key]
+
+    def finish(self, smooth=False):
+        return [mb.finish(smooth) for mb in self.cells.values()]
+
 
 class MeshBuilder:
     def __init__(self, name, material):
@@ -203,34 +321,92 @@ def material(name, color):
 
 # ---------------------------------------------------------------- terrain
 
+def near_trench(x0, x1, z0, z1, pad):
+    for pts, _d in TRENCHES:
+        for i in range(len(pts) - 1):
+            (ax, az), (bx, bz) = pts[i], pts[i + 1]
+            if max(ax, bx) + pad > x0 and min(ax, bx) - pad < x1 and max(az, bz) + pad > z0 and min(az, bz) - pad < z1:
+                # closer check: distance from the segment to the chunk centre
+                cx, cz = (x0 + x1) / 2, (z0 + z1) / 2
+                d, _t = seg_dist(np.array(cx), np.array(cz), (ax, az), (bx, bz))
+                if float(d) < math.hypot(x1 - x0, z1 - z0) / 2 + pad:
+                    return True
+    return False
+
+
+def chunk_step(x0, x1, z0, z1):
+    if near_trench(x0, x1, z0, z1, 3.0):
+        return 0.5
+    for b in BUILDINGS:
+        if x0 - 20 < b[1] < x1 + 20 and z0 - 20 < b[2] < z1 + 20:
+            return 1.0
+    if any(x0 - 4 < c[0] < x1 + 4 and z0 - 4 < c[1] < z1 + 4 for c in CRATERS):
+        return 1.0
+    return 2.0
+
+
+def road_dist(px, pz):
+    best = np.full(np.shape(px), 1e9)
+    for a, b in ROADS:
+        d, _t = seg_dist(px, pz, a, b)
+        best = np.minimum(best, d)
+    return best
+
+
 def build_terrain(mat):
-    xs = np.arange(X0, X1 + 1e-6, STEP)
-    zs = np.arange(Z0, Z1 + 1e-6, STEP)
-    gx, gz = np.meshgrid(xs, zs)
-    h = height(gx, gz)
-    d, dep = trench_field(gx, gz)
-    nx, nz = len(xs), len(zs)
-    me = bpy.data.meshes.new("Terrain")
-    verts = [tuple(gv(gx[j, i], h[j, i], gz[j, i])) for j in range(nz) for i in range(nx)]
-    faces = []
-    for j in range(nz - 1):
-        for i in range(nx - 1):
-            a = j * nx + i
-            faces.append((a, a + nx, a + nx + 1, a + 1))  # counter-clockwise from above
-    me.from_pydata(verts, [], faces)
-    me.materials.append(mat)
-    # darker, wetter low ground (trench floors, crater bottoms)
-    col = me.color_attributes.new("Col", "BYTE_COLOR", "POINT")
-    low = np.clip(-h.ravel() / 1.2, 0, 1)
-    dry = 0.5 + 0.5 * np.clip(0.6 + 0.25 * np.sin(gx * 0.31) * np.cos(gz * 0.23), 0, 1).ravel()
-    for k, c in enumerate(col.data):
-        v = (0.95 - 0.35 * low[k]) * (0.85 + 0.15 * dry[k])
-        c.color = (v, v * (0.97 + 0.03 * dry[k]), v * 0.95, 1.0)
-    ob = bpy.data.objects.new("Terrain", me)
-    bpy.context.scene.collection.objects.link(ob)
-    for p in me.polygons:
-        p.use_smooth = True
-    return ob
+    """Terrain in chunks; each chunk's grid step depends on what is in it.
+    A skirt hangs from every edge so the seams between steps never open."""
+    nx = int(round((X1 - X0) / CHX))
+    nz = int(round((Z1 - Z0) / CHZ))
+    total = 0
+    for i in range(nx):
+        for j in range(nz):
+            x0, z0 = X0 + i * CHX, Z0 + j * CHZ
+            x1, z1 = x0 + CHX, z0 + CHZ
+            step = chunk_step(x0, x1, z0, z1)
+            xs = np.linspace(x0, x1, int(round(CHX / step)) + 1)
+            zs = np.linspace(z0, z1, int(round(CHZ / step)) + 1)
+            gx, gz = np.meshgrid(xs, zs)
+            h = height(gx, gz)
+            cnx, cnz = len(xs), len(zs)
+            verts = [tuple(gv(gx[q, k], h[q, k], gz[q, k])) for q in range(cnz) for k in range(cnx)]
+            faces = []
+            for q in range(cnz - 1):
+                for k in range(cnx - 1):
+                    a = q * cnx + k
+                    faces.append((a, a + cnx, a + cnx + 1, a + 1))
+            # skirts: the border loop again, 0.8 m lower, faced outwards
+            border = [(0, k) for k in range(cnx)] + [(q, cnx - 1) for q in range(1, cnz)] \
+                + [(cnz - 1, k) for k in range(cnx - 2, -1, -1)] + [(q, 0) for q in range(cnz - 2, 0, -1)]
+            base = len(verts)
+            for q, k in border:
+                verts.append(tuple(gv(gx[q, k], h[q, k] - 0.8, gz[q, k])))
+            nb = len(border)
+            for m in range(nb):
+                q0, k0 = border[m]
+                q1, k1 = border[(m + 1) % nb]
+                faces.append((q0 * cnx + k0, q1 * cnx + k1, base + (m + 1) % nb, base + m))
+            me = bpy.data.meshes.new("Terrain_%d_%d" % (i, j))
+            me.from_pydata(verts, [], faces)
+            me.materials.append(mat)
+            col = me.color_attributes.new("Col", "BYTE_COLOR", "POINT")
+            hh = np.concatenate([h.ravel(), np.array([h[q, k] for q, k in border])])
+            gxx = np.concatenate([gx.ravel(), np.array([gx[q, k] for q, k in border])])
+            gzz = np.concatenate([gz.ravel(), np.array([gz[q, k] for q, k in border])])
+            low = np.clip(-hh / 1.2, 0, 1)
+            dry = 0.5 + 0.5 * np.clip(0.6 + 0.25 * np.sin(gxx * 0.31) * np.cos(gzz * 0.23), 0, 1)
+            road = np.clip(1.0 - (road_dist(gxx, gzz) - 1.6) / 1.4, 0, 1)
+            town = town_mask(gxx, gzz)
+            for k, c in enumerate(col.data):
+                v = (0.95 - 0.35 * low[k]) * (0.85 + 0.15 * dry[k]) * (1.0 - 0.3 * road[k]) * (1.0 - 0.12 * town[k])
+                c.color = (v, v * (0.97 + 0.03 * dry[k]), v * (0.95 + 0.04 * town[k]), 1.0)
+            ob = bpy.data.objects.new(me.name, me)
+            bpy.context.scene.collection.objects.link(ob)
+            # (the game smooths the normals itself on import)
+            for poly in me.polygons:
+                poly.use_smooth = True
+            total += len(verts)
+    print("terrain verts", total)
 
 
 # ---------------------------------------------------------------- trench furniture
@@ -252,11 +428,11 @@ def in_corridor(x, z, skip=None, margin=1.1):
 
 
 def build_walls(m_planks, m_backing, m_post, m_wire):
-    planks = MeshBuilder("Planks", m_planks)
-    backing = MeshBuilder("Backing", m_backing)
-    posts = MeshBuilder("Posts", m_post)
-    col = MeshBuilder("C_Walls", m_backing)
-    boards = MeshBuilder("Duckboards", m_planks)
+    planks = Cells("Planks", m_planks)
+    backing = Cells("Backing", m_backing)
+    posts = Cells("Posts", m_post)
+    col = Cells("C_Walls", m_backing)
+    boards = Cells("Duckboards", m_planks)
     for ti, (pts, dep) in enumerate(TRENCHES):
         for i in range(len(pts) - 1):
             ax, az = pts[i]
@@ -289,8 +465,8 @@ def build_walls(m_planks, m_backing, m_post, m_wire):
                             x, z = ax + ux * e + nx_ * o, az + uz * e + nz_ * o
                             y = float(base_height(np.array(x), np.array(z))) + (0.03 if o == WALL else -0.02)
                             corners += [(x, y, z), (x, -D - 0.05, z)]
-                    col.hull(corners)
-                    backing.hull(corners)
+                    col.at(cx, cz).hull(corners)
+                    backing.at(cx, cz).hull(corners)
                     if not plank_run:
                         continue
                     fx = ax + ux * s + nx_ * (WALL + 0.015)
@@ -299,27 +475,27 @@ def build_walls(m_planks, m_backing, m_post, m_wire):
                     while y < top - 0.08:
                         if random.random() > 0.05:  # the odd board missing
                             sag = random.uniform(-0.015, 0.015)
-                            planks.box((fx, y + sag, fz), (piece - 0.03, 0.17, 0.03), yaw, random.uniform(-0.02, 0.02))
+                            planks.at(fx, fz).box((fx, y + sag, fz), (piece - 0.03, 0.17, 0.03), yaw, random.uniform(-0.02, 0.02))
                         y += 0.2
                     px = ax + ux * (s - piece / 2) + nx_ * (WALL + 0.05)
                     pz = az + uz * (s - piece / 2) + nz_ * (WALL + 0.05)
-                    posts.cyl((px, -D - 0.1, pz), (px, top + 0.12, pz), 0.06)
+                    posts.at(px, pz).cyl((px, -D - 0.1, pz), (px, top + 0.12, pz), 0.06)
             # duckboards along the floor
             s = 0.2
             while s < L - 0.1:
                 cx, cz = ax + ux * s, az + uz * s
                 y = -(dep[i] + (dep[i + 1] - dep[i]) * s / L) + 0.035
-                boards.box((cx, y, cz), (0.13, 0.03, 1.15), yaw)
+                boards.at(cx, cz).box((cx, y, cz), (0.13, 0.03, 1.15), yaw)
                 s += 0.2
             for off in (-0.42, 0.42):
                 cx, cz = ax + ux * L / 2 - uz * off, az + uz * L / 2 + ux * off
                 y = -(dep[i] + dep[i + 1]) / 2 + 0.01
-                boards.box((cx, y, cz), (L - 0.2, 0.04, 0.07), yaw)
-    return planks.finish(), backing.finish(), posts.finish(), col.finish(), boards.finish()
+                boards.at(cx, cz).box((cx, y, cz), (L - 0.2, 0.04, 0.07), yaw)
+    planks.finish(), backing.finish(), posts.finish(), col.finish(), boards.finish()
 
 
 def build_exits(m_planks):
-    steps = MeshBuilder("Steps", m_planks)
+    steps = Cells("Steps", m_planks)
     for a, b, dep in EXITS:
         L = math.hypot(b[0] - a[0], b[1] - a[1])
         ux, uz = (b[0] - a[0]) / L, (b[1] - a[1]) / L
@@ -328,15 +504,15 @@ def build_exits(m_planks):
         while s < L - 0.2:
             x, z = a[0] + ux * s, a[1] + uz * s
             y = float(height(np.array(x), np.array(z))) + 0.04
-            steps.box((x, y, z), (0.24, 0.05, 1.2), yaw)
+            steps.at(x, z).box((x, y, z), (0.24, 0.05, 1.2), yaw)
             s += 0.38
     return steps.finish()
 
 
 def build_roofs(m_logs, m_mud):
-    logs = MeshBuilder("Logs", m_logs)
-    mounds = MeshBuilder("Mounds", m_mud)
-    col = MeshBuilder("C_Roofs", m_mud)
+    logs = Cells("Logs", m_logs)
+    mounds = Cells("Mounds", m_mud)
+    col = Cells("C_Roofs", m_mud)
     for ti, seg, t0, t1 in ROOFS:
         pts = TRENCHES[ti][0]
         a, b = pts[seg], pts[seg + 1]
@@ -349,21 +525,21 @@ def build_roofs(m_logs, m_mud):
             top = float(base_height(np.array(cx), np.array(cz))) + 0.14
             r = random.uniform(0.1, 0.13)
             w = WALL + 0.6
-            logs.cyl((cx + uz * w, top, cz - ux * w), (cx - uz * w, top + random.uniform(-0.03, 0.03), cz + ux * w), r, 8)
+            logs.at(cx, cz).cyl((cx + uz * w, top, cz - ux * w), (cx - uz * w, top + random.uniform(-0.03, 0.03), cz + ux * w), r, 8)
             s += 0.25
         mid = (t0 + t1) / 2 * L
         cx, cz = a[0] + ux * mid, a[1] + uz * mid
         top = float(base_height(np.array(cx), np.array(cz))) + 0.14
         span = (t1 - t0) * L
-        mounds.box((cx, top + 0.2, cz), (span, 0.3, 2.6), yaw)
-        mounds.box((cx, top + 0.38, cz), (span - 0.4, 0.2, 1.9), yaw)
-        col.box((cx, top + 0.14, cz), (span, 0.5, 3.2), yaw)
-    return logs.finish(), mounds.finish(True), col.finish()
+        mounds.at(cx, cz).box((cx, top + 0.2, cz), (span, 0.3, 2.6), yaw)
+        mounds.at(cx, cz).box((cx, top + 0.38, cz), (span - 0.4, 0.2, 1.9), yaw)
+        col.at(cx, cz).box((cx, top + 0.14, cz), (span, 0.5, 3.2), yaw)
+    logs.finish(), mounds.finish(True), col.finish()
 
 
 def build_sandbags(m_bag):
-    bags = MeshBuilder("Sandbags", m_bag)
-    for pts, toward in ((TRENCHES[0][0], -1.0), (TRENCHES[5][0], 1.0)):
+    bags = Cells("Sandbags", m_bag)
+    for pts, toward in ((TRENCHES[FRONTS[0]][0], -1.0), (TRENCHES[FRONTS[1]][0], 1.0)):
         for i in range(1, len(pts) - 1, 2):
             a, b = pts[i], pts[i + 1]
             L = math.hypot(b[0] - a[0], b[1] - a[1])
@@ -378,44 +554,43 @@ def build_sandbags(m_bag):
                     x = a[0] + ux * s + nx_ * (WALL + 0.45)
                     z = a[1] + uz * s + nz_ * (WALL + 0.45)
                     y = float(base_height(np.array(x), np.array(z))) + 0.09 + row * 0.16
-                    bags.box((x, y, z), (0.48, 0.16, 0.3), yaw + random.uniform(-0.08, 0.08))
+                    bags.at(x, z).box((x, y, z), (0.48, 0.16, 0.3), yaw + random.uniform(-0.08, 0.08))
                     s += 0.5
-    ob = bags.finish()
-    mod = ob.modifiers.new("bevel", "BEVEL")
-    mod.width = 0.05
-    mod.segments = 2
-    bpy.context.view_layer.objects.active = ob
-    bpy.ops.object.modifier_apply(modifier="bevel")
-    return ob
+    for ob in bags.finish():
+        mod = ob.modifiers.new("bevel", "BEVEL")
+        mod.width = 0.05
+        mod.segments = 2
+        bpy.context.view_layer.objects.active = ob
+        bpy.ops.object.modifier_apply(modifier="bevel")
 
 
 def build_wire(m_post, m_wire):
-    stakes = MeshBuilder("WireStakes", m_post)
-    wire = MeshBuilder("Wire", m_wire)
-    for z0 in (-13.0, 13.0):
-        x = -42.0
+    stakes = Cells("WireStakes", m_post)
+    wire = Cells("Wire", m_wire)
+    for z0 in (-14.0, 14.0):
+        x = -146.0
         prev = None
-        while x < 42.0:
+        while x < 48.0:
             z = z0 + random.uniform(-1.0, 1.0)
-            if any(math.hypot(x - c[0], z - c[1]) < c[2] for c in CRATERS) or random.random() < 0.12:
+            if any(math.hypot(x - c[0], z - c[1]) < c[2] for c in CRATERS) or random.random() < 0.12 or in_pad(x, z):
                 x += random.uniform(2.5, 4.0)
                 prev = None
                 continue
             y = float(height(np.array(x), np.array(z)))
             lean = random.uniform(-0.15, 0.15)
             top = (x + lean, y + 1.05, z)
-            stakes.cyl((x, y - 0.2, z), top, 0.035)
+            stakes.at(x, z).cyl((x, y - 0.2, z), top, 0.035)
             if prev:
                 for k in range(3):
                     f = 0.3 + k * 0.33
                     pa = (prev[0][0], prev[1] + (prev[0][1] - prev[1]) * f, prev[0][2])
                     pb = (top[0], y + (top[1] - y) * f, top[2])
-                    wire.cyl(pa, pb, 0.007, 4)
+                    wire.at(x, z).cyl(pa, pb, 0.007, 4)
                 pa = prev[0]
-                wire.cyl(pa, (x, y + 0.2, z), 0.007, 4)
+                wire.at(x, z).cyl(pa, (x, y + 0.2, z), 0.007, 4)
             prev = (top, y)
             x += random.uniform(2.5, 3.5)
-    return stakes.finish(), wire.finish()
+    stakes.finish(), wire.finish()
 
 
 def make_tree(name, m_bark, seed):
@@ -443,13 +618,17 @@ def make_tree(name, m_bark, seed):
 def place_trees(variants):
     placed = []
     tries = 0
-    while len(placed) < 70 and tries < 4000:
+    while len(placed) < 300 and tries < 20000:
         tries += 1
-        x, z = random.uniform(-44, 44), random.uniform(-50, 50)
+        x, z = random.uniform(X0 + 3, X1 - 3), random.uniform(Z0 + 3, Z1 - 3)
         d, _ = trench_field(np.array(x), np.array(z))
         if float(d) < 3.2 or any(math.hypot(x - c[0], z - c[1]) < c[2] + 0.5 for c in CRATERS):
             continue
+        if in_pad(x, z, 2.5) or float(road_dist(np.array(x), np.array(z))) < 3.0:
+            continue
         if abs(z) < 22 and random.random() < 0.6:  # no-man's land: fewer, shattered
+            continue
+        if in_town(x, z) and random.random() < 0.7:
             continue
         if any(math.hypot(x - p[0], z - p[1]) < 3.0 for p in placed):
             continue
@@ -457,30 +636,39 @@ def place_trees(variants):
         src = random.choice(variants)
         ob = bpy.data.objects.new("Tree%d" % len(placed), src.data)
         bpy.context.scene.collection.objects.link(ob)
-        s = random.uniform(0.8, 1.25) * (0.6 if abs(z) < 22 else 1.0)
+        sc = random.uniform(0.8, 1.25) * (0.6 if abs(z) < 22 else 1.0)
         ob.matrix_world = Matrix.Translation(gv(x, y, z)) @ Matrix.Rotation(random.uniform(0, 6.28), 4, "Z") \
-            @ Matrix.Scale(s, 4)
+            @ Matrix.Scale(sc, 4)
         placed.append((x, z))
     for v in variants:
         bpy.data.objects.remove(v)
+    print("trees", len(placed))
+
+
+def empty(name, x, z, yaw=0.0, y=None):
+    ob = bpy.data.objects.new(name, None)
+    bpy.context.scene.collection.objects.link(ob)
+    if y is None:
+        y = float(height(np.array(x), np.array(z))) + 0.05
+    ob.matrix_world = Matrix.Translation(gv(x, y, z)) @ (C @ Matrix.Rotation(yaw, 3, "Y") @ C.transposed()).to_4x4()
 
 
 def empties():
-    def empty(name, x, z, yaw=0.0):
-        ob = bpy.data.objects.new(name, None)
-        bpy.context.scene.collection.objects.link(ob)
-        y = float(height(np.array(x), np.array(z)))
-        ob.matrix_world = Matrix.Translation(gv(x, y + 0.05, z)) @ Matrix.Rotation(yaw, 4, "Z")
-    for side, (front, rear) in enumerate(((TRENCHES[0][0], TRENCHES[1][0]), (TRENCHES[5][0], TRENCHES[6][0]))):
+    for side in (0, 1):
+        front, rear = TRENCHES[FRONTS[side]][0], TRENCHES[REARS[side]][0]
         tag = "AB"[side]
         k = 0
-        for pts in (rear,):
-            for i in range(len(pts) - 1):
-                for t in (0.3, 0.7):
-                    x = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t
-                    z = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t
-                    empty("Spawn%s_%d" % (tag, k), x, z)
-                    k += 1
+        for i in range(len(rear) - 1):
+            for t in (0.3, 0.7):
+                x = rear[i][0] + (rear[i + 1][0] - rear[i][0]) * t
+                z = rear[i][1] + (rear[i + 1][1] - rear[i][1]) * t
+                empty("Spawn%s_%d" % (tag, k), x, z)
+                k += 1
+        # the town sector: behind each block, out of the enemy's sight
+        sgn = 1.0 if side == 0 else -1.0
+        for x in (72.0, 84.0, 97.0, 110.0, 122.0):
+            empty("Spawn%s_%d" % (tag, k), x, sgn * 42.0)
+            k += 1
         k = 0
         for i in range(len(front) - 1):
             for t in (0.25, 0.5, 0.75):
@@ -488,7 +676,13 @@ def empties():
                 z = front[i][1] + (front[i + 1][1] - front[i][1]) * t
                 empty("Post%s_%d" % (tag, k), x, z)
                 k += 1
-    a, b = TRENCHES[0][0][4], TRENCHES[0][0][5]
+    for k, b in enumerate(BUILDINGS):
+        name, x, z, yaw = b
+        side = "N" if abs(z) < 10 else ("A" if z > 0 else "B")
+        empty("B_%s_%s_%d" % (name, side, k), x, z, yaw, PAD_Y[b])
+    f = TRENCHES[FRONTS[0]][0]
+    a = nearest(f, -8.0)
+    b = f[f.index(a) + 1]
     empty("Player", a[0] + (b[0] - a[0]) * 0.45, a[1] + (b[1] - a[1]) * 0.45)
 
 

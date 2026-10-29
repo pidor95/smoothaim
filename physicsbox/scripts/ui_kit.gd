@@ -131,6 +131,7 @@ static func settings_box() -> VBoxContainer:
 	box.add_child(slider_row("Кровь", 0.25, 2.0, 0.05, S.blood_amount, func(v): _apply_setting("blood_amount", v)))
 	box.add_child(slider_row("Разрешение 3D", 0.5, 1.0, 0.05, S.render_scale, func(v): _apply_setting("render_scale", v)))
 	box.add_child(slider_row("Громкость", 0.0, 1.0, 0.05, S.volume, func(v): _apply_setting("volume", v)))
+	box.add_child(toggle_row("Бодикам", S.bodycam, func(on): _apply_setting("bodycam", on)))
 	box.add_child(toggle_row("Тени", S.shadows, func(on): _apply_setting("shadows", on)))
 	box.add_child(toggle_row("Показывать FPS", S.show_fps, func(on): _apply_setting("show_fps", on)))
 	return box

@@ -10,8 +10,8 @@ var shadows := true
 var blood_amount := 1.0
 var volume := 0.8
 var show_fps := false
-## Level chosen in the main menu ("house" / "shop"); not saved.
-var level := "trenches"
+## Bodycam look: wide lens, distortion, grain, timestamp.
+var bodycam := true
 
 
 func _ready() -> void:
@@ -34,6 +34,7 @@ func load_settings() -> void:
 	render_scale = cfg.get_value("video", "render_scale", render_scale)
 	shadows = cfg.get_value("video", "shadows", shadows)
 	show_fps = cfg.get_value("video", "show_fps", show_fps)
+	bodycam = cfg.get_value("video", "bodycam", bodycam)
 	volume = cfg.get_value("audio", "volume", volume)
 
 
@@ -45,6 +46,7 @@ func save_settings() -> void:
 	cfg.set_value("video", "render_scale", render_scale)
 	cfg.set_value("video", "shadows", shadows)
 	cfg.set_value("video", "show_fps", show_fps)
+	cfg.set_value("video", "bodycam", bodycam)
 	cfg.set_value("audio", "volume", volume)
 	cfg.save(PATH)
 
@@ -56,19 +58,21 @@ func apply() -> void:
 
 
 func _setup_input() -> void:
-	_key_action("move_forward", [KEY_W, KEY_UP])
-	_key_action("move_back", [KEY_S, KEY_DOWN])
-	_key_action("move_left", [KEY_A, KEY_LEFT])
-	_key_action("move_right", [KEY_D, KEY_RIGHT])
+	_key_action("move_forward", [KEY_W])
+	_key_action("move_back", [KEY_S])
+	_key_action("move_left", [KEY_A])
+	_key_action("move_right", [KEY_D])
+	# the arrows steer the FPV drone
+	_key_action("fpv_up", [KEY_UP])
+	_key_action("fpv_down", [KEY_DOWN])
+	_key_action("fpv_left", [KEY_LEFT])
+	_key_action("fpv_right", [KEY_RIGHT])
 	_key_action("jump", [KEY_SPACE])
 	_key_action("reload", [KEY_R])
-	_key_action("spawn_npc", [KEY_E])
-	_key_action("slowmo", [KEY_Q])
 	_key_action("pause", [KEY_ESCAPE])
 	_key_action("weapon_1", [KEY_1])
 	_key_action("weapon_2", [KEY_2])
 	_key_action("weapon_next", [KEY_F])
-	_key_action("toggle_ai", [KEY_T])
 	_key_action("weapon_menu", [KEY_B, KEY_TAB])
 	_key_action("grenade", [KEY_G])
 	_key_action("drone", [KEY_V])

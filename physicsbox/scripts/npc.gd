@@ -29,6 +29,14 @@ const SKINS := [Color(0.93, 0.8, 0.7), Color(0.85, 0.68, 0.55), Color(0.66, 0.48
 const GEAR_SCENE := "res://assets/npc/soldier_gear.glb"
 ## A lethal body hit leaves him down but alive this often (to be finished off).
 const SURVIVE_CHANCE := 0.4
+## Pain: a heavy hit (or several in a row) may knock him out cold; he lies
+## limp for a while (to be finished off) and then comes round.
+const FAINT_PAIN := 70.0
+const FAINT_CHANCE := 0.45
+## With his throat shot through he fires blindly only this long, and only
+## sometimes.
+const WILD_FIRE_TIME := 5.0
+const WILD_FIRE_CHANCE := 0.5
 ## Firing positions (front trench) of each team, set by the level.
 static var war_posts: Array = [[], []]
 
@@ -46,7 +54,7 @@ const GUN_TEXTURE := "res://assets/m1911/m1911_albedo.jpg"
 const RIFLE_SCENE := "res://assets/npc/npc_rifle.glb"
 const RIFLE_BASIS := Basis(Vector3(0.4422, 0.4624, -0.7685), Vector3(-0.4624, -0.6166, -0.6371),
 		Vector3(-0.7685, 0.6371, -0.0588))
-const RIFLE_MUZZLE := Vector3(0, 0.085, -0.69)
+const RIFLE_MUZZLE := Vector3(0, 0.105, -0.666)
 const RIFLE_MAG := 30
 const MAX_DROPPED_GUNS := 8
 const MAGAZINE := 8
@@ -93,10 +101,12 @@ const JB_HINGE := Basis(Vector3(0, -1, 0), Vector3(0, 0, -1), Vector3(1, 0, 0))
 
 # How much a hit on each part costs in balance per unit of impulse. He tries
 # hard to stay on his feet, so it takes a few hits to put him down.
-const BALANCE_COST := {"pelvis": 0.034, "chest": 0.022, "head": 0.03, "uarm_l": 0.01, "uarm_r": 0.01,
-		"farm_l": 0.009, "farm_r": 0.009, "thigh_l": 0.045, "thigh_r": 0.045, "shin_l": 0.07, "shin_r": 0.07}
+const BALANCE_COST := {"pelvis": 0.055, "chest": 0.042, "head": 0.045, "uarm_l": 0.016, "uarm_r": 0.016,
+		"farm_l": 0.012, "farm_r": 0.012, "thigh_l": 0.06, "thigh_r": 0.06, "shin_l": 0.08, "shin_r": 0.08}
 # Spring "mass" per bone: lighter bones get kicked further by a bullet.
 const SPRING_MASS := [9.0, 7.0, 2.2, 1.6, 1.0, 1.6, 1.0, 4.0, 2.4, 4.0, 2.4]
+## Muscles after death: the limbs that twitch and how hard (death throes).
+const SPASM_PARTS := [4, 6, 8, 10, 3, 5, 7, 9, 2]
 
 static var _mesh_cache := {}
 static var _gear := {} # mesh name -> Mesh (soldier_gear.glb)
@@ -239,6 +249,15 @@ var _despair_cd := 1.0
 var _choke_despair_rolled := false
 var _stuck_count := 0
 var _knee_hits := 0
+# pain, fainting, the throes after death, being shoved by hits
+var _pain := 0.0
+var _out_cold := 0.0 # seconds left lying unconscious
+var unconscious := false
+var _wild_left := -1.0 # -1: not decided yet (first neck wound decides)
+var _spasm_time := 0.0
+var _spasm_cd := 0.0
+var _shove := Vector3.ZERO
+var _shove_v := Vector3.ZERO
 
 
 func _ready() -> void:
@@ -345,6 +364,8 @@ func _visual(body: Node3D, mesh: Mesh, mat: Material, pos := Vector3.ZERO, rot :
 	mi.position = pos
 	mi.rotation = rot
 	mi.scale = scl
+	# far off in the haze a soldier's small parts are not drawn (big map)
+	mi.visibility_range_end = 140.0 if mesh.get_aabb().size.length() > 0.3 else 90.0
 	body.add_child(mi)
 
 
@@ -597,9 +618,10 @@ func _update_layers(delta: float, hspeed: float) -> void:
 		if left <= 0.0:
 			_reacts.remove_at(i)
 	for i in _spring.size():
-		_spring_vel[i] += (-_spring[i] * 140.0 - _spring_vel[i] * 13.0) * delta
+		_spring_vel[i] += (-_spring[i] * 110.0 - _spring_vel[i] * 10.0) * delta
 		_spring[i] += _spring_vel[i] * delta
-	balance = minf(balance + delta * 0.35, 1.0)
+	balance = minf(balance + delta * 0.3, 1.0)
+	_pain = maxf(_pain - delta * 9.0, 0.0)
 	_update_clutch(delta)
 	_update_suicide(delta)
 	_update_gun_arm(delta)
@@ -684,8 +706,9 @@ func _physics_process(delta: float) -> void:
 	desired *= clampf(0.35 + balance * 0.65, 0.0, 1.0)
 
 	var accel := 10.0 if state == State.PANIC or _speed > 3.0 else 6.0
-	velocity.x = move_toward(velocity.x, desired.x, accel * delta)
-	velocity.z = move_toward(velocity.z, desired.z, accel * delta)
+	velocity.x = move_toward(velocity.x, desired.x, accel * delta) + _shove.x
+	velocity.z = move_toward(velocity.z, desired.z, accel * delta) + _shove.z
+	_shove = Vector3.ZERO
 	if is_on_floor():
 		velocity.y = -0.5
 	else:
@@ -827,6 +850,7 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 		return 0
 
 	health -= damage
+	_pain += damage
 	var killed := health <= 0.0
 	if killed and _survives(is_head, damage):
 		# not dead yet: down, writhing, to be finished off
@@ -842,6 +866,8 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 			_mark_dead(is_head)
 			return 2 if is_head else 1
 		_knock_time = minf(_knock_time, 1.0)
+		if unconscious:
+			_out_cold = maxf(_out_cold, 6.0) # a fresh wound keeps him under
 		return 0
 
 	if killed:
@@ -852,11 +878,20 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 		_die(part, pos, dir, impulse * (1.5 if is_head else 1.0), is_head)
 		return 2 if is_head else 1
 
-	# still standing: the struck part jerks, then he fights to stay on his feet
-	# with a recovery that depends on where he was hit; a knee hit folds him
+	# too much pain: he blacks out and drops where he stands
+	if not display_only and not _downed and not _neck_wound and _pain > FAINT_PAIN and randf() < FAINT_CHANCE \
+			and state != State.CHOKE:
+		_faint(part, pos, dir, impulse)
+		return 0
+	# still standing: the struck part jerks, the body is shoved along the
+	# bullet, then he fights to stay on his feet with a recovery that depends
+	# on where he was hit; a knee hit folds him, a gut shot may too
 	_react(part_name, pos, dir, impulse)
+	var push := Vector3(dir.x, 0.0, dir.z) * impulse * (0.09 if part == chest or part == pelvis else 0.05)
+	_shove += push
 	balance -= impulse * BALANCE_COST.get(part_name, 0.02)
-	var knee := part_name.begins_with("shin") or (part_name.begins_with("thigh") and local.y < -0.13)
+	var knee := part_name.begins_with("shin") or (part_name.begins_with("thigh") and local.y < -0.13) \
+			or (part == pelvis and randf() < 0.3 and not display_only)
 	if knee:
 		_knee_hits += 1
 	var frame := Engine.get_physics_frames()
@@ -996,6 +1031,7 @@ func _capture_blend() -> void:
 
 func _start_stagger(clip_name: String, fall: bool, part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> void:
 	_capture_blend()
+	_shove_v = Vector3.ZERO
 	_stagger = _lib.clip(clip_name)
 	_stagger_t = 0.0
 	_stagger_prev = _lib.pelvis_pos(_stagger, 0.0)
@@ -1013,8 +1049,11 @@ func _stagger_process(delta: float) -> void:
 	var d := p - _stagger_prev
 	_stagger_prev = p
 	var world := global_transform.basis * Vector3(d.x, 0.0, d.z)
-	velocity.x = world.x / delta
-	velocity.z = world.z / delta
+	# the bullet's push carries on for a moment on top of the stumble
+	_shove_v = _shove_v.lerp(Vector3.ZERO, clampf(delta * 6.0, 0.0, 1.0)) + _shove * 3.0
+	_shove = Vector3.ZERO
+	velocity.x = world.x / delta + _shove_v.x
+	velocity.z = world.z / delta + _shove_v.z
 	if is_on_floor():
 		velocity.y = -0.5
 	else:
@@ -1050,8 +1089,8 @@ func _react(part_name: String, pos: Vector3, dir: Vector3, impulse: float) -> vo
 	var falloff := 1.0
 	while b >= 0 and falloff > 0.2:
 		var pivot := _lib.rest_global[b].origin
-		var kick: Vector3 = (local_pos - pivot).cross(local_dir) * impulse * falloff / SPRING_MASS[b] * 9.0
-		_spring_vel[b] += kick.limit_length(14.0)
+		var kick: Vector3 = (local_pos - pivot).cross(local_dir) * impulse * falloff / SPRING_MASS[b] * 15.0
+		_spring_vel[b] += kick.limit_length(24.0)
 		b = _lib.parent[b]
 		falloff *= 0.45
 
@@ -1092,13 +1131,14 @@ func _go_limp(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> 
 		_ragdoll_material = PhysicsMaterial.new()
 		_ragdoll_material.friction = 0.9
 		_ragdoll_material.bounce = 0.0
+	var carry := Vector3(dir.x, 0.0, dir.z).normalized() * clampf(impulse * 0.06, 0.0, 1.6)
 	for p in parts:
 		p.freeze = false
 		p.collision_mask = LAYER_WORLD | LAYER_PROPS | LAYER_PARTS
 		p.physics_material_override = _ragdoll_material
 		p.linear_damp = 0.12
 		p.angular_damp = 1.8
-		p.linear_velocity = vel
+		p.linear_velocity = vel + carry
 	# small fast parts must not tunnel through the floor when blasted
 	for p in [head, farm_l, farm_r, shin_l, shin_r]:
 		p.continuous_cd = true
@@ -1114,6 +1154,22 @@ func _knockdown(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -
 	shin_r.angular_velocity = global_transform.basis.x * randf_range(-3, 3)
 
 
+## Blacks out from the pain: drops limp where he stands and lies there,
+## out of the fight, until he comes round (or is finished off).
+func _faint(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> void:
+	unconscious = true
+	_out_cold = randf_range(14.0, 26.0)
+	_pain = 0.0
+	_target = null
+	_aiming = false
+	_order = ""
+	_order_clip = null
+	_knockdown(part, pos, dir, impulse * 0.6)
+	# no bracing: the knees just go
+	thigh_l.angular_velocity = global_transform.basis.x * randf_range(2, 4)
+	thigh_r.angular_velocity = global_transform.basis.x * randf_range(2, 4)
+
+
 func _die(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float, headshot: bool) -> void:
 	_go_limp(part, pos, dir, impulse)
 	shin_l.angular_velocity = global_transform.basis.x * randf_range(-3, 3)
@@ -1123,7 +1179,11 @@ func _die(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float, headsho
 
 func _mark_dead(headshot: bool) -> void:
 	dead = true
+	unconscious = false
 	state = State.DEAD
+	# the muscles keep going a while: the limbs jerk and the legs kick
+	_spasm_time = randf_range(3.0, 7.0) if not head_gone else randf_range(1.5, 3.0)
+	_spasm_cd = randf_range(0.3, 0.8)
 	if is_instance_valid(_agent):
 		_agent.queue_free()
 	died.emit(self, headshot)
@@ -1184,6 +1244,21 @@ func _knocked_process(delta: float) -> void:
 		queue_free()
 		return
 	var settled := chest.linear_velocity.length() < 0.5 and pelvis.linear_velocity.length() < 0.5
+	if unconscious:
+		# out cold: limp, breathing shallowly; then he comes round
+		_out_cold -= delta
+		if settled and fmod(_time, 3.6) < delta:
+			chest.apply_central_impulse(Vector3.UP * 3.0)
+		if _out_cold <= 0.0:
+			unconscious = false
+			if health < 35.0:
+				_downed = true # too weak to stand: he writhes on the floor
+				_choke_drain = randf_range(0.6, 1.1)
+				_bleed_left = 9999.0
+				_start_floor_choke()
+			else:
+				_start_getup()
+		return
 	if _neck_wound or _downed:
 		# throat open / left for dead: he does not get up, he rolls about on the floor
 		if (_knock_time > 1.0 and settled) or _knock_time > 4.0:
@@ -1247,6 +1322,10 @@ func _getup_process(delta: float) -> void:
 		_state_time = 0.5
 		_w_walk = 0.0
 		_w_panic = 0.0
+		if _gun == null and not display_only and _order == "":
+			# back on his feet he takes up a rifle again (a mate's, his own)
+			weapon = "rifle"
+			_attach_gun()
 		if _neck_wound:
 			_start_choke()
 		elif ai_enabled and not display_only:
@@ -1258,6 +1337,7 @@ func _dead_process(delta: float) -> void:
 	if chest.global_position.y < -40.0:
 		queue_free()
 		return
+	_death_throes(delta)
 	_bleed(delta, 0.12, 0.3)
 	# once the body settles, a pool of blood spreads underneath
 	if not _pool_done and _dead_time > 1.0 and chest.linear_velocity.length() < 0.4 and not _wounds.is_empty():
@@ -1267,6 +1347,33 @@ func _dead_process(delta: float) -> void:
 		var hit := get_world_3d().direct_space_state.intersect_ray(q)
 		if not hit.is_empty() and hit.normal.y > 0.7:
 			Blood.pool(hit.position, hit.normal, randf_range(1.6, 2.4) * Settings.blood_amount, randf_range(8.0, 14.0))
+
+
+## Just dead: the muscles cramp and jerk - a limb snaps up, a leg kicks, the
+## hand claws, the body shivers - weaker and rarer until it stops.
+func _death_throes(delta: float) -> void:
+	if _dead_time > _spasm_time or display_only:
+		return
+	var k := pow(1.0 - _dead_time / _spasm_time, 1.5)
+	_spasm_cd -= delta
+	# a fine tremor through the whole body
+	for i in [1, 0, 7, 9]:
+		var p: RigidBody3D = parts[i]
+		if not p.freeze and not _severed.has(p):
+			p.apply_central_impulse(Vector3(randf_range(-1, 1), randf_range(0, 1), randf_range(-1, 1)) * p.mass * 0.06 * k)
+	if _spasm_cd > 0.0:
+		return
+	_spasm_cd = lerpf(0.5, 0.12, k) * randf_range(0.6, 1.4)
+	for n in randi_range(1, 3):
+		var p: RigidBody3D = parts[SPASM_PARTS[randi() % SPASM_PARTS.size()]]
+		if p.freeze or _severed.has(p):
+			continue
+		var axis := p.global_basis.x if randf() < 0.6 else p.global_basis.z
+		p.apply_torque_impulse(axis * randf_range(-1.0, 1.0) * p.mass * 0.55 * k)
+		p.apply_central_impulse((Vector3.UP * 0.5 + Vector3(randf_range(-1, 1), 0, randf_range(-1, 1)) * 0.4) * p.mass * 0.6 * k)
+	if randf() < 0.25 * k:
+		# the chest heaves
+		chest.apply_central_impulse(Vector3.UP * chest.mass * 0.35 * k)
 
 
 # ------------------------------------------------------------------ guts
@@ -1471,6 +1578,9 @@ func _start_choke() -> void:
 	_clutch_w = 0.0
 	_choke_t = randf() * 2.0
 	_choke_phase = mini(_choke_phase, 1) # back on his feet after a fall: he goes down again
+	if _wild_left < 0.0:
+		# some keep pulling the trigger for the first seconds, some don't
+		_wild_left = WILD_FIRE_TIME if randf() < WILD_FIRE_CHANCE else 0.0
 	_choke_phase_t = 0.0
 	_choke_stand_time = randf_range(1.6, 2.8)
 	_cough_cd = randf_range(0.4, 1.0)
@@ -1869,7 +1979,7 @@ func _sees(target: Vector3) -> bool:
 
 ## Still a threat: alive, on his feet and not surrendering.
 func is_combatant() -> bool:
-	return not dead and not _downed and not _neck_wound and _order != "hands_up" and _order != "kneel" \
+	return not dead and not _downed and not _neck_wound and not unconscious and _order != "hands_up" and _order != "kneel" \
 			and state != State.KNOCKED and state != State.GETUP
 
 
@@ -2004,7 +2114,8 @@ func _arrived() -> void:
 ## Throat open and a gun in his hand: he lets off shots towards the enemy
 ## as he chokes, reels and rolls about, barely aiming.
 func _wild_fire(delta: float) -> void:
-	if _gun == null or _suicide_t >= 0.0 or _ammo <= 0:
+	_wild_left = maxf(_wild_left - delta, 0.0) if _wild_left > 0.0 else _wild_left
+	if _gun == null or _suicide_t >= 0.0 or _ammo <= 0 or _wild_left <= 0.0:
 		_aiming = false
 		return
 	var foe: Node3D = _target if is_instance_valid(_target) else null

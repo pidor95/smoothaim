@@ -1,6 +1,6 @@
 extends Node3D
-## Main menu: dark red-grid stage with a mannequin you can tap to shoot,
-## title, location select and settings.
+## Main menu: dark red-grid stage with a soldier you can tap to shoot,
+## title, "to battle", settings and the model credits.
 
 var cam := Camera3D.new()
 var dummy: Npc
@@ -8,7 +8,7 @@ var _t := 0.0
 var _respawn := -1.0
 var _ui := Control.new()
 var _main_box: Control
-var _play_box: Control
+var _credits_box: Control
 var _settings_box: Control
 var _loading: Label
 
@@ -162,11 +162,11 @@ func _build_ui() -> void:
 	col.add_theme_constant_override("separation", 14)
 	margin.add_child(col)
 
-	var title := UiKit.label("PHYSICS BOX", 96, Color(1, 1, 1))
+	var title := UiKit.label("NPC WAR", 104, Color(1, 1, 1))
 	title.add_theme_constant_override("outline_size", 14)
 	title.add_theme_color_override("font_outline_color", Color(0.65, 0.0, 0.05))
 	col.add_child(title)
-	col.add_child(UiKit.label("песочница с физикой и кровью", 28, Color(0.75, 0.75, 0.75)))
+	col.add_child(UiKit.label("окопная война: витязь против ополчения", 28, Color(0.75, 0.75, 0.75)))
 	var spacer := Control.new()
 	spacer.custom_minimum_size.y = 18
 	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -175,23 +175,24 @@ func _build_ui() -> void:
 	_main_box = VBoxContainer.new()
 	_main_box.add_theme_constant_override("separation", 12)
 	col.add_child(_main_box)
-	_main_box.add_child(UiKit.button("ИГРАТЬ", func(): _show(_play_box)))
+	var play := UiKit.button("В БОЙ", _start_game, 420)
+	play.custom_minimum_size.y = 80
+	play.add_theme_font_size_override("font_size", 40)
+	_main_box.add_child(play)
 	_main_box.add_child(UiKit.button("НАСТРОЙКИ", func(): _show(_settings_box)))
+	_main_box.add_child(UiKit.button("АВТОРЫ МОДЕЛЕЙ", func(): _show(_credits_box)))
 	_main_box.add_child(UiKit.button("ВЫХОД", func(): get_tree().quit()))
 
-	_play_box = VBoxContainer.new()
-	_play_box.add_theme_constant_override("separation", 12)
-	col.add_child(_play_box)
-	_play_box.add_child(UiKit.label("ВЫБОР ЛОКАЦИИ", 34, Color(1, 0.25, 0.2)))
-	for loc in [["ОКОПЫ", "trenches", "Фронт: две линии траншей и нейтральная полоса. Витязь против ополчения, гранаты, FPV-дроны."],
-			["ДОМ", "house", "Пять комнат, двор и крыша. Двери, окна и мебель — на физике."],
-			["МАГАЗИН", "shop", "Супермаркет: ряды полок с товарами, кассы, холодильники, тележки, склад."]]:
-		var b := UiKit.button(loc[0], _start_level.bind(loc[1]), 480)
-		b.custom_minimum_size.y = 74
-		b.add_theme_font_size_override("font_size", 36)
-		_play_box.add_child(b)
-		_play_box.add_child(UiKit.label(loc[2], 20, Color(0.7, 0.7, 0.7)))
-	_play_box.add_child(UiKit.button("НАЗАД", func(): _show(_main_box)))
+	_credits_box = VBoxContainer.new()
+	_credits_box.add_theme_constant_override("separation", 10)
+	col.add_child(_credits_box)
+	_credits_box.add_child(UiKit.label("Модели со Sketchfab (CC-BY 4.0):", 28, Color(1, 0.25, 0.2)))
+	for line in ["«AK-74M» — SeveN (sketchfab.com/SeveN-Models)",
+			"«Grenade RGD-5» — _Alexandr (sketchfab.com/a_l_e_x_a_n_d_e_r)",
+			"«FPV kamikaze drone Low-poly» — Kvasovich (sketchfab.com/Kvasovich)",
+			"Остальное — сделано в Blender скриптами проекта."]:
+		_credits_box.add_child(UiKit.label(line, 22, Color(0.8, 0.8, 0.8)))
+	_credits_box.add_child(UiKit.button("НАЗАД", func(): _show(_main_box)))
 
 	_settings_box = VBoxContainer.new()
 	_settings_box.add_theme_constant_override("separation", 10)
@@ -217,12 +218,11 @@ func _build_ui() -> void:
 
 
 func _show(box: Control) -> void:
-	for b in [_main_box, _play_box, _settings_box]:
+	for b in [_main_box, _credits_box, _settings_box]:
 		b.visible = b == box
 
 
-func _start_level(level: String) -> void:
-	Settings.level = level
+func _start_game() -> void:
 	_main_box.get_parent().visible = false
 	_loading.visible = true
 	await get_tree().process_frame

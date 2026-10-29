@@ -1,7 +1,9 @@
-"""Renders the weapon icons for the weapon menu in Blender from the exported
-viewmodels: assets/ui/icon_<id>.png (transparent, 512x256, side view).
+"""Renders the icons for the weapon menu and the hotbar in Blender from the
+exported models: assets/ui/icon_<id>.png (transparent, 512x256, side view)
+for the guns (viewmodels) and the grenade and the FPV drone.
 
-Run (after build_weapons.py):  blender -b --python tools/blender/build_icons.py
+Run (after build_weapons.py / build_sketchfab_kit.py):
+  blender -b --python tools/blender/build_icons.py
 """
 import math
 import os
@@ -10,17 +12,18 @@ import bpy
 from mathutils import Matrix, Vector
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-WEAPONS = {"m1911": 4.0, "m500": 3.5}  # id -> yaw the viewmodel was built with
+WEAPONS = {"ak74": 3.0, "m500": 3.5}  # id -> yaw the viewmodel was built with
+PROPS = {"grenade": "grenade.glb", "fpv": "fpv_drone.glb"}
 SKIP = ("Hand", "Arm", "Thumb", "Shell", "MagNew")
 
 
-def render_icon(wid, yaw):
+def render_icon(wid, yaw, path=None):
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.import_scene.gltf(filepath=os.path.join(ROOT, "assets", "weapons", wid + "_fp.glb"))
+    bpy.ops.import_scene.gltf(filepath=path or os.path.join(ROOT, "assets", "weapons", wid + "_fp.glb"))
     meshes = []
     for o in list(bpy.context.scene.objects):
         # the importer adds a bone display shape (unparented); hands are not part of the icon
-        if o.type == "MESH" and (o.name.startswith(SKIP) or o.parent_type != "BONE"):
+        if o.type == "MESH" and (o.name.startswith(SKIP) or (path is None and o.parent_type != "BONE")):
             bpy.data.objects.remove(o)
         elif o.type == "MESH":
             meshes.append(o)
@@ -44,7 +47,7 @@ def render_icon(wid, yaw):
     scene = bpy.context.scene
     cam_data = bpy.data.cameras.new("cam")
     cam_data.type = "ORTHO"
-    cam_data.ortho_scale = max(size.y, size.z * 2.0) * 1.12
+    cam_data.ortho_scale = max(size.y, size.z * 2.0, size.x) * 1.12
     cam = bpy.data.objects.new("cam", cam_data)
     scene.collection.objects.link(cam)
     # look along -X at the right side of the gun, muzzle to the right
@@ -77,3 +80,5 @@ def render_icon(wid, yaw):
 
 for wid, yaw in WEAPONS.items():
     render_icon(wid, yaw)
+for wid, f in PROPS.items():
+    render_icon(wid, 0.0, os.path.join(ROOT, "assets", "weapons", f))
