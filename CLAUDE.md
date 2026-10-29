@@ -87,7 +87,17 @@ https://github.com/pidor95/smoothaim/releases/download/latest/PhysicsBox.apk
   `alert × SUPPRESSED_ALERT`.
 - Дрон-сброс (Mavic с двумя Ф-1) был сделан и по просьбе пользователя УБРАН целиком — не возвращать.
   Глушитель строит `build_suppressor.py`. У FpvDrone остались хуки `trigger_pressed`/`exit_pressed`.
-- Тесты: `tools/war_test.gd`, `tools/kit_test.gd` (кобура, снаряжение, глушитель, меню),
+- Раны в форме: `wound_atlas.png` (`build_wound_atlas.py`, 2×2: вход ×2, выход, осколок) →
+  `Blood.body_wound` (изогнутый патч на радиус части, MultiMesh на часть, `npc._wear` = кадр/радиус/длина;
+  грудь — по разгрузке), шейдер `wound_decal.gdshader`. ВАЖНО: INSTANCE_CUSTOM в Compatibility
+  (OpenGL — в контейнере и, возможно, на части телефонов) урезается до 8 бит 0..1 — всё кодировать в 0..1!
+  (у старых `blood_decal_mm` время/номер клетки там ломаются). Выходные раны — `npc.exit_wound` из weapon._shoot.
+- Прямое попадание FPV / граната под ногами: `npc.torn_apart` (Explosion: power ≥ 1.3 и d < 1.8 или d < 0.7),
+  культи `_stump` при `sever`.
+- Физика рэгдолла: `_ragdoll_step` — тонус мышц `TONE` (затухает за `_tone_len`), лимит скорости частей,
+  засыпание мёртвого тела (`_settled`, freeze; `wake_ragdoll()` от пули/взрыва/шага игрока; мета "settled"
+  у частей и гора). Пулы: Blood `_burst` (mist/dust), вспышки NPC `_flashes`.
+- Тесты: `tools/war_test.gd`, `tools/gore_test.gd`, `tools/kit_test.gd` (кобура, снаряжение, глушитель, меню),
   `tools/mechanics_test.gd` (обморок, судороги,
   шея 5 с, авто-огонь, граната, стрелки FPV, смерть игрока), `tools/explosives_test.gd`.
   В контейнере Vulkan нет — Godot сам падает на OpenGL (llvmpipe), это медленно.

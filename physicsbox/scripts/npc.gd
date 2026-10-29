@@ -114,6 +114,16 @@ const BALANCE_COST := {"pelvis": 0.055, "chest": 0.042, "head": 0.045, "uarm_l":
 const SPRING_MASS := [9.0, 7.0, 2.2, 1.6, 1.0, 1.6, 1.0, 4.0, 2.4, 4.0, 2.4]
 ## Muscles after death: the limbs that twitch and how hard (death throes).
 const SPASM_PARTS := [4, 6, 8, 10, 3, 5, 7, 9, 2]
+## Muscle tone as he goes down (by part, BONES order): for a moment each
+## part still holds its pose against its parent, the spine and neck most,
+## the knees least - so a man crumples at the knees instead of dropping
+## like an empty sack. It fades out in `_tone_len` seconds.
+const TONE := [0.0, 1.0, 0.85, 0.55, 0.4, 0.55, 0.4, 0.35, 0.18, 0.35, 0.18]
+## Body parts never fly faster than this (blasts at point-blank range).
+const MAX_PART_SPEED := 22.0
+## A ragdoll that has lain still this long is frozen (costs nothing, cannot
+## jitter); a bullet, a blast or a kick wakes it up again.
+const SETTLE_TIME := 1.0
 
 static var _mesh_cache := {}
 static var _gear := {} # mesh name -> Mesh (soldier_gear.glb)
@@ -146,6 +156,12 @@ var thigh_r: RigidBody3D
 var shin_l: RigidBody3D
 var shin_r: RigidBody3D
 var parts: Array[RigidBody3D] = [] # in MannequinAnims.BONES order
+var _wear := {} # part -> [visual transform, radius, length]: where wounds in the uniform go
+var _tone_rel: Array[Basis] = [] # each part's pose against its parent when he went limp
+var _tone_t := 0.0
+var _tone_len := 0.0
+var _settled := false
+var _still_t := 0.0
 
 var _lib: MannequinAnims
 var _c_idle: MannequinAnims.Clip
@@ -406,6 +422,7 @@ func _part(part_name: String, mass: float) -> RigidBody3D:
 func _limb(part_name: String, mass: float, radius: float, length: float, mat: Material) -> RigidBody3D:
 	var b := _part(part_name, mass)
 	_visual(b, _capsule_mesh(radius, length), mat)
+	_wear[b] = [Transform3D.IDENTITY, radius, length]
 	var sh := CapsuleShape3D.new()
 	sh.radius = radius
 	sh.height = length
@@ -446,6 +463,7 @@ func _build_body() -> void:
 
 	pelvis = _part("pelvis", 10.0)
 	_visual(pelvis, _capsule_mesh(0.125, 0.38), pants, Vector3.ZERO, Vector3(0, 0, PI / 2), Vector3(1, 1, 0.85))
+	_wear[pelvis] = [(pelvis.get_child(0) as Node3D).transform, 0.125, 0.38]
 	var psh := CapsuleShape3D.new()
 	psh.radius = 0.12
 	psh.height = 0.36
@@ -453,6 +471,8 @@ func _build_body() -> void:
 
 	chest = _part("chest", 14.0)
 	_visual(chest, _capsule_mesh(0.17, 0.56), shirt, Vector3.ZERO, Vector3.ZERO, Vector3(1.2, 1, 0.78))
+	# the plate carrier covers the trunk: its holes go in the vest's cloth
+	_wear[chest] = [Transform3D(Basis.from_scale(Vector3(1.31, 1.0, 1.2)), Vector3(0.0, 0.02, -0.026)), 0.17, 0.4]
 	var csh := BoxShape3D.new()
 	csh.size = Vector3(0.38, 0.48, 0.25)
 	_shape(chest, csh)
@@ -651,12 +671,14 @@ func _physics_process(delta: float) -> void:
 		_despair_check(delta)
 	match state:
 		State.DEAD:
+			_ragdoll_step(delta)
 			_dead_process(delta)
 			return
 		State.CHOKE:
 			_choke_process(delta)
 			return
 		State.KNOCKED:
+			_ragdoll_step(delta)
 			_knocked_process(delta)
 			return
 		State.GETUP:
@@ -829,7 +851,7 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 		_pain += 16.0
 		impulse *= 1.25 # all of it goes into the man
 	else:
-		Blood.wound(part, pos, normal)
+		_mark_wound(part, pos, "rip" if fx < 0.5 else "entry") # fx < 0.5: a fragment
 		Blood.mist(pos, normal * 0.6 - dir * 0.4, 0.8 * fx)
 		Blood.spray(pos + dir * 0.12, dir + Vector3.UP * 0.1, int(10 * fx), 2.5, 6.5, 0.3)
 		if _wounds.size() < 10:
@@ -852,6 +874,7 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 		if _head_damage >= 150.0:
 			_explode_head(pos, dir)
 			if dead:
+				wake_ragdoll()
 				part.apply_impulse(dir * impulse, pos - part.global_position)
 				return 0
 			health = 0.0
@@ -866,6 +889,7 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 			_add_artery(part, local, local_normal, 1.3)
 
 	if dead:
+		wake_ragdoll()
 		part.apply_impulse(dir * impulse, pos - part.global_position)
 		return 0
 
@@ -1173,6 +1197,13 @@ func _go_limp(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> 
 	for p in [head, farm_l, farm_r, shin_l, shin_r]:
 		p.continuous_cd = true
 	part.apply_impulse(dir * impulse, pos - part.global_position)
+	# he still holds himself a moment as he goes (a knocked-down man braces)
+	_tone_rel.clear()
+	for i in parts.size():
+		var par := parts[_lib.parent[i]] if _lib.parent[i] >= 0 else null
+		_tone_rel.append(par.global_basis.orthonormalized().inverse() * parts[i].global_basis.orthonormalized() if par else Basis.IDENTITY)
+	_tone_t = 0.0
+	_tone_len = 0.9
 
 
 func _knockdown(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> void:
@@ -1196,6 +1227,7 @@ func _faint(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> vo
 	_order = ""
 	_order_clip = null
 	_knockdown(part, pos, dir, impulse * 0.6)
+	_tone_len = 0.25
 	# no bracing: the knees just go
 	thigh_l.angular_velocity = global_transform.basis.x * randf_range(2, 4)
 	thigh_r.angular_velocity = global_transform.basis.x * randf_range(2, 4)
@@ -1203,6 +1235,7 @@ func _faint(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> vo
 
 func _die(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float, headshot: bool) -> void:
 	_go_limp(part, pos, dir, impulse)
+	_tone_len = 0.0 if headshot else 0.5 # a head shot drops him at once
 	shin_l.angular_velocity = global_transform.basis.x * randf_range(-3, 3)
 	shin_r.angular_velocity = global_transform.basis.x * randf_range(-3, 3)
 	_mark_dead(headshot)
@@ -1381,6 +1414,55 @@ func _dead_process(delta: float) -> void:
 			Blood.pool(hit.position, hit.normal, randf_range(1.6, 2.4) * Settings.blood_amount, randf_range(8.0, 14.0))
 
 
+## Every physics frame of a ragdoll: the fading muscle tone, a speed limit
+## on the parts, and - once dead and still - freezing the body.
+func _ragdoll_step(delta: float) -> void:
+	if _settled:
+		return
+	if _tone_t < _tone_len and _tone_rel.size() == parts.size():
+		_tone_t += delta
+		var k := 1.0 - _tone_t / _tone_len
+		for i in range(1, parts.size()):
+			var p := parts[i]
+			if p.freeze or _severed.has(p):
+				continue
+			var par := parts[_lib.parent[i]]
+			var want: Basis = par.global_basis.orthonormalized() * _tone_rel[i]
+			var err := (want * p.global_basis.orthonormalized().inverse()).get_rotation_quaternion()
+			if err.w < 0.0:
+				err = -err
+			var spin := err.get_axis() * err.get_angle() / 0.12 if err.get_angle() > 0.001 else Vector3.ZERO
+			p.angular_velocity = p.angular_velocity.lerp(spin + par.angular_velocity, clampf(TONE[i] * k * 0.5, 0.0, 1.0))
+	var moving := false
+	for p in parts:
+		if p.freeze:
+			continue
+		var v := p.linear_velocity.length()
+		if v > MAX_PART_SPEED:
+			p.linear_velocity *= MAX_PART_SPEED / v
+		if v > 0.12 or p.angular_velocity.length() > 0.6:
+			moving = true
+	if not dead or _dead_time < maxf(_spasm_time, 2.5):
+		return
+	_still_t = 0.0 if moving else _still_t + delta
+	if _still_t > SETTLE_TIME:
+		_settled = true
+		for p in parts:
+			p.freeze = true # kinematic: it stays exactly where it lies
+			p.set_meta("settled", true)
+
+
+## A settled body is hit, blasted or kicked: it is a ragdoll again.
+func wake_ragdoll() -> void:
+	if not _settled:
+		return
+	_settled = false
+	_still_t = 0.0
+	for p in parts:
+		p.freeze = false
+		p.remove_meta("settled")
+
+
 ## Just dead: the muscles cramp and jerk - a limb snaps up, a leg kicks, the
 ## hand claws, the body shivers - weaker and rarer until it stops.
 func _death_throes(delta: float) -> void:
@@ -1499,6 +1581,28 @@ func _explode_head(pos: Vector3, dir: Vector3) -> void:
 	_bleed_left = maxf(_bleed_left, 30.0)
 
 
+## The mark a hit leaves: a hole in the uniform with torn cloth and the
+## blood soaking out (Blood.body_wound); on the bare head, a blood splat.
+func _mark_wound(part: RigidBody3D, pos: Vector3, kind: String) -> void:
+	var w: Array = _wear.get(part, [])
+	if w.is_empty():
+		Blood.wound(part, pos, (pos - part.global_position).normalized())
+		return
+	Blood.body_wound(part, w[0], w[1], w[2], pos, kind)
+
+
+## The round went on through him (weapon.gd): a bigger torn exit wound on
+## the far side of the part and blood thrown out of it.
+func exit_wound(part: RigidBody3D, pos: Vector3, dir: Vector3) -> void:
+	var q := PhysicsRayQueryParameters3D.create(pos + dir * 0.6, pos, LAYER_PARTS)
+	var hit := get_world_3d().direct_space_state.intersect_ray(q)
+	if hit.is_empty() or hit.collider != part:
+		return
+	_mark_wound(part, hit.position, "exit")
+	Blood.spray(hit.position + dir * 0.03, dir, 14, 3.0, 8.0, 0.35, 0.012, 0.03)
+	Blood.mist(hit.position, dir, 1.2)
+
+
 ## Inner thigh / inner upper arm hits may open an artery.
 func _artery_strength(part_name: String, local: Vector3) -> float:
 	match part_name:
@@ -1567,7 +1671,7 @@ func _bleed_out() -> void:
 
 
 ## Close shotgun blast to a limb tears it off at the joint.
-func sever(part: RigidBody3D, dir: Vector3) -> void:
+func sever(part: RigidBody3D, dir: Vector3, chunks := 4) -> void:
 	if _severed.has(part) or part == chest or part == pelvis or part == head:
 		return
 	if not dead:
@@ -1588,11 +1692,79 @@ func sever(part: RigidBody3D, dir: Vector3) -> void:
 	_add_artery(parent_part, parent_part.to_local(pivot), parent_part.global_basis.inverse() * (pivot - parent_part.global_position).normalized(), 1.0, true)
 	_add_artery(part, part.to_local(pivot), part.global_basis.inverse() * (pivot - part.global_position).normalized(), 0.5, true)
 	_wounds.append([parent_part, parent_part.to_local(pivot)])
+	# torn flesh and bone where it came off, on both sides
+	var r: float = _wear.get(part, [null, 0.06])[1]
+	_stump(parent_part, pivot, pivot - parent_part.global_position, r)
+	_stump(part, pivot, pivot - part.global_position, r)
 	part.apply_central_impulse(dir * 7.0 + Vector3.UP * 2.0)
-	Gore.chunks(pivot, dir, 4, 4.0)
+	Gore.chunks(pivot, dir, chunks, 4.0)
 	Blood.spray(pivot, dir, 30, 2.0, 6.0, 0.5, 0.012, 0.03)
 	Blood.mist(pivot, dir, 1.5)
 	_bleed_left = maxf(_bleed_left, 25.0)
+
+
+## Torn end of a limb (the neck stump mesh, scaled), its raw face along `out`.
+func _stump(p: RigidBody3D, at: Vector3, out: Vector3, radius: float) -> void:
+	var y := out.normalized()
+	var x := y.cross(Vector3.UP if absf(y.y) < 0.9 else Vector3.RIGHT).normalized()
+	var mi := MeshInstance3D.new()
+	mi.mesh = Gore.mesh("stump")
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	p.add_child(mi)
+	mi.global_transform = Transform3D(Basis(x, y, x.cross(y)).scaled(Vector3.ONE * (radius / 0.053) * 1.1), at - y * 0.035)
+
+
+## A direct hit by a drone's warhead (or a grenade right at his feet): he is
+## torn apart - the limbs come off and fly, the head bursts, the organs and
+## pieces of flesh are thrown far, blood everywhere, the trunk ripped open.
+## Spread over a few physics frames: some sixty pieces at once stall a phone.
+func torn_apart(center: Vector3, power: float) -> void:
+	if display_only:
+		return
+	var c := chest.global_position
+	var away := c - center
+	away.y = maxf(away.y, 0.25)
+	away = away.normalized()
+	if not dead:
+		health = 0.0
+		if state == State.KNOCKED:
+			_mark_dead(false)
+		else:
+			_die(chest, c, away, 30.0 * power, false)
+	_tone_len = 0.0
+	wake_ragdoll()
+	for limb in [uarm_l, uarm_r, thigh_l, thigh_r, farm_l, farm_r, shin_l, shin_r]:
+		var p: RigidBody3D = limb
+		if p in [farm_l, farm_r, shin_l, shin_r] and randf() < 0.5:
+			continue # this one stays on its upper limb
+		var out := (p.global_position - center).normalized()
+		sever(p, out, 1)
+		p.apply_central_impulse((out + Vector3.UP * 0.4) * p.mass * randf_range(6.0, 10.0) * power)
+	for p in [chest, pelvis]:
+		p.apply_central_impulse(away * p.mass * 5.0 * power + Vector3.UP * p.mass * 2.0)
+	_bleed_left = maxf(_bleed_left, 40.0)
+	await get_tree().physics_frame
+	if not head_gone:
+		_explode_head(head.global_position, away)
+	await get_tree().physics_frame
+	c = chest.global_position
+	# the trunk is ripped open: everything in it goes
+	for o in ["heart", "lung", "lung", "liver", "stomach", "kidney", "kidney"]:
+		var d := (away + Vector3(randf_range(-0.9, 0.9), randf_range(0.0, 0.9), randf_range(-0.9, 0.9))).normalized()
+		Gore.spawn(o, Transform3D(Basis.from_euler(Vector3(randf(), randf(), randf()) * TAU), c + d * 0.12),
+				d * randf_range(5.0, 11.0) * power, null, 0.3)
+	await get_tree().physics_frame
+	spill_organs(pelvis, pelvis.global_position - away * 0.1, -away, away)
+	Gore.chunks(c, away + Vector3.UP * 0.4, 10, 9.0 * power)
+	for i in 3:
+		_mark_wound(chest, c + Vector3(randf_range(-0.12, 0.12), randf_range(-0.15, 0.15), randf_range(-0.1, 0.1)), "rip")
+	for i in 2:
+		_mark_wound(pelvis, pelvis.global_position + Vector3(randf_range(-0.1, 0.1), 0.0, randf_range(-0.1, 0.1)), "rip")
+	for i in 4:
+		var d := (away + Vector3(randf_range(-1, 1), randf_range(0.0, 1.0), randf_range(-1, 1))).normalized()
+		Blood.spray(c, d, 40, 3.0, 11.0, 0.6, 0.012, 0.04)
+	Blood.mist(c, Vector3.UP, 3.0)
+	Blood.mist(c, away, 3.0)
 
 
 # ------------------------------------------------------------------ neck wound
@@ -2293,6 +2465,7 @@ func blast(center: Vector3, f: float, power: float) -> void:
 		if randf() < 0.5:
 			spill_organs(pelvis if randf() < 0.5 else chest, c - dir * 0.12, -dir, dir)
 	if dead:
+		wake_ragdoll()
 		for p in parts:
 			if not p.freeze:
 				p.apply_central_impulse((p.global_position - center).normalized() * p.mass * 7.0 * f * power + Vector3.UP * p.mass * 2.0 * f)
@@ -2302,26 +2475,49 @@ func blast(center: Vector3, f: float, power: float) -> void:
 		_knockdown(chest, c, (dir + Vector3.UP * 0.5).normalized(), 25.0 * f)
 
 
+## Muzzle flashes: a few light + sprite pairs reused by every soldier (no
+## nodes made and freed per shot); far from the camera only the sprite.
+const FLASH_POOL := 8
+static var _flashes: Array = [] # [OmniLight3D, Sprite3D]
+static var _flash_next := 0
+
+
 func _muzzle_flash(muzzle: Vector3, dir: Vector3) -> void:
 	Sfx.play_3d({"rifle": "rifle", "svd": "sniper"}.get(weapon, "gunshot"), muzzle, 3.0 if weapon == "svd" else 0.0)
 	var root := get_tree().current_scene
-	var light := OmniLight3D.new()
-	light.light_color = Color(1.0, 0.72, 0.38)
-	light.light_energy = 4.0
-	light.omni_range = 4.0
-	root.add_child(light)
+	if _flashes.is_empty() or not is_instance_valid(_flashes[0][0]) or not _flashes[0][0].is_inside_tree():
+		_flashes.clear()
+		var tex: Texture2D = load("res://assets/textures/muzzle_flash.png")
+		for i in FLASH_POOL:
+			var light := OmniLight3D.new()
+			light.light_color = Color(1.0, 0.72, 0.38)
+			light.light_energy = 4.0
+			light.omni_range = 4.0
+			light.visible = false
+			root.add_child(light)
+			var spr := Sprite3D.new()
+			spr.texture = tex
+			spr.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+			spr.shaded = false
+			spr.pixel_size = 0.0012
+			spr.modulate = Color(1.4, 1.1, 0.8)
+			spr.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			spr.visible = false
+			root.add_child(spr)
+			_flashes.append([light, spr])
+	var f: Array = _flashes[_flash_next]
+	_flash_next = (_flash_next + 1) % FLASH_POOL
+	var light: OmniLight3D = f[0]
+	var spr: Sprite3D = f[1]
+	var cam := get_viewport().get_camera_3d()
+	light.visible = cam != null and cam.global_position.distance_to(muzzle) < 60.0
 	light.global_position = muzzle + dir * 0.05
-	var s := Sprite3D.new()
-	s.texture = load("res://assets/textures/muzzle_flash.png")
-	s.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	s.shaded = false
-	s.pixel_size = 0.0012
-	s.modulate = Color(1.4, 1.1, 0.8)
-	s.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	root.add_child(s)
-	s.global_position = muzzle + dir * 0.06
-	get_tree().create_timer(0.05).timeout.connect(light.queue_free)
-	get_tree().create_timer(0.05).timeout.connect(s.queue_free)
+	spr.visible = true
+	spr.global_position = muzzle + dir * 0.06
+	get_tree().create_timer(0.05).timeout.connect(func():
+		if is_instance_valid(light):
+			light.visible = false
+			spr.visible = false)
 
 
 ## Body hit position estimate for camera / spawn logic.

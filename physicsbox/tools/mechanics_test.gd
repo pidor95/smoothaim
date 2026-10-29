@@ -94,9 +94,12 @@ func _process(_delta: float) -> bool:
 		4:
 			_shot("m02_out_cold")
 			print("2 s later: state=%s unconscious=%s dead=%s" % [Npc.State.keys()[npc.state], npc.unconscious, npc.dead])
-			# finish him off
-			_aim_at(npc.head.global_position)
-			for i in 3:
+			# finish him off (the head, or the chest when he lies head away and
+			# the round would find the plate: as many rounds as it takes)
+			for i in 6:
+				if npc.dead:
+					break
+				_aim_at(npc.head.global_position if i < 3 else npc.pelvis.global_position)
 				_fire()
 			_mark.limbs = 0.0
 			_wait = 2

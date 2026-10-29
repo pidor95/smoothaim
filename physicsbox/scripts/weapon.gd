@@ -477,6 +477,8 @@ func _shoot() -> void:
 					e[0] += 1
 					part_hits[npc][part] = e
 					cost = FLESH_COST.get(part, 0.8)
+					if power > cost and is_instance_valid(npc):
+						npc.exit_wound(collider, pos, dir) # it went through
 			elif collider.has_meta("drone"):
 				collider.take_bullet(pos, dir, 0.0)
 			elif collider.get_meta("surface", "") == "glass" and collider.has_method("shatter"):

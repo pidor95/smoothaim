@@ -3,11 +3,22 @@ extends Node
 ## Simulates flying droplets, leaves splats where they land, spawns wounds,
 ## pools, mist bursts, dust and bullet holes.
 ## Marks on the static world go into big MultiMeshes (one draw call each) so
-## blood stays for the whole round; marks on moving bodies are separate nodes.
+## blood stays for the whole round; marks on moving bodies are separate nodes,
+## except the wounds in the uniform: a curved patch per hit, in one MultiMesh
+## per body part. Bursts (blood mist, dust) reuse a small pool of emitters.
 
 const MAX_DROPS := 420
 const MAX_WORLD_SPLATS := 6000
-const MAX_BODY_SPLATS := 300
+const MAX_BODY_SPLATS := 160
+## Only this share of drops that land on a soldier leaves a mark on him
+## (each one is a node; his wounds and the soaked cloth show the rest).
+const BODY_DROP_MARKS := 0.3
+## Wounds in the uniform (wound_atlas.png): cells and patch size.
+const WOUND_CELLS := {"entry": [0, 1], "exit": [2], "rip": [3]}
+const WOUND_PATCH := 0.2
+const WOUNDS_PER_PART := 6
+## Burst emitters kept per kind and reused (no node per bullet).
+const BURST_POOL := 10
 const MAX_WORLD_HOLES := 2000
 const MAX_BODY_HOLES := 120
 # atlas cells (tools/blender/build_blood_atlas.py)
@@ -43,6 +54,9 @@ var _shrink_curve := Curve.new()
 
 var _body_splats: Array = []
 var _body_holes: Array = []
+var _wound_mat := ShaderMaterial.new()
+var _patches := {} # radius (mm) -> curved patch mesh
+var _pools := {} # burst kind -> [emitters, next]
 
 
 func _ready() -> void:
@@ -108,6 +122,8 @@ func _ready() -> void:
 	_shrink_curve.add_point(Vector2(0, 1.0))
 	_shrink_curve.add_point(Vector2(0.7, 0.8))
 	_shrink_curve.add_point(Vector2(1, 0.0))
+	_wound_mat.shader = load("res://assets/shaders/wound_decal.gdshader")
+	_wound_mat.set_shader_parameter("atlas", load("res://assets/textures/wound_atlas.png"))
 
 
 func _add_mm_node(mm: MultiMesh, mat: Material) -> void:
@@ -276,7 +292,8 @@ func splat(pos: Vector3, normal: Vector3, size: float, parent: Node3D = null, ve
 	var xform := _mark_xform(pos, normal, size * 1.15, along, spin)
 	var tint := randf_range(0.8, 1.15)
 	if parent != null and is_instance_valid(parent):
-		_add_body(parent, xform, cell, tint)
+		if parent.has_meta("npc") and randf() < BODY_DROP_MARKS:
+			_add_body(parent, xform, cell, tint)
 	else:
 		_add_world(xform, cell, tint)
 
@@ -284,6 +301,77 @@ func splat(pos: Vector3, normal: Vector3, size: float, parent: Node3D = null, ve
 ## Wound mark glued to a body part.
 func wound(part: Node3D, pos: Vector3, normal: Vector3) -> void:
 	_add_body(part, _mark_xform(pos, normal, randf_range(0.08, 0.12)), CELL_DROPS[randi() % 2], 0.7)
+
+
+## A wound in the uniform where a round (or a fragment) went in or out:
+## the hole, torn flesh, frayed cloth, the blood soaking out. `frame` is the
+## part's visual in the part's space (a capsule along its Y, `radius`,
+## `length` long); the patch is curved round it. kind: entry / exit / rip.
+func body_wound(part: Node3D, frame: Transform3D, radius: float, length: float, pos: Vector3, kind := "entry") -> void:
+	var mmi: MultiMeshInstance3D = part.get_meta("wounds") if part.has_meta("wounds") else null
+	if mmi == null:
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.use_custom_data = true
+		mm.mesh = _patch(radius)
+		mm.instance_count = WOUNDS_PER_PART
+		mm.visible_instance_count = 0
+		mmi = MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		mmi.material_override = _wound_mat
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.transform = frame
+		mmi.visibility_range_end = 60.0
+		mmi.set_meta("n", 0)
+		part.add_child(mmi)
+		part.set_meta("wounds", mmi)
+	var v := frame.affine_inverse() * part.to_local(pos)
+	var half := maxf(length * 0.5 - radius * 0.4, 0.0)
+	var xf := Transform3D(Basis(Vector3.UP, atan2(v.x, v.z)), Vector3(0.0, clampf(v.y, -half, half), 0.0))
+	var cells: Array = WOUND_CELLS.get(kind, [0])
+	var scale: float = {"entry": randf_range(0.85, 1.0), "exit": randf_range(1.0, 1.15), "rip": randf_range(0.9, 1.1)}.get(kind, 1.0)
+	var n: int = mmi.get_meta("n")
+	var i := n % WOUNDS_PER_PART
+	mmi.multimesh.set_instance_transform(i, xf)
+	# all in 0..1 (wound_decal.gdshader): cell / 4, -, turn, size - 0.5
+	mmi.multimesh.set_instance_custom_data(i, Color(cells[randi() % cells.size()] / 4.0, 0.0, randf(), scale - 0.5))
+	mmi.set_meta("n", n + 1)
+	mmi.multimesh.visible_instance_count = mini(n + 1, WOUNDS_PER_PART)
+
+
+## A square patch bent round a capsule of `radius` (axis Y), centred on +Z,
+## standing a few mm off the cloth.
+func _patch(radius: float) -> ArrayMesh:
+	var key := int(round(radius * 1000.0))
+	if _patches.has(key):
+		return _patches[key]
+	var r := radius + 0.004
+	var w := WOUND_PATCH
+	var arc := minf(w / r, 2.6) # wraps at most ~150 degrees
+	var nx := 8
+	var ny := 6
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for j in ny + 1:
+		for i in nx + 1:
+			var u := float(i) / nx
+			var vv := float(j) / ny
+			var a := (u - 0.5) * arc
+			st.set_uv(Vector2(0.5 + (u - 0.5) * arc * r / w, vv))
+			st.set_normal(Vector3(sin(a), 0.0, cos(a)))
+			st.add_vertex(Vector3(sin(a) * r, (0.5 - vv) * w, cos(a) * r))
+	for j in ny:
+		for i in nx:
+			var k := j * (nx + 1) + i
+			st.add_index(k)
+			st.add_index(k + 1)
+			st.add_index(k + nx + 1)
+			st.add_index(k + 1)
+			st.add_index(k + nx + 2)
+			st.add_index(k + nx + 1)
+	var m := st.commit()
+	_patches[key] = m
+	return m
 
 
 ## Pool spreading under a body over `grow` seconds (stays for the round).
@@ -320,21 +408,33 @@ func bullet_hole(pos: Vector3, normal: Vector3, parent: Node3D = null) -> void:
 
 # ---------------------------------------------------------------- particle bursts
 
-func _burst(pos: Vector3, dir: Vector3, amount: int, color: Color, speed: float, spread: float,
+## One burst from the pool of `kind` (the oldest emitter is reused):
+## a fixed number of particles each, so nothing is reallocated per shot.
+func _burst(kind: String, pos: Vector3, dir: Vector3, amount: int, color: Color, speed: float, spread: float,
 		lifetime: float, size: float, gravity: float) -> void:
-	var root := _scene_root()
-	if root == null or amount <= 0:
+	if amount <= 0:
 		return
-	var p := CPUParticles3D.new()
-	p.emitting = false
-	p.top_level = true
-	p.position = pos
-	p.mesh = _puff_mesh
-	p.amount = amount
-	p.lifetime = lifetime
-	p.one_shot = true
-	p.explosiveness = 1.0
-	p.local_coords = false
+	if not _pools.has(kind):
+		var list: Array[CPUParticles3D] = []
+		for i in BURST_POOL:
+			var e := CPUParticles3D.new()
+			e.emitting = false
+			e.top_level = true
+			e.mesh = _puff_mesh
+			e.amount = amount
+			e.lifetime = lifetime
+			e.one_shot = true
+			e.explosiveness = 1.0
+			e.local_coords = false
+			e.scale_amount_curve = _shrink_curve
+			e.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(e)
+			list.append(e)
+		_pools[kind] = [list, 0]
+	var pool: Array = _pools[kind]
+	var p: CPUParticles3D = pool[0][pool[1]]
+	pool[1] = (pool[1] + 1) % BURST_POOL
+	p.global_position = pos
 	p.direction = dir.normalized() if dir.length() > 0.01 else Vector3.UP
 	p.spread = spread
 	p.initial_velocity_min = speed * 0.3
@@ -344,19 +444,17 @@ func _burst(pos: Vector3, dir: Vector3, amount: int, color: Color, speed: float,
 	p.damping_max = speed * 0.8
 	p.scale_amount_min = size * 0.5
 	p.scale_amount_max = size * 1.4
-	p.scale_amount_curve = _shrink_curve
 	p.color = color
-	root.add_child(p)
-	p.emitting = true
-	get_tree().create_timer(lifetime + 0.3, false).timeout.connect(p.queue_free)
+	p.restart()
 
 
 ## Burst of fine blood specks (bullet entry / exit).
 func mist(pos: Vector3, dir: Vector3, strength := 1.0) -> void:
-	_burst(pos, dir, int(26 * strength * Settings.blood_amount) + 6, Color(0.5, 0.01, 0.025),
-			3.5 * strength, 38.0, 0.55, 0.022, 7.0)
+	# (strength makes it faster and bigger: the count is fixed per pool)
+	_burst("mist", pos, dir, int(26 * Settings.blood_amount) + 6, Color(0.5, 0.01, 0.025),
+			3.5 * strength, 38.0, 0.55, 0.022 * clampf(sqrt(strength), 0.7, 1.8), 7.0)
 
 
 ## Debris chips for non-flesh impacts.
 func dust(pos: Vector3, normal: Vector3, color := Color(0.75, 0.73, 0.7)) -> void:
-	_burst(pos, normal, 12, color, 3.0, 35.0, 0.6, 0.02, 9.0)
+	_burst("dust", pos, normal, 12, color, 3.0, 35.0, 0.6, 0.02, 9.0)

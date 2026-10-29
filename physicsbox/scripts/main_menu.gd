@@ -17,7 +17,7 @@ const PRELOAD := ["res://scenes/game.tscn", "res://assets/maps/trenches.glb", "r
 		"res://assets/maps/trenches_nav.res", "res://assets/weapons/ak74_fp.glb", "res://assets/weapons/svd_fp.glb",
 		"res://assets/weapons/grenade_fp.glb", "res://assets/npc/npc_rifle.glb", "res://assets/npc/npc_svd.glb",
 		"res://assets/npc/soldier_gear.glb", "res://assets/npc/mannequin_anims.glb",
-		"res://assets/weapons/suppressor.glb"]
+		"res://assets/weapons/suppressor.glb", "res://assets/npc/gibs.glb", "res://assets/textures/wound_atlas.png"]
 
 
 func _ready() -> void:

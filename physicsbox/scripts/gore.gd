@@ -73,6 +73,14 @@ static func spawn(piece: String, xform: Transform3D, vel: Vector3, skin: Materia
 			marks.n += 1
 			Blood.splat(b.global_position + Vector3.DOWN * 0.02, Vector3.UP, randf_range(0.12, 0.28))
 	)
+	# once it comes to rest it is frozen where it lies (no more simulation
+	# or contact reports); a blast wakes it (explosion.gd)
+	b.sleeping_state_changed.connect(func():
+		if b.sleeping and not b.freeze:
+			b.contact_monitor = false
+			b.freeze = true
+			b.set_meta("settled", true)
+	)
 	_live.append(b)
 	while _live.size() > MAX_PIECES:
 		var old: RigidBody3D = _live.pop_front()

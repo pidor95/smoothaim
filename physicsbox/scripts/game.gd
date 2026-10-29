@@ -44,6 +44,7 @@ func _ready() -> void:
 	add_to_group("settings_listeners")
 	Blood.clear()
 	Gore.clear()
+	Gore.mesh("stump") # the gore meshes ready before the first blast, not during it
 	Engine.time_scale = 1.0
 	AudioServer.playback_speed_scale = 1.0
 	_build_environment()

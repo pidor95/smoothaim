@@ -127,6 +127,10 @@ func _damage(power: float, by_player: bool) -> void:
 		if d > radius or not _clear(space, center, c):
 			continue
 		n.last_hit_by_player = by_player
+		# a drone's warhead going off on him (or a grenade at his feet) tears him apart
+		if (power >= 1.3 and d < 1.8) or d < 0.7:
+			n.torn_apart(center, power)
+			continue
 		n.blast(center, 1.0 - d / radius, power)
 	# fragments: they fly out and hit like bullets
 	var frags := int(50 * power)
@@ -169,6 +173,12 @@ func _damage(power: float, by_player: bool) -> void:
 	sq.collision_mask = 2 | 4 | 32
 	for r in space.intersect_shape(sq, 96):
 		var rb := r.collider as RigidBody3D
+		if rb != null and rb.has_meta("settled"): # a body or a piece at rest: up it goes again
+			if rb.has_meta("npc") and is_instance_valid(rb.get_meta("npc")):
+				rb.get_meta("npc").wake_ragdoll()
+			else:
+				rb.freeze = false
+				rb.remove_meta("settled")
 		if rb == null or rb.freeze:
 			continue
 		var away := rb.global_position - center

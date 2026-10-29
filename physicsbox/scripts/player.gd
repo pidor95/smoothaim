@@ -525,6 +525,12 @@ func _kick_loose_bodies() -> void:
 		return
 	for b in _feet.get_overlapping_bodies():
 		var rb := b as RigidBody3D
+		if rb != null and rb.has_meta("settled"): # walked into a body at rest: it moves again
+			if rb.has_meta("npc") and is_instance_valid(rb.get_meta("npc")):
+				rb.get_meta("npc").wake_ragdoll()
+			else:
+				rb.freeze = false
+				rb.remove_meta("settled")
 		if rb == null or rb.freeze:
 			continue
 		var away := rb.global_position - global_position
