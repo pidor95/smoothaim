@@ -16,9 +16,10 @@ enum State { IDLE, WANDER, PANIC, STAGGER, KNOCKED, GETUP, DEAD, CHOKE, ORDER }
 
 ## Global AI switch (pause menu / HUD). When off NPCs just stand and take hits.
 static var ai_enabled := true
-## Some spawned NPCs carry a pistol (pause menu toggle).
-static var guns_enabled := true
-const ARMED_CHANCE := 0.35
+## Which mannequins spawn (NPC menu): unarmed, with a pistol, or mixed.
+enum SpawnKind { UNARMED, ARMED, MIXED }
+static var spawn_kind := SpawnKind.MIXED
+const ARMED_CHANCE := 0.35 # share of armed ones in MIXED
 
 # The pistol in the right hand, farm_r space. Must match HAND_R / GUN_BARREL /
 # GUN_TOP in tools/blender/build_mannequin_anims.py (the suicide pose is
@@ -27,7 +28,8 @@ const GUN_SCENE := "res://assets/npc/npc_pistol.glb"
 const GUN_HAND := Vector3(0, -0.19, 0)
 const GUN_BARREL := Vector3(0, -0.9397, -0.342)
 const GUN_TOP := Vector3(0, 0.342, -0.9397)
-const GUN_MUZZLE := Vector3(0, 0.035, -0.12) # in the gun model
+const GUN_MUZZLE := Vector3(0, 0.056, -0.195) # in the gun model
+const GUN_TEXTURE := "res://assets/m1911/m1911_albedo.jpg"
 const MAX_DROPPED_GUNS := 8
 
 ## Orders the player can shout: [command, what is shouted].
@@ -164,11 +166,16 @@ var _blend_time := 0.25
 # neck wound
 var _neck_wound := false
 var _choke_drain := 0.0 # hp per second lost through the throat
-var _choke_kneel := false
+var _choke_phase := 0 # 0 on his feet, 1 on his knees, 2 keeling over, 3 rolling on the floor
+var _choke_phase_t := 0.0
+var _choke_stand_time := 2.5
 var _choke_t := 0.0
 var _cough_cd := 0.8
 var _c_choke_stand: MannequinAnims.Clip
 var _c_choke_knees: MannequinAnims.Clip
+var _c_choke_fall: MannequinAnims.Clip
+var _c_choke_floor: MannequinAnims.Clip
+static var _gun_material: StandardMaterial3D
 # orders
 var _order := ""
 var _order_clip: MannequinAnims.Clip
@@ -214,6 +221,8 @@ func _ready() -> void:
 	_c_panic = _lib.clip("panic_run")
 	_c_choke_stand = _lib.clip("choke_stand")
 	_c_choke_knees = _lib.clip("choke_knees")
+	_c_choke_fall = _lib.clip("choke_fall")
+	_c_choke_floor = _lib.clip("choke_floor")
 	_c_suicide = _lib.clip("suicide_r")
 	_spring.resize(CENTERS.size())
 	_spring_vel.resize(CENTERS.size())
@@ -398,8 +407,8 @@ func _compute_pose() -> Array[Transform3D]:
 				# horizontal travel is root motion (the body itself is moved)
 				p.y = L.pelvis_pos(_stagger, _stagger_t).y
 		elif state == State.CHOKE:
-			var cc := _c_choke_knees if _choke_kneel else _c_choke_stand
-			var ct := fposmod(_choke_t, cc.length)
+			var cc: MannequinAnims.Clip = [_c_choke_stand, _c_choke_knees, _c_choke_fall, _c_choke_floor][_choke_phase]
+			var ct := minf(_choke_t, cc.length) if _choke_phase == 2 else fposmod(_choke_t, cc.length)
 			q = L.rot(cc, i, ct)
 			p = L.pelvis_pos(cc, ct) if i == 0 else L.rest_local[i].origin
 		else:
@@ -536,7 +545,9 @@ func _physics_process(delta: float) -> void:
 					state = State.IDLE
 					_state_time = randf_range(1.0, 4.0)
 			State.PANIC:
-				if _state_time <= 0.0:
+				if _state_time <= 0.0 and player and global_position.distance_to(player.global_position) < 12.0:
+					_state_time = 1.5 # the shooter is still close: keep running
+				elif _state_time <= 0.0:
 					state = State.IDLE
 					_state_time = randf_range(2.0, 4.0)
 				elif _agent.is_navigation_finished():
@@ -620,15 +631,26 @@ func _start_wander() -> void:
 	_last_pos = global_position
 
 
+## Somewhere far from the shooter, in the direction away from him (never
+## running past him).
 func _flee_target() -> void:
 	var player := get_tree().get_first_node_in_group("player") as Node3D
+	var away := Vector3.ZERO
+	if player:
+		away = global_position - player.global_position
+		away.y = 0.0
+		away = away.normalized()
 	var best := global_position
-	var best_d := -1.0
-	for i in 6:
+	var best_s := -INF
+	for i in 10:
 		var p := _random_nav_point()
-		var d := p.distance_to(player.global_position) if player else randf()
-		if d > best_d:
-			best_d = d
+		var to := p - global_position
+		to.y = 0.0
+		var s := p.distance_to(player.global_position) if player else randf()
+		if to.length() > 1.0 and away != Vector3.ZERO:
+			s += to.normalized().dot(away) * 8.0
+		if s > best_s:
+			best_s = s
 			best = p
 	_agent.target_position = best
 	_stuck_time = 0.0
@@ -1024,13 +1046,27 @@ func _knocked_process(delta: float) -> void:
 		queue_free()
 		return
 	var settled := chest.linear_velocity.length() < 0.5 and pelvis.linear_velocity.length() < 0.5
-	if _neck_wound and health < 35.0:
-		return # too weak to get up: he bleeds out on the floor
+	if _neck_wound:
+		# throat open: he does not get up, he rolls about on the floor
+		if (_knock_time > 1.0 and settled) or _knock_time > 4.0:
+			_start_floor_choke()
+		return
 	if (_knock_time > 1.8 and settled) or _knock_time > 6.0:
 		_start_getup()
 
 
 func _start_getup() -> void:
+	var face_up := (chest.global_basis * Vector3(0, 0, -1)).y > 0.0
+	_getup = _lib.clip("getup_back" if face_up else "getup_front")
+	_getup_t = 0.0
+	_freeze_from_ragdoll(Vector3(0, 0, 1) if face_up else Vector3(0, 0, -1))
+	state = State.GETUP
+
+
+## Ragdoll back to animated parts: turns the root so the clip's lying body
+## (head towards `head_dir`, NPC space) lines up with the ragdoll and blends
+## from where the parts lie now.
+func _freeze_from_ragdoll(head_dir: Vector3) -> void:
 	var saved: Array[Transform3D] = []
 	for p in parts:
 		saved.append(p.global_transform)
@@ -1042,14 +1078,9 @@ func _start_getup() -> void:
 		p.freeze = true
 		p.collision_mask = 0
 		p.contact_monitor = false
-	var face_up := (chest.global_basis * Vector3(0, 0, -1)).y > 0.0
-	_getup = _lib.clip("getup_back" if face_up else "getup_front")
-	_getup_t = 0.0
-	# turn the root so the clip's lying body lines up with the ragdoll
 	var actual := head.global_position - pelvis.global_position
 	actual.y = 0.0
-	var anim_dir := Vector3(0, 0, 1) if face_up else Vector3(0, 0, -1)
-	var yaw := atan2(actual.x, actual.z) - atan2(anim_dir.x, anim_dir.z)
+	var yaw := atan2(actual.x, actual.z) - atan2(head_dir.x, head_dir.z)
 	var base := pelvis.global_position
 	var q := PhysicsRayQueryParameters3D.create(base + Vector3.UP * 0.3, base + Vector3.DOWN * 2.0, LAYER_WORLD | LAYER_PROPS)
 	var hit := get_world_3d().direct_space_state.intersect_ray(q)
@@ -1060,7 +1091,7 @@ func _start_getup() -> void:
 	_spring_vel.fill(Vector3.ZERO)
 	_blend_from = saved
 	_blend_w = 0.0
-	state = State.GETUP
+	_blend_time = 0.4
 
 
 func _getup_process(delta: float) -> void:
@@ -1301,22 +1332,46 @@ func _start_choke() -> void:
 	_clutch = null
 	_clutch_w = 0.0
 	_choke_t = randf() * 2.0
+	_choke_phase = mini(_choke_phase, 1) # back on his feet after a fall: he goes down again
+	_choke_phase_t = 0.0
+	_choke_stand_time = randf_range(1.6, 2.8)
 	_cough_cd = randf_range(0.4, 1.0)
 	velocity.x = 0.0
 	velocity.z = 0.0
 
 
+## Knocked down with his throat open: from the ragdoll straight into rolling
+## about on the floor.
+func _start_floor_choke() -> void:
+	_freeze_from_ragdoll(Vector3(0, 0, 1))
+	_blend_time = 0.5
+	state = State.CHOKE
+	_choke_phase = 3
+	_choke_phase_t = 0.0
+	_choke_t = 0.0
+	_clutch = null
+	_clutch_w = 0.0
+
+
 func _choke_process(delta: float) -> void:
 	_choke_t += delta
+	_choke_phase_t += delta
 	_blend_w = minf(_blend_w + delta / _blend_time, 1.0)
-	if not _choke_kneel and health < 28.0:
-		# the legs give out: down on his knees, still holding his throat
-		_choke_kneel = true
-		_capture_blend()
-		_blend_time = 0.8
-		_choke_t = 0.0
+	match _choke_phase:
+		0:
+			if _choke_phase_t > _choke_stand_time or health < 30.0:
+				# the legs give out: down on his knees, still holding his throat
+				_next_choke_phase(0.7)
+		1:
+			if _choke_phase_t > 1.4:
+				# keels over onto the floor
+				_next_choke_phase(0.15)
+				collision_layer = 0
+		2:
+			if _choke_t >= _c_choke_fall.length:
+				_next_choke_phase(0.0)
 	var drift := Vector3.ZERO
-	if not _choke_kneel:
+	if _choke_phase == 0:
 		# reeling on the spot, a little this way and that
 		drift = global_transform.basis * Vector3(sin(_time * 1.3) * 0.22, 0.0, cos(_time * 0.8) * 0.18)
 	velocity.x = move_toward(velocity.x, drift.x, 2.0 * delta)
@@ -1328,11 +1383,20 @@ func _choke_process(delta: float) -> void:
 	move_and_slide()
 	_cough_cd -= delta
 	if _cough_cd <= 0.0:
-		_cough_cd = randf_range(1.0, 2.6) * (0.75 if _choke_kneel else 1.0)
+		_cough_cd = randf_range(1.0, 2.6) * (0.75 if _choke_phase > 0 else 1.0)
 		_cough()
 	_update_layers(delta, 0.0)
 	_bleed(delta, 0.12, 0.28)
 	_apply_pose(_compute_pose())
+
+
+func _next_choke_phase(blend: float) -> void:
+	if blend > 0.0:
+		_capture_blend()
+		_blend_time = blend
+	_choke_phase += 1
+	_choke_phase_t = 0.0
+	_choke_t = 0.0
 
 
 ## A gasp that brings up blood: chest and head jerk, the mouth sprays.
@@ -1400,7 +1464,24 @@ func _attach_gun() -> void:
 	_gun = (load(GUN_SCENE) as PackedScene).instantiate()
 	var z := -GUN_BARREL
 	_gun.transform = Transform3D(Basis(GUN_TOP.cross(z), GUN_TOP, z), GUN_HAND)
+	if _gun_material == null:
+		_gun_material = StandardMaterial3D.new()
+		_gun_material.albedo_texture = load(GUN_TEXTURE)
+		_gun_material.metallic = 0.3
+		_gun_material.roughness = 0.5
+	for mi in _gun.find_children("*", "MeshInstance3D", true, false):
+		(mi as MeshInstance3D).material_override = _gun_material
 	farm_r.add_child(_gun)
+
+
+## Whether a new mannequin gets a pistol, per the NPC menu choice.
+static func roll_armed() -> bool:
+	match spawn_kind:
+		SpawnKind.ARMED:
+			return true
+		SpawnKind.UNARMED:
+			return false
+	return randf() < ARMED_CHANCE
 
 
 ## Lets go of the pistol: it falls as a loose physics prop.
@@ -1438,7 +1519,8 @@ func _hopeless() -> bool:
 
 
 ## Armed and out of options (throat cut open, shot to pieces with the shooter
-## close, crippled, cornered): now and then he decides to end it himself.
+## close, crippled): now and then he decides to end it himself. While he can
+## still run he just runs.
 func _despair_check(delta: float) -> void:
 	if _gun == null or _suicide_t >= 0.0 or display_only:
 		return
@@ -1453,15 +1535,13 @@ func _despair_check(delta: float) -> void:
 	var chance := 0.0
 	if _neck_wound:
 		chance = 0.03
-		if _choke_kneel and not _choke_despair_rolled:
+		if _choke_phase >= 1 and not _choke_despair_rolled:
 			_choke_despair_rolled = true
 			chance = 0.55
 	elif health < 35.0 and dist < 10.0:
 		chance = 0.12
-	elif _knee_hits >= 2 and dist < 10.0:
+	elif _knee_hits >= 2 and dist < 10.0 and state != State.PANIC:
 		chance = 0.1
-	elif state == State.PANIC and _stuck_count >= 2 and dist < 7.0:
-		chance = 0.2
 	if randf() < chance:
 		_start_suicide()
 

@@ -70,6 +70,7 @@ func _setup_input() -> void:
 	_key_action("weapon_next", [KEY_F])
 	_key_action("toggle_ai", [KEY_T])
 	_key_action("weapon_menu", [KEY_B, KEY_TAB])
+	_key_action("npc_menu", [KEY_N])
 	for i in 7: # orders on 3..9
 		_key_action("order_%d" % (i + 1), [KEY_3 + i])
 	_mouse_action("fire", MOUSE_BUTTON_LEFT)

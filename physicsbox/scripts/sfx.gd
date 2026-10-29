@@ -2,14 +2,14 @@ extends Node
 ## Sound effect player with voice pools (autoload "Sfx").
 
 const SOUNDS := {
-	"gunshot": ["gunshot"],
+	"gunshot": ["gunshot_0", "gunshot_1", "gunshot_2"],
 	"dry_fire": ["dry_fire"],
 	"shotgun_shot": ["shotgun_shot"],
 	"wall_hit": ["wall_hit_0", "wall_hit_1"],
 	"wood_hit": ["wood_hit"],
 	"wood_break": ["wood_break"],
 	"metal_hit": ["metal_hit"],
-	"glass_break": ["glass_break"],
+	"glass_break": ["glass_break_0", "glass_break_1", "glass_break_2", "glass_break_3", "glass_break_4"],
 	"footstep": ["footstep_0", "footstep_1", "footstep_2"],
 	"ui_click": ["ui_click"],
 	"hitmarker": ["hitmarker"],

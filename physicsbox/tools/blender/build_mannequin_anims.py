@@ -12,12 +12,13 @@ with these conventions (degrees):
   uarm Z raises the arm sideways (left -, right +), farm +X elbow bends,
   chest -X leans forward, head +X tilts back, pelvis rotates the whole body.
 Clips:
-  idle, walk, panic_run                      - loops
+  idle, walk, panic_run (sprint)             - loops
   stagger_back/fwd/left/right, stagger_head,  - balance recoveries after a hit:
   limp_l/r, spin_l/r                           rocked on the spot, feet pattering
   knee_fall_l/r                              - knee shot, folds and topples
   clutch_*                                   - hand on the wound (single poses)
-  choke_stand, choke_knees                   - neck shot: hands on the throat, gasping
+  choke_stand, choke_knees, choke_fall,      - neck shot: hands on the throat, gasping,
+  choke_floor                                  then down on the floor rolling about
   hands_up, kneel_hands_head                 - obeying the player's orders
   suicide_r                                  - pistol to the temple (head + right arm)
   getup_back, getup_front                    - standing up from the floor
@@ -102,11 +103,13 @@ class Clip:
         arm.animation_data.action = self.action
 
     def pose(self, frame, rots=None, pelvis_loc=(0, 0, 0)):
-        """Keys a full pose. rots: {bone: (x, y, z) degrees in the NPC frame}."""
+        """Keys a full pose. rots: {bone: (x, y, z) degrees in the NPC frame,
+        or a 3x3 rotation Matrix in the NPC frame (used for lying bodies)}."""
         rots = rots or {}
         for pb in self.arm.pose.bones:
             b = pb.bone.matrix_local.to_3x3()
-            r = godot_rot(rots.get(pb.name, (0, 0, 0)))
+            v = rots.get(pb.name, (0, 0, 0))
+            r = C @ v @ C.transposed() if isinstance(v, Matrix) else godot_rot(v)
             local = b.inverted() @ r @ b
             pb.rotation_quaternion = local.to_quaternion()
             pb.keyframe_insert("rotation_quaternion", frame=frame)
@@ -149,7 +152,7 @@ def idle(arm):
     c.finish()
 
 
-def cycle(arm, name, frames, stride, knee, arm_swing, lean, bob, arms_up=0.0, keys=12):
+def cycle(arm, name, frames, stride, knee, arm_swing, lean, bob, arms_up=0.0, keys=12, elbow_bend=15):
     c = Clip(arm, name)
     for i in range(keys + 1):
         t = i / keys
@@ -160,7 +163,7 @@ def cycle(arm, name, frames, stride, knee, arm_swing, lean, bob, arms_up=0.0, ke
         swing = -s * arm_swing
         flail = math.sin(ph * 2) * 18 * arms_up
         raise_ = 150 * arms_up + 5
-        elbow = 15 + 10 * abs(s) + 25 * arms_up
+        elbow = elbow_bend + 10 * abs(s) + 25 * arms_up
         rots = {
             "pelvis": (0, s * 5, 0),
             "chest": (-lean, -s * 8, 0),
@@ -315,7 +318,8 @@ KNEEL_DROP = -0.44
 def chokes(arm):
     """Carotid opened by a neck shot. Both hands clamp the throat for as long
     as he lives; he gasps (chest heaving, head jerking) and keeps patting his
-    feet to stay up, then sinks to his knees still holding on."""
+    feet to stay up, sinks to his knees, topples over and rolls about on the
+    floor still holding on."""
     c = Clip(arm, "choke_stand")
     n = 12
     for i in range(n + 1):
@@ -344,6 +348,51 @@ def chokes(arm):
             "head": (-8 + 18 * gasp, 6 * math.sin(ph * 2), -6 * math.sin(ph))})
         c.pose(round(i / n * 72), rots, (0.03 * math.sin(ph), KNEEL_DROP - 0.015 * gasp, 0))
     c.finish()
+
+
+    # from his knees he keels over sideways onto the floor
+    c = Clip(arm, "choke_fall")
+    c.pose(0, _add(CLUTCH_NECK, KNEEL, {"chest": (-32, 0, 0), "head": (-8, 0, 0)}), (0, KNEEL_DROP, 0))
+    c.pose(6, _add(CLUTCH_NECK, KNEEL, {"pelvis": (0, 0, 14), "chest": (-38, 0, 16), "head": (-12, 0, 12)}),
+           (0.03, KNEEL_DROP - 0.05, 0))
+    c.pose(12, dict(_add(CLUTCH_NECK, {"chest": (-28, 0, 8), "head": (-6, 0, 10), "thigh_l": (75, 0, -6),
+                                       "thigh_r": (70, 0, 6), "shin_l": (-110, 0, 0), "shin_r": (-105, 0, 0)}),
+                    pelvis=lying(60, 45)), (-0.05, -0.68, 0.05))
+    c.pose(17, dict(_add(CLUTCH_NECK, {"chest": (-12, 0, 0), "head": (14, 0, 0), "thigh_l": (62, 0, -8),
+                                       "thigh_r": (55, 0, 8), "shin_l": (-95, 0, 0), "shin_r": (-90, 0, 0)}),
+                    pelvis=lying(95)), (-0.1, -0.73, 0))
+    floor = _floor_pose(0.0)
+    c.pose(24, floor[0], floor[1])
+    c.finish()
+
+    # rolling about on the floor: onto one side, over the back onto the other,
+    # knees drawn up and kicking, chest heaving, still clutching the throat
+    c = Clip(arm, "choke_floor")
+    n = 16
+    for i in range(n + 1):
+        rots, loc = _floor_pose(i / n * 2 * math.pi)
+        c.pose(round(i / n * 120), rots, loc)
+    c.finish()
+
+
+def lying(roll, tilt=88):
+    """Pelvis rotation of a body lying on its back (head towards +Z) and
+    rolled by `roll` degrees about its own length (+ = onto the left side)."""
+    return Matrix.Rotation(math.radians(roll), 3, "Z") @ grot((tilt, 0, 0))
+
+
+def _floor_pose(ph):
+    roll = 92 * math.cos(ph) + 14 * math.sin(2 * ph)
+    gasp = max(0.0, math.sin(ph * 3)) ** 3
+    k = math.sin(2 * ph)
+    rots = _add(CLUTCH_NECK, {
+        "chest": (-18 - 12 * gasp + 6 * math.sin(ph * 4), 10 * math.sin(ph), 0),
+        "head": (-6 + 22 * gasp, 14 * math.sin(ph + 0.5), 0),
+        "thigh_l": (58 + 28 * k, 0, -8), "shin_l": (-88 - 26 * math.sin(2 * ph + 0.8), 0, 0),
+        "thigh_r": (58 - 28 * k, 0, 8), "shin_r": (-88 + 26 * math.sin(2 * ph + 0.8), 0, 0)})
+    rots["pelvis"] = lying(roll)
+    side = abs(math.sin(math.radians(roll)))
+    return rots, (-0.1 * math.sin(math.radians(roll)), -0.8 + 0.075 * side, 0)
 
 
 # ---------------------------------------------------------------- orders
@@ -383,7 +432,7 @@ PARENTS = {b[0]: b[3] for b in BONES}
 HAND_R = Vector((0.265, 0.85, 0))
 GUN_BARREL = Vector((0, -1, -0.364)).normalized()
 GUN_TOP = Vector((0, 0.364, -1)).normalized()
-GUN_MUZZLE = HAND_R + GUN_BARREL * 0.12 + GUN_TOP * 0.035
+GUN_MUZZLE = HAND_R + GUN_BARREL * 0.195 + GUN_TOP * 0.056
 
 
 def grot(deg):
@@ -512,7 +561,8 @@ def main():
     arm = build_armature()
     idle(arm)
     cycle(arm, "walk", 30, stride=30, knee=50, arm_swing=24, lean=2, bob=0.035)
-    cycle(arm, "panic_run", 20, stride=42, knee=85, arm_swing=0, lean=12, bob=0.05, arms_up=1.0)
+    # panic: just a flat-out sprint away, arms pumping
+    cycle(arm, "panic_run", 18, stride=46, knee=95, arm_swing=50, lean=15, bob=0.06, elbow_bend=80)
     staggers(arm)
     clutches(arm)
     chokes(arm)

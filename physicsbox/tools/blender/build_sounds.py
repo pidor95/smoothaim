@@ -6,7 +6,9 @@ Run:  blender -b --python tools/blender/build_sounds.py
 Every sound is built from short, sharp layers - a transient crack, a body
 and resonant modes - instead of long filtered noise (which reads as water),
 then placed in a small room with a synthetic convolution reverb.
-The shotgun shot (shotgun_shot.wav) is a recorded sample and is left alone.
+The shotgun shot (shotgun_shot.wav) is a recorded sample and is left alone;
+the pistol shots and glass breaks are cut from real recordings by
+build_recorded_sounds.py.
 """
 import os
 
@@ -125,20 +127,6 @@ def save(name, x, peak=0.9):
 
 # ---------------------------------------------------------------- sounds
 
-def pistol_shot():
-    total = 1.4
-    crack = band(noise(0.02), 1800, 14000) * env(0.02, 0.00005, 0.0011)
-    blast = band(noise(0.15), 150, 4500) * env(0.15, 0.0002, 0.016) * 1.5
-    blast2 = band(noise(0.25), 80, 1200) * env(0.25, 0.0005, 0.055) * 0.5
-    t = t_axis(0.2)
-    thump = np.sin(2 * np.pi * (100 * t - 90 * t * t)) * env(0.2, 0.0005, 0.04) * 1.1
-    mech = modes(0.03, [2800, 4150, 6900], [0.006, 0.004, 0.003], [0.25, 0.18, 0.1])
-    dry = fit(crack, total) + fit(blast, total) + fit(blast2, total) + fit(thump, total)
-    dry += at(mech, 0.024, total) + at(mech * 0.6, 0.052, total)
-    dry = np.tanh(dry * 2.2)
-    return place(dry, 0.55, room_ir(0.95, 3500))
-
-
 def concrete_hit(seed):
     total = 0.45
     crack = band(noise(0.02), 2000, 11000) * env(0.02, 0.0001, 0.0018)
@@ -178,18 +166,6 @@ def metal_hit():
     return place(fit(click, total) + fit(ring, total), 0.2, room_ir(0.6, 6000))
 
 
-def glass_break():
-    total = 1.3
-    burst = band(noise(0.06), 2500, 15000) * env(0.06, 0.0001, 0.008)
-    dry = fit(burst, total)
-    onset = 0.0
-    for i in range(34):
-        onset += rng.exponential(0.018) * (1 + i * 0.08)
-        ping = modes(0.12, [rng.uniform(2600, 9000)], [rng.uniform(0.02, 0.06)], [1.0])
-        dry += at(ping * rng.uniform(0.1, 0.45) * np.exp(-onset * 2.0), onset, total)
-    return place(dry, 0.3, room_ir(0.7, 7000))
-
-
 def footstep(seed):
     total = 0.25
     t = t_axis(0.08)
@@ -221,14 +197,12 @@ def hitmarker():
 
 def main():
     os.makedirs(OUT, exist_ok=True)
-    save("gunshot", pistol_shot(), 0.95)
     save("dry_fire", dry_fire(), 0.5)
     for i in range(2):
         save("wall_hit_%d" % i, concrete_hit(i), 0.6)
     save("wood_hit", wood_hit(), 0.6)
     save("wood_break", wood_break(), 0.75)
     save("metal_hit", metal_hit(), 0.5)
-    save("glass_break", glass_break(), 0.7)
     for i in range(3):
         save("footstep_%d" % i, footstep(i), 0.32)
     save("ui_click", ui_click(), 0.45)

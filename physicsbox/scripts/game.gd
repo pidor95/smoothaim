@@ -25,6 +25,17 @@ var _weapon_layer := CanvasLayer.new()
 var _weapon_panel: Control
 var _weapon_cards: Array = [] # [button, slot index]
 var weapon_menu_open := false
+var _npc_layer := CanvasLayer.new()
+var _npc_panel: Control
+var _npc_cards: Array = [] # [button, kind]
+var npc_menu_open := false
+
+## NPC menu cards: [kind, title, description].
+const NPC_KINDS := [
+	[Npc.SpawnKind.UNARMED, "БЕЗ ОРУЖИЯ", "Безоружные манекены.\nБродят, в панике убегают,\nслушаются приказов."],
+	[Npc.SpawnKind.ARMED, "С ПИСТОЛЕТОМ", "У каждого Colt M1911.\nВ безвыходном положении\nможет застрелиться."],
+	[Npc.SpawnKind.MIXED, "ВПЕРЕМЕШКУ", "Примерно каждый третий\nс пистолетом,\nостальные без оружия."],
+]
 
 
 func _ready() -> void:
@@ -50,6 +61,7 @@ func _ready() -> void:
 	hud_layer.add_child(hud)
 	_build_pause_menu()
 	_build_weapon_menu()
+	_build_npc_menu()
 	player.capture_mouse()
 
 	# let the navigation map sync before NPCs start pathing
@@ -107,18 +119,19 @@ func on_settings_changed() -> void:
 
 # ------------------------------------------------------------------ NPCs
 
-func spawn_npc(pos: Vector3) -> Npc:
+## `armed`: -1 = as chosen in the NPC menu, 0 / 1 = force.
+func spawn_npc(pos: Vector3, armed := -1) -> Npc:
 	var npc := Npc.new()
 	npc.position = pos
 	npc.rotation.y = randf() * TAU
-	npc.armed = Npc.guns_enabled and randf() < Npc.ARMED_CHANCE
+	npc.armed = Npc.roll_armed() if armed < 0 else armed == 1
 	add_child(npc)
 	npc.died.connect(_on_npc_died)
 	return npc
 
 
 ## Spawns a mannequin a few metres in front of the player (snapped to the navmesh).
-func spawn_in_front() -> void:
+func spawn_in_front(armed := -1) -> void:
 	var cam := player.camera
 	var fwd := -cam.global_basis.z
 	fwd.y = 0.0
@@ -134,7 +147,7 @@ func spawn_in_front() -> void:
 	var p := NavigationServer3D.map_get_closest_point(map, target)
 	if p == Vector3.ZERO or p.distance_to(target) > 3.0:
 		p = target
-	var npc := spawn_npc(p + Vector3.UP * 0.05)
+	var npc := spawn_npc(p + Vector3.UP * 0.05, armed)
 	var to_player := player.global_position - npc.global_position
 	npc.rotation.y = atan2(-to_player.x, -to_player.z)
 	Sfx.play("ui_click")
@@ -234,6 +247,8 @@ func _process(_delta: float) -> void:
 			toggle_ai()
 		if Input.is_action_just_pressed("weapon_menu"):
 			toggle_weapon_menu()
+		if Input.is_action_just_pressed("npc_menu"):
+			toggle_npc_menu()
 		for i in Npc.ORDERS.size():
 			if Input.is_action_just_pressed("order_%d" % (i + 1)):
 				give_order(i)
@@ -267,10 +282,15 @@ class PauseWatcher extends Node:
 		elif event.is_action_pressed("weapon_menu") and game.weapon_menu_open:
 			game.toggle_weapon_menu()
 			get_viewport().set_input_as_handled()
+		elif event.is_action_pressed("npc_menu") and game.npc_menu_open:
+			game.toggle_npc_menu()
+			get_viewport().set_input_as_handled()
 
 	func _back() -> void:
 		if game.weapon_menu_open:
 			game.toggle_weapon_menu()
+		elif game.npc_menu_open:
+			game.toggle_npc_menu()
 		else:
 			game.toggle_pause()
 
@@ -340,11 +360,9 @@ func _build_pause_menu() -> void:
 	left.add_child(_auto_button)
 	_ai_button = UiKit.button("ИИ манекенов: ВКЛ" if Npc.ai_enabled else "ИИ манекенов: ВЫКЛ", toggle_ai)
 	left.add_child(_ai_button)
-	_guns_button = UiKit.button("", func():
-		Npc.guns_enabled = not Npc.guns_enabled
-		_guns_button.text = "Пистолеты у манекенов: " + ("ВКЛ" if Npc.guns_enabled else "ВЫКЛ"))
-	_guns_button.text = "Пистолеты у манекенов: " + ("ВКЛ" if Npc.guns_enabled else "ВЫКЛ")
-	left.add_child(_guns_button)
+	left.add_child(UiKit.button("Выбор манекенов", func():
+		toggle_pause()
+		toggle_npc_menu()))
 	left.add_child(UiKit.button("Главное меню", _to_menu))
 	for b in left.get_children():
 		if b is Button:
@@ -428,6 +446,78 @@ func _build_weapon_menu() -> void:
 		v.add_child(b)
 		_weapon_cards.append([b, i])
 	var close := UiKit.button("ЗАКРЫТЬ", toggle_weapon_menu, 300)
+	close.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	col.add_child(close)
+	root.visible = false
+
+
+# ------------------------------------------------------------------ NPC menu
+
+func toggle_npc_menu() -> void:
+	npc_menu_open = not npc_menu_open
+	get_tree().paused = npc_menu_open
+	_npc_panel.visible = npc_menu_open
+	hud.reset_touches()
+	if npc_menu_open:
+		_refresh_npc_cards()
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	else:
+		player.capture_mouse()
+
+
+func _refresh_npc_cards() -> void:
+	for c in _npc_cards:
+		var b: Button = c[0]
+		var chosen: bool = c[1] == Npc.spawn_kind
+		b.text = "ВЫБРАНО" if chosen else "ВЫБРАТЬ"
+		b.disabled = chosen
+
+
+func _build_npc_menu() -> void:
+	_npc_layer.layer = 11
+	_npc_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_npc_layer)
+	var root := Control.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.theme = UiKit.make_theme()
+	_npc_layer.add_child(root)
+	_npc_panel = root
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.6)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.add_child(center)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 16)
+	center.add_child(col)
+	col.add_child(UiKit.label("МАНЕКЕНЫ", 44, Color(1, 0.2, 0.2)))
+	col.add_child(UiKit.label("Кто появляется: кнопка «+», авто-спавн, «+5»", 20, Color(0.75, 0.75, 0.75)))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 20)
+	col.add_child(row)
+	for k in NPC_KINDS:
+		var kind: int = k[0]
+		var card := PanelContainer.new()
+		row.add_child(card)
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 8)
+		card.add_child(v)
+		v.add_child(UiKit.label(k[1], 32, Color(1, 1, 1)))
+		var desc := UiKit.label(k[2], 20, Color(0.75, 0.75, 0.75))
+		desc.custom_minimum_size.y = 90
+		v.add_child(desc)
+		var b := UiKit.button("ВЫБРАТЬ", func():
+			Npc.spawn_kind = kind
+			_refresh_npc_cards(), 300)
+		v.add_child(b)
+		_npc_cards.append([b, kind])
+		if kind != Npc.SpawnKind.MIXED:
+			v.add_child(UiKit.button("+1 СЕЙЧАС", func():
+				toggle_npc_menu()
+				spawn_in_front(1 if kind == Npc.SpawnKind.ARMED else 0), 300))
+	var close := UiKit.button("ЗАКРЫТЬ", toggle_npc_menu, 300)
 	close.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	col.add_child(close)
 	root.visible = false

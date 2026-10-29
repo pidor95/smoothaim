@@ -80,6 +80,7 @@ func _buttons() -> Dictionary:
 		"ai": {"pos": Vector2(s.x - 290, 50), "r": 32.0, "text": "ИИ"},
 		"weapons": {"pos": Vector2(s.x - 375, 50), "r": 36.0, "text": "ОРУЖ."},
 		"orders": {"pos": Vector2(s.x - 462, 50), "r": 36.0, "text": "ПРИКАЗ"},
+		"npcs": {"pos": Vector2(s.x - 549, 50), "r": 36.0, "text": "НПС"},
 		"switch": {"pos": Vector2(s.x - 320, s.y - 250), "r": 42.0, "text": "СМЕНА"},
 	}
 
@@ -148,6 +149,8 @@ func _touch_down(i: int, p: Vector2) -> void:
 					game.toggle_weapon_menu()
 				"orders":
 					_orders_open = not _orders_open
+				"npcs":
+					game.toggle_npc_menu()
 			return
 	if p.x < size.x * 0.42 and p.y > size.y * 0.25 and _joy_index == -1:
 		_joy_index = i
@@ -256,7 +259,7 @@ func _draw() -> void:
 	_text(ammo_pos, ammo_text, 30, Color(1, 1, 1, 0.9) if _ammo > 0 else Color(1, 0.3, 0.25, 0.95))
 	if not player.touch_mode:
 		_text(Vector2(24, size.y - 50), "WASD — ходьба, ЛКМ — огонь, ПКМ — прицел, R — перезарядка", 18, Color(1, 1, 1, 0.55))
-		_text(Vector2(24, size.y - 26), "1/2/F — оружие, B — меню оружия, E — манекен, Q — замедление, T — ИИ, Esc — пауза", 18, Color(1, 1, 1, 0.55))
+		_text(Vector2(24, size.y - 26), "1/2/F — оружие, B — меню оружия, N — выбор манекенов, E — манекен, Q — замедление, T — ИИ, Esc — пауза", 18, Color(1, 1, 1, 0.55))
 		_text(Vector2(24, size.y - 74), "Приказы: 3 стоять, 4 руки вверх, 5 на колени, 6 брось оружие, 7 ко мне, 8 проваливай, 9 вольно", 18, Color(1, 1, 1, 0.55))
 		return
 

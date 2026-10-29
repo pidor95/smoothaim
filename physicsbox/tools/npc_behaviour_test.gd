@@ -1,6 +1,6 @@
 extends SceneTree
 ## Dev test for the NPC behaviours: holding ground after a hit, choking on a
-## neck wound until bleeding out, the player's orders and the armed NPC's
+## neck wound (knees, then rolling on the floor) until bleeding out, the player's orders and the armed NPC's
 ## suicide. Run: godot -s res://tools/npc_behaviour_test.gd (env SHOTS=<dir>)
 
 var frame := 0
@@ -108,13 +108,13 @@ func _process(_delta: float) -> bool:
 			_shot("b02_choking")
 			_wait(0.1)
 		6:
-			if npc._choke_kneel:
-				print("on his knees after %.1f s, health=%.0f" % [(_now() - _t0) / 60.0, npc.health])
-				_wait(1.0)
+			if npc._choke_phase >= 3:
+				print("rolling on the floor after %.1f s, health=%.0f" % [(_now() - _t0) / 60.0, npc.health])
+				_wait(1.3)
 				_step = 7
 			return false
 		7:
-			_shot("b03_choking_knees")
+			_shot("b03_choking_floor")
 			_wait(0.1)
 		8:
 			if npc.dead:
