@@ -3,7 +3,6 @@
   RGD-5       by _Alexandr      https://sketchfab.com/3d-models/grenade-rgd-5-886637c9482b4cc4960d0112684baac6
   FPV drone   by Kvasovich      https://sketchfab.com/3d-models/fpv-kamikaze-drone-low-poly-87f5bbb5b08641b782bc084ddd4082a7
   SVD         by Sergei3D       https://sketchfab.com/3d-models/svd-dragunov-7e5c38ec11b54b08b14e49843ad04ed5
-  Mosin PU    by Kaz Chesna     https://sketchfab.com/3d-models/mosin-nagant-m91-30-pu-sniper-47e79809ba174f1c8d15954b38102309
   Kobra sight by Mivoriss57     https://sketchfab.com/3d-models/low-poly-ekp-1s-03-kobra-red-dot-sight-b95a9a049fdc4df1b9f02fb8c7a608e8
 
 Outputs:
@@ -12,9 +11,6 @@ Outputs:
                                  reload, reload_empty, draw
   assets/weapons/svd_fp.glb      first-person SVD with the PSO-1: idle, fire,
                                  reload, draw
-  assets/weapons/mosin_fp.glb    first-person Mosin M91/30 with the PU: idle,
-                                 fire (with the bolt worked by the right
-                                 hand), reload (stripper clip), draw
   assets/npc/npc_svd.glb         the enemy and friendly snipers' SVD
   assets/weapons/grenade_fp.glb  first-person grenade throw: right hand with
                                  an RGD-5, left hand pulls the ring ("throw")
@@ -179,7 +175,7 @@ def build_ak_fp():
     # the bore's centre line, clamp hanging on the left-hand dovetail
     kobra = import_more("kobra")
     shrink_images(2048)
-    dot_at = Vector((0.0, -0.2, 1.886))  # AK model units
+    dot_at = Vector((0.0, -0.2, 1.52))  # AK model units: the housing sits on the dust cover
     to_kobra = Matrix.Translation(dot_at) @ Matrix.Rotation(math.pi / 2, 4, "Z") @ Matrix.Scale(0.759, 4) \
         @ Matrix.Translation(-KOBRA_DOT)
     transform(kobra, to_cam @ to_kobra)
@@ -325,25 +321,16 @@ SNIPERS = {
         "sight": (-0.005, -0.21, 0.17), "eject": (0.045, 0.235, 0.115),
         "grip_cam": (0.12, 0.3, -0.225), "yaw": 2.5, "mag_obj": "magazine",
     },
-    "mosin": {
-        # the model: muzzle +X, its right -Y, centimetres, centred at y = -64.3
-        "to_model": Matrix.Translation((0.0, 0.304, 0.012)) @ Matrix.Scale(0.00608, 4)
-        @ Matrix.Rotation(math.pi / 2, 4, "Z") @ Matrix.Translation((0.0, 64.3, 0.0)),
-        "muzzle": (0.0, 0.918, 0.052), "guard": (0.0, 0.36, -0.01), "bolt": (0.0, 0.106, 0.05),
-        "handle": (0.045, 0.045, 0.035), "sight": (-0.0067, -0.02, 0.104), "eject": (0.03, 0.08, 0.06),
-        "grip_cam": (0.12, 0.33, -0.21), "yaw": 2.5, "bolt_obj": "Bolt19",
-    },
 }
 
 
 def sniper_parts(wid):
-    """The rifle's meshes in model metres (see SNIPERS): body, magazine or
-    bolt (None when the model has none)."""
+    """The rifle's meshes in model metres (see SNIPERS): body and magazine."""
     spec = SNIPERS[wid]
     meshes = import_gltf(wid)
     transform(meshes, spec["to_model"])
     extra = None
-    key = spec.get("mag_obj") or spec.get("bolt_obj")
+    key = spec["mag_obj"]
     for o in meshes:
         if o.name.startswith(key):
             extra = o
@@ -375,74 +362,28 @@ def build_sniper_fp(wid):
     arm_r = bw.limb_between("ArmR", g((0.0, -0.06, -0.03)), (0.32, -0.08, -0.5), 0.046, sleeve)
     hand_l = bw.fist("HandL", guard, glove, rot=(0, 0, 0), scale=(1.2, 1.55, 1.1))
     arm_l = bw.limb_between("ArmL", guard + Vector((-0.01, -0.035, -0.035)), (-0.24, 0.0, -0.48), 0.046, sleeve)
-    bolt_action = "bolt" in spec
     bones = [("gun", grip, None), ("hand_r", g((0, 0, 0)), "gun"), ("hand_l", guard, "gun"),
              ("muzzle", g(spec["muzzle"]), "gun"), ("eject", g(spec["eject"]), "gun"), ("sight", g(spec["sight"]), "gun")]
     binds = [(body, "gun"), (hand_r, "hand_r"), (arm_r, "hand_r"), (hand_l, "hand_l"), (arm_l, "hand_l")]
-    if bolt_action:
-        bones.append(("bolt", g(spec["bolt"]), "gun"))
-        binds.append((extra, "bolt"))
-        # stripper clip with five rounds, carried by the right hand on reloads
-        brass = bw.material("Brass", (0.8, 0.6, 0.25), metallic=1.0, roughness=0.35)
-        # built at the hand: when the hand is over the receiver (loc "on"
-        # below) the rounds sit right in the action
-        clip_parts = []
-        for k in range(5):
-            r = bw.capsule("Round%d" % k, 0.0062, 0.075, brass, segments=8)
-            r.matrix_world = Matrix.Translation(g(((k - 2) * 0.0125, 0.0, 0.012 + abs(k - 2) * -0.002)))
-            bw.apply_all(r)
-            clip_parts.append(r)
-        clip = bw.join(clip_parts, "Clip")
-        bones.append(("clip", g((0, 0, 0)), "hand_r"))
-        binds.append((clip, "clip"))
-    else:
-        mag_pos = g(spec["mag"])
-        mag_new = extra.copy()
-        mag_new.data = extra.data.copy()
-        mag_new.name = "MagNew"
-        bpy.context.scene.collection.objects.link(mag_new)
-        INSERT = mag_pos - guard + Vector((0.0, -0.02, -0.06))
-        mag_new.matrix_world = Matrix.Translation(-INSERT) @ mag_new.matrix_world
-        bw.apply_all(mag_new)
-        bones += [("mag", mag_pos, "gun"), ("mag_new", guard, "hand_l")]
-        binds += [(extra, "mag"), (mag_new, "mag_new")]
+    mag_pos = g(spec["mag"])
+    mag_new = extra.copy()
+    mag_new.data = extra.data.copy()
+    mag_new.name = "MagNew"
+    bpy.context.scene.collection.objects.link(mag_new)
+    INSERT = mag_pos - guard + Vector((0.0, -0.02, -0.06))
+    mag_new.matrix_world = Matrix.Translation(-INSERT) @ mag_new.matrix_world
+    bw.apply_all(mag_new)
+    bones += [("mag", mag_pos, "gun"), ("mag_new", guard, "hand_l")]
+    binds += [(extra, "mag"), (mag_new, "mag_new")]
     arm = bw.make_armature(bones)
     for o, b in binds:
         bw.bind(o, arm, b)
-    hidden = "clip" if bolt_action else "mag_new"
+    hidden = "mag_new"
 
     c = bw.Clip(arm, "idle")
     c.key(hidden, 0, scale=0.0)
     c.hold_all([0, 1])
     c.finish()
-
-    # bolt handle path (relative to the right hand's rest on the grip)
-    if bolt_action:
-        P = Vector(spec["bolt"])
-        H = Vector(spec["handle"])
-
-        def handle(up, back):
-            v = Matrix.Rotation(math.radians(-60 * up), 3, "Y") @ (H - P) + P
-            return tuple(rot.to_3x3() @ (v + Vector((0, -back, 0))))
-
-        def cycle(c, t0):
-            """Right hand to the handle, up, back, forward, down, back to the grip."""
-            c.key("hand_r", t0, loc=(0, 0, 0), rot=(0, 0, 0))
-            c.key("bolt", t0 + 4, loc=(0, 0, 0), rot=(0, 0, 0))
-            c.key("hand_r", t0 + 4, loc=handle(0, 0), rot=(0, 0, 40))
-            c.key("bolt", t0 + 7, loc=(0, 0, 0), rot=(0, -60, 0))
-            c.key("hand_r", t0 + 7, loc=handle(1, 0), rot=(0, 0, 40))
-            c.key("bolt", t0 + 11, loc=(0, -0.085, 0), rot=(0, -60, 0))
-            c.key("hand_r", t0 + 11, loc=handle(1, 0.085), rot=(0, 0, 40))
-            return t0 + 11
-
-        def close(c, t0):
-            c.key("bolt", t0 + 4, loc=(0, 0, 0), rot=(0, -60, 0))
-            c.key("hand_r", t0 + 4, loc=handle(1, 0), rot=(0, 0, 40))
-            c.key("bolt", t0 + 7, loc=(0, 0, 0), rot=(0, 0, 0))
-            c.key("hand_r", t0 + 7, loc=handle(0, 0), rot=(0, 0, 40))
-            c.key("hand_r", t0 + 13, loc=(0, 0, 0), rot=(0, 0, 0))
-            return t0 + 13
 
     c = bw.Clip(arm, "fire")
     c.key(hidden, 0, scale=0.0)
@@ -451,65 +392,37 @@ def build_sniper_fp(wid):
     c.key("gun", 1, loc=(0.003, -0.05, 0.016), rot=(8.0, 0, -1.5))
     c.key("gun", 7, loc=(0, -0.005, 0.002), rot=(1.0, 0, 0))
     c.key("gun", 10, loc=(0, 0, 0), rot=(0, 0, 0))
-    if bolt_action:
-        c.key("gun", 12, loc=(0, 0, 0), rot=(0, 0, 0))
-        c.key("gun", 18, loc=(-0.01, 0, 0.01), rot=(0, 10, 4))
-        t = cycle(c, 12)
-        t = close(c, t)
-        c.key("gun", t - 6, loc=(-0.01, 0, 0.01), rot=(0, 10, 4))
-        c.key("gun", t, loc=(0, 0, 0), rot=(0, 0, 0))
     c.finish()
 
     c = bw.Clip(arm, "reload")
     c.hold_all([0])
-    if bolt_action:
-        c.step("clip", 0, scale=0.0)
-        tilt = dict(loc=(-0.03, 0.02, 0.03), rot=(6, 14, 8))
-        c.key("gun", 0, loc=(0, 0, 0), rot=(0, 0, 0))
-        c.key("gun", 8, **tilt)
-        t = cycle(c, 2)
-        # the hand fetches a clip and strips the rounds down into the magazine
-        top = Vector(spec["bolt"]) + Vector((0, -0.02, 0.03))
-        above = tuple(rot.to_3x3() @ (top + Vector((0.02, 0, 0.12))))
-        on = tuple(rot.to_3x3() @ top)
-        c.key("hand_r", t + 6, loc=(0.15, -0.15, -0.25), rot=(0, 0, 0))
-        c.step("clip", t + 7, scale=1.0)
-        c.key("hand_r", t + 16, loc=above, rot=(0, 0, 0))
-        c.key("hand_r", t + 21, loc=on, rot=(0, 0, 0))
-        c.key("hand_r", t + 30, loc=tuple(Vector(on) + Vector((0, 0, -0.035))), rot=(0, 0, 0))
-        c.step("clip", t + 31, scale=0.0)
-        c.key("hand_r", t + 34, loc=handle(1, 0.085), rot=(0, 0, 40))
-        t = close(c, t + 34)
-        c.key("gun", t - 6, **tilt)
-        c.key("gun", t, loc=(0, 0, 0), rot=(0, 0, 0))
-    else:
-        mag_pos = g(spec["mag"])
-        MAG_AT = tuple(mag_pos - guard + Vector((0.0, 0.01, -0.05)))
-        AWAY = (-0.15, -0.3, -0.35)
-        INSERT = mag_pos - guard + Vector((0.0, -0.02, -0.06))
-        tilt = dict(loc=(-0.05, 0.03, 0.04), rot=(10, -6, -28))
-        c.key("gun", 0, loc=(0, 0, 0), rot=(0, 0, 0))
-        c.key("gun", 7, **tilt)
-        c.key("gun", 50, **tilt)
-        c.key("gun", 60, loc=(0, 0, 0), rot=(0, 0, 0))
-        c.step("mag_new", 0, scale=0.0)
-        c.key("hand_l", 0, loc=(0, 0, 0))
-        c.key("hand_l", 9, loc=MAG_AT)
-        c.key("mag", 0, loc=(0, 0, 0), scale=1.0)
-        c.key("mag", 10, loc=(0, 0, 0))
-        c.key("hand_l", 15, loc=tuple(Vector(MAG_AT) + Vector((0, 0.04, -0.12))))
-        c.key("mag", 15, loc=(0, 0.04, -0.12))
-        c.key("hand_l", 21, loc=AWAY)
-        c.key("mag", 21, loc=tuple(Vector(AWAY) - Vector(MAG_AT)))
-        c.step("mag", 21, scale=0.0)
-        c.step("mag_new", 22, scale=1.0)
-        c.key("hand_l", 31, loc=tuple(INSERT + Vector((0, 0.04, -0.1))))
-        c.key("hand_l", 37, loc=tuple(INSERT))
-        c.step("mag", 37, loc=(0, 0, 0), scale=1.0)
-        c.step("mag_new", 37, scale=0.0)
-        c.key("hand_l", 41, loc=tuple(INSERT))
-        c.key("hand_l", 52, loc=(0, 0, 0))
-        c.key("hand_l", 60, loc=(0, 0, 0))
+    mag_pos = g(spec["mag"])
+    MAG_AT = tuple(mag_pos - guard + Vector((0.0, 0.01, -0.05)))
+    AWAY = (-0.15, -0.3, -0.35)
+    INSERT = mag_pos - guard + Vector((0.0, -0.02, -0.06))
+    tilt = dict(loc=(-0.05, 0.03, 0.04), rot=(10, -6, -28))
+    c.key("gun", 0, loc=(0, 0, 0), rot=(0, 0, 0))
+    c.key("gun", 7, **tilt)
+    c.key("gun", 50, **tilt)
+    c.key("gun", 60, loc=(0, 0, 0), rot=(0, 0, 0))
+    c.step("mag_new", 0, scale=0.0)
+    c.key("hand_l", 0, loc=(0, 0, 0))
+    c.key("hand_l", 9, loc=MAG_AT)
+    c.key("mag", 0, loc=(0, 0, 0), scale=1.0)
+    c.key("mag", 10, loc=(0, 0, 0))
+    c.key("hand_l", 15, loc=tuple(Vector(MAG_AT) + Vector((0, 0.04, -0.12))))
+    c.key("mag", 15, loc=(0, 0.04, -0.12))
+    c.key("hand_l", 21, loc=AWAY)
+    c.key("mag", 21, loc=tuple(Vector(AWAY) - Vector(MAG_AT)))
+    c.step("mag", 21, scale=0.0)
+    c.step("mag_new", 22, scale=1.0)
+    c.key("hand_l", 31, loc=tuple(INSERT + Vector((0, 0.04, -0.1))))
+    c.key("hand_l", 37, loc=tuple(INSERT))
+    c.step("mag", 37, loc=(0, 0, 0), scale=1.0)
+    c.step("mag_new", 37, scale=0.0)
+    c.key("hand_l", 41, loc=tuple(INSERT))
+    c.key("hand_l", 52, loc=(0, 0, 0))
+    c.key("hand_l", 60, loc=(0, 0, 0))
     c.finish()
 
     c = bw.Clip(arm, "draw")
@@ -682,7 +595,6 @@ def build_drone():
 if __name__ == "__main__":
     build_ak_fp()
     build_sniper_fp("svd")
-    build_sniper_fp("mosin")
     build_npc_svd()
     build_grenade_fp()
     build_npc_rifle()

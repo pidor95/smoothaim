@@ -11,8 +11,8 @@ const JOY_RADIUS := 80.0
 var player: Player
 var game: Node
 
-const SLOT_IDS := ["ak74", "svd", "mosin", "grenade", "fpv"]
-const SLOT_KEYS := ["1", "2", "3", "G", "V"]
+const SLOT_IDS := ["ak74", "svd", "grenade", "fpv"]
+const SLOT_KEYS := ["1", "2", "G", "V"]
 const SLOT_W := 100.0
 const SLOT_H := 66.0
 const ECG_N := 110
@@ -70,7 +70,7 @@ func order_feedback(text: String, note: String) -> void:
 	_order_t = 1.8
 
 
-## Hotbar slots: the three guns, the grenade, the FPV drone.
+## Hotbar slots: the two guns, the grenade, the FPV drone.
 func _slot_rects() -> Array[Rect2]:
 	var out: Array[Rect2] = []
 	var n := SLOT_IDS.size()
@@ -115,6 +115,8 @@ func _buttons() -> Dictionary:
 		"jump": {"pos": Vector2(s.x - 72, s.y - 345), "r": 44.0, "text": "ПРЫЖОК"},
 		"reload": {"pos": Vector2(s.x - 200, s.y - 375), "r": 40.0, "text": "R"},
 		"fire_left": {"pos": Vector2(110, s.y - 380), "r": 50.0, "text": "ОГОНЬ"},
+		"sprint": {"pos": Vector2(110, s.y - 500), "r": 42.0, "text": "БЕГ"},
+		"crouch": {"pos": Vector2(s.x - 62, s.y - 105), "r": 44.0, "text": "ПРИСЕД"},
 		"pause": {"pos": Vector2(s.x - 50, 50), "r": 32.0, "text": "II"},
 		"weapons": {"pos": Vector2(s.x - 135, 50), "r": 36.0, "text": "ОРУЖ."},
 		"orders": {"pos": Vector2(s.x - 222, 50), "r": 36.0, "text": "ПРИКАЗ"},
@@ -176,6 +178,10 @@ func _touch_down(i: int, p: Vector2) -> void:
 					player.weapon.set_aiming(not player.weapon.aiming)
 				"jump":
 					player.jump_queued = true
+				"sprint":
+					player.sprint = not player.sprint
+				"crouch":
+					player.set_crouch(not player.crouching)
 				"reload":
 					player.weapon.reload()
 				"pause":
@@ -204,6 +210,8 @@ func _touch_drag(i: int, p: Vector2) -> void:
 		_joy_pos = p
 		var v := (p - _joy_origin) / JOY_RADIUS
 		player.touch_move = v.limit_length(1.0)
+		# pushed hard forward, past the ring: run
+		player.sprint_stick = v.length() > 1.3 and v.y < -0.75
 	elif i == _look_index:
 		player.look(p - _look_last)
 		_look_last = p
@@ -216,6 +224,7 @@ func _touch_up(i: int) -> void:
 	if i == _joy_index:
 		_joy_index = -1
 		player.touch_move = Vector2.ZERO
+		player.sprint_stick = false
 	if i == _look_index:
 		_look_index = -1
 	if i == _fire_index:
@@ -250,6 +259,7 @@ func reset_touches() -> void:
 	_held.clear()
 	if player:
 		player.touch_move = Vector2.ZERO
+		player.sprint_stick = false
 		player.weapon.trigger_held = false
 		player.drone_arrows = Vector2.ZERO
 		player.drone_climb = 0.0
@@ -324,6 +334,7 @@ func _draw() -> void:
 	_draw_status()
 	if not player.piloting:
 		_draw_hotbar()
+		_draw_stamina()
 	if player.weapon.reloading:
 		var t := "ПЕРЕЗАРЯДКА"
 		_text(Vector2(c.x - _font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x * 0.5, size.y - SLOT_H - 30), t, 24, Color(1, 0.85, 0.4, 0.95))
@@ -331,7 +342,7 @@ func _draw() -> void:
 		_draw_death()
 		return
 	if not player.touch_mode:
-		_text(Vector2(24, 132), "WASD ход · ЛКМ огонь · ПКМ прицел/оптика · R перезарядка · 1 АК, 2 СВД, 3 Мосина · G граната · V FPV · B меню · Esc пауза", 16, Color(1, 1, 1, 0.5))
+		_text(Vector2(24, 132), "WASD ход · Shift бег · C присед · ЛКМ огонь · ПКМ прицел/оптика · R перезарядка · 1 АК, 2 СВД · G граната · V FPV · B меню · Esc пауза", 16, Color(1, 1, 1, 0.5))
 		_text(Vector2(24, 154), "Дрон: висит сам; ↑ вперёд, ↓ назад, ← → поворот, E выше, Q ниже, мышь — камера · Приказы: 4–9, 0, −", 16, Color(1, 1, 1, 0.5))
 		return
 
@@ -360,7 +371,8 @@ func _draw() -> void:
 	var buttons := _buttons()
 	for key in buttons:
 		var b: Dictionary = buttons[key]
-		var held: bool = _held.has(key) or (key == "aim" and player.weapon.aiming) or (key == "orders" and _orders_open)
+		var held: bool = _held.has(key) or (key == "aim" and player.weapon.aiming) or (key == "orders" and _orders_open) \
+				or (key == "sprint" and (player.sprint or player.sprinting)) or (key == "crouch" and player.crouching)
 		var fill := Color(0.75, 0.05, 0.08, 0.45) if held else Color(0, 0, 0, 0.25)
 		if key == "fire":
 			fill = Color(0.75, 0.05, 0.08, 0.55 if held else 0.3)
@@ -369,13 +381,14 @@ func _draw() -> void:
 		var fs := 22 if b.r > 45 else 18
 		if key in ["pause", "reload", "up", "down", "left", "right"]:
 			fs = 26
+		elif key == "crouch":
+			fs = 15
 		var w := _font.get_string_size(b.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		draw_string(_font, b.pos + Vector2(-w * 0.5, fs * 0.35), b.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, 0.85))
 
 
 ## Looking through the scope: black all round the eyepiece, a dark rim and
-## the reticle - PSO-1 (chevrons, drop marks, rangefinder) or PU (post and
-## bars).
+## the PSO-1 reticle (chevrons, drop marks, rangefinder).
 func _draw_scope(kind: String) -> void:
 	var c := size * 0.5 + player.scope_shift * size.y
 	var r := size.y * 0.47
@@ -408,12 +421,6 @@ func _draw_scope(kind: String) -> void:
 		draw_line(Vector2(o.x - u * 7.2, o.y + u * 4.1), Vector2(o.x - u * 0.8, o.y + u * 4.1), ink, 1.5)
 		for k in [2, 4, 6, 8, 10]:
 			draw_string(_font, Vector2(o.x - u * 7.4 + (k - 2) * u * 0.8, o.y + u * 2.2), str(k), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ink)
-	else:
-		# PU: a thick post from below up to the aim point, bars from the sides
-		draw_colored_polygon(PackedVector2Array([o + Vector2(-u * 0.22, r), o + Vector2(-u * 0.22, u * 0.5), o,
-				o + Vector2(u * 0.22, u * 0.5), o + Vector2(u * 0.22, r)]), ink)
-		draw_rect(Rect2(o.x - r, o.y - u * 0.09, r - u * 1.6, u * 0.18), ink)
-		draw_rect(Rect2(o.x + u * 1.6, o.y - u * 0.09, r - u * 1.6, u * 0.18), ink)
 
 
 ## ECG shape over one beat (phase 0..1): P wave, QRS spike, T wave.
@@ -523,6 +530,19 @@ func _draw_hotbar() -> void:
 		var cnt: String = counts[k]
 		var cw := _font.get_string_size(cnt, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
 		draw_string(_font, r.end - Vector2(cw + 6, 6), cnt, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.92))
+
+
+## Breath for running: a thin bar over the hotbar while it is not full.
+func _draw_stamina() -> void:
+	if player.stamina >= 0.999:
+		return
+	var slots := _slot_rects()
+	var x0 := slots[0].position.x
+	var w := slots[slots.size() - 1].end.x - x0
+	var y := slots[0].position.y - 10.0
+	draw_rect(Rect2(x0, y, w, 4), Color(0, 0, 0, 0.5))
+	var col := Color(0.95, 0.85, 0.3, 0.9) if player.stamina > 0.25 else Color(1, 0.35, 0.25, 0.9)
+	draw_rect(Rect2(x0, y, w * player.stamina, 4), col)
 
 
 ## Dying: ringing ears, the picture goes black round a white point that

@@ -4,9 +4,16 @@ extends CharacterBody3D
 
 const SPEED := 4.6
 const AIM_SPEED := 2.4
+## Sprint (button / joystick pushed hard forward / Shift) while stamina
+## lasts; crouch (button / C, Ctrl) - low enough to hide in the fighting trench.
+const SPRINT_SPEED := 7.2
+const CROUCH_SPEED := 2.0
 const JUMP_VELOCITY := 4.8
 const GRAVITY := 12.0
 const EYE_HEIGHT := 1.62
+const CROUCH_EYE := 1.0
+const STAND_HEIGHT := 1.8
+const CROUCH_HEIGHT := 1.15
 
 var head := Node3D.new()
 var camera := Camera3D.new()
@@ -14,6 +21,15 @@ var weapon: Weapon
 var touch_mode := false
 var touch_move := Vector2.ZERO
 var jump_queued := false
+var sprint := false # wants to run (toggled by the HUD button / held Shift)
+var sprint_stick := false # joystick pushed hard forward (HUD)
+var sprinting := false # actually running now
+var crouching := false
+var stamina := 1.0
+var _eye := EYE_HEIGHT
+var _sprint_block := 0.0
+var _shape: CapsuleShape3D
+var _shape_node: CollisionShape3D
 var yaw := 0.0
 var pitch := 0.0
 
@@ -85,10 +101,12 @@ func _ready() -> void:
 	var cs := CollisionShape3D.new()
 	var cap := CapsuleShape3D.new()
 	cap.radius = 0.33
-	cap.height = 1.8
+	cap.height = STAND_HEIGHT
 	cs.shape = cap
-	cs.position = Vector3(0, 0.9, 0)
+	cs.position = Vector3(0, STAND_HEIGHT / 2.0, 0)
 	add_child(cs)
+	_shape = cap
+	_shape_node = cs
 
 	# feet zone: walking through bodies and gore shoves them around
 	_feet.collision_layer = 0
@@ -279,6 +297,10 @@ func _respawn() -> void:
 	yaw = _spawn.basis.get_euler().y
 	pitch = 0.0
 	head.position.y = EYE_HEIGHT
+	_eye = EYE_HEIGHT
+	set_crouch(false)
+	sprint = false
+	stamina = 1.0
 	head.rotation.z = 0.0
 	weapon.visible = true
 
@@ -312,18 +334,31 @@ func _physics_process(delta: float) -> void:
 			_respawn()
 		return
 	var input := touch_move
+	var run_key := false
 	if not touch_mode:
 		input += Input.get_vector("move_left", "move_right", "move_forward", "move_back")
 		if Input.is_action_just_pressed("jump"):
 			jump_queued = true
+		if Input.is_action_just_pressed("crouch"):
+			set_crouch(not crouching)
+		run_key = Input.is_action_pressed("sprint")
 	input = input.limit_length(1.0)
 	if piloting:
 		input = Vector2.ZERO # the sticks fly the drone
 		jump_queued = false
+	if jump_queued and crouching:
+		jump_queued = false # jump gets him up first
+		set_crouch(false)
+	_update_sprint(delta, input, run_key)
+	_update_crouch(delta)
 
 	rotation.y = yaw
 	var wish := (Basis(Vector3.UP, yaw) * Vector3(input.x, 0.0, input.y))
 	var speed := lerpf(SPEED, AIM_SPEED, weapon.aim_t)
+	if sprinting:
+		speed = SPRINT_SPEED
+	elif crouching:
+		speed = minf(speed, CROUCH_SPEED)
 	var accel := 14.0 if is_on_floor() else 3.0
 	velocity.x = move_toward(velocity.x, wish.x * speed, accel * speed * delta)
 	velocity.z = move_toward(velocity.z, wish.z * speed, accel * speed * delta)
@@ -417,7 +452,7 @@ func _bodycam_motion(delta: float, hspeed: float) -> void:
 	_lag_v += ((lag_target - _lag) * 80.0 - _lag_v * 10.0) * delta
 	_lag += _lag_v * delta
 	# footfalls: each foot coming down knocks the camera
-	var gait := clampf(hspeed / SPEED, 0.0, 1.4) * (1.0 - aim * 0.6)
+	var gait := clampf(hspeed / SPEED, 0.0, 1.4) * (1.0 - aim * 0.6) * (0.6 if crouching else 1.0)
 	if is_on_floor() and hspeed > 0.3:
 		var stride := 0.95 if hspeed > SPEED * 0.85 else 0.75
 		var prev := _step_phase
@@ -438,7 +473,7 @@ func _bodycam_motion(delta: float, hspeed: float) -> void:
 	_jp += _jp_v * delta
 	_jr_v += (-_jr * 140.0 - _jr_v * 10.0) * delta
 	_jr += _jr_v * delta
-	head.position = Vector3(0.0, EYE_HEIGHT, 0.0) + (sway + _jp) * k
+	head.position = Vector3(0.0, _eye, 0.0) + (sway + _jp) * k
 	head.rotation += (sway_rot + breathe * (1.0 - aim * 0.4) + _jr) * k + Vector3(_lag.x, _lag.y, -_lag.y * 0.5)
 	scope_shift = Vector2(-_lag.y - (sway_rot.y + _jr.y) * k, _lag.x + (sway_rot.x + _jr.x) * k) * 1.4
 
@@ -487,11 +522,64 @@ func _kick_loose_bodies() -> void:
 		rb.apply_central_impulse(push + Vector3.UP * 0.02 * minf(rb.mass, 6.0))
 
 
+## Running: only forward-ish, not aiming, not crouched, while there is
+## breath left. Firing or aiming stops it.
+func _update_sprint(delta: float, input: Vector2, run_key: bool) -> void:
+	_sprint_block = maxf(_sprint_block - delta, 0.0)
+	var want := (sprint or sprint_stick or run_key) and input.y < -0.5 and not piloting and _sprint_block <= 0.0 \
+			and weapon.aim_t < 0.1 and not weapon.throwing() and stamina > 0.05
+	if want and crouching:
+		set_crouch(false)
+	sprinting = want and not crouching and is_on_floor()
+	if sprinting:
+		stamina = maxf(stamina - delta / 9.0, 0.0)
+		add_stress(delta * 0.05)
+		if stamina <= 0.05:
+			sprint = false
+	else:
+		stamina = minf(stamina + delta / 6.0, 1.0)
+	if input.length() < 0.2:
+		sprint = false
+
+
+## Shooting stops the run for a moment (the gun comes up first).
+func block_sprint(sec: float) -> void:
+	_sprint_block = maxf(_sprint_block, sec)
+	sprinting = false
+
+
+func set_crouch(on: bool) -> void:
+	if on == crouching:
+		return
+	if not on:
+		# room to stand up?
+		var from := global_position + Vector3.UP * (CROUCH_HEIGHT - 0.05)
+		var q := PhysicsRayQueryParameters3D.create(from, global_position + Vector3.UP * (STAND_HEIGHT + 0.05), 1 | 2)
+		q.exclude = [get_rid()]
+		if not get_world_3d().direct_space_state.intersect_ray(q).is_empty():
+			return
+	crouching = on
+	if on:
+		sprint = false
+	var h := CROUCH_HEIGHT if on else STAND_HEIGHT
+	_shape.height = h
+	_shape_node.position.y = h / 2.0
+
+
+## Eyes go down / up smoothly.
+func _update_crouch(delta: float) -> void:
+	_eye = move_toward(_eye, CROUCH_EYE if crouching else EYE_HEIGHT, delta * 3.5)
+
+
+func eye_height() -> float:
+	return _eye
+
+
 func _footsteps(delta: float) -> void:
 	if not is_on_floor():
 		return
 	var hspeed := Vector2(velocity.x, velocity.z).length()
 	_step_dist += hspeed * delta
-	if _step_dist > 2.1:
+	if _step_dist > (2.6 if sprinting else 2.1):
 		_step_dist = 0.0
-		Sfx.play("footstep", -10.0, 0.12)
+		Sfx.play("footstep", -15.0 if crouching else (-7.0 if sprinting else -10.0), 0.12)

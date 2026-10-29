@@ -170,18 +170,32 @@ func _process(_delta: float) -> bool:
 			_wait = 50
 		177:
 			_shot("m11_pso_scope")
-			p.weapon.select(2, false)
+			p.weapon.aiming = false
+			p.weapon.select(0, false)
 			_wait = 30
 		178:
-			_shot("m12_pu_scope")
-			p.weapon.aiming = false
-			_wait = 20
+			_shot("m12_ak_kobra")
+			# running: the joystick pushed hard forward
+			p.touch_move = Vector2(0, -1)
+			p.sprint_stick = true
+			_wait = 90
 		179:
-			_fire()
-			_wait = 24
+			print("sprint: speed %.1f m/s, stamina %.2f, sprinting=%s" % [Vector2(p.velocity.x, p.velocity.z).length(), p.stamina, p.sprinting])
+			_shot("m13_sprint")
+			p.sprint_stick = false
+			p.touch_move = Vector2.ZERO
+			p.set_crouch(true)
+			_wait = 60
 		180:
-			_shot("m13_mosin_bolt")
-			p.weapon.select(0, false)
+			print("crouched: eye %.2f m, capsule %.2f m" % [p.eye_height(), p._shape.height])
+			_shot("m14_crouch")
+			p.touch_move = Vector2(0, -1)
+			_wait = 30
+		181:
+			print("crouch walk: %.1f m/s" % Vector2(p.velocity.x, p.velocity.z).length())
+			p.touch_move = Vector2.ZERO
+			p.set_crouch(false)
+			p.global_position = Vector3(97, 0.3, 7.0)
 			_step = 8
 			_wait = 30
 			return false

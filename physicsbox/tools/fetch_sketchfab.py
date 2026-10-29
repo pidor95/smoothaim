@@ -15,7 +15,6 @@ MODELS = {
     "rgd5": "886637c9482b4cc4960d0112684baac6",  # Grenade RGD-5 by _Alexandr, CC-BY-4.0
     "fpv": "87f5bbb5b08641b782bc084ddd4082a7",  # FPV kamikaze drone Low-poly by Kvasovich, CC-BY-4.0
     "svd": "7e5c38ec11b54b08b14e49843ad04ed5",  # SVD "Dragunov" by Sergei3D, CC-BY-4.0
-    "mosin": "47e79809ba174f1c8d15954b38102309",  # Mosin Nagant M91/30 PU sniper by Kazches, CC-BY-4.0
     "kobra": "b95a9a049fdc4df1b9f02fb8c7a608e8",  # Low-Poly EKP-1S-03 Kobra Red Dot Sight by Mivoriss57, CC-BY-4.0
 }
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_sources")

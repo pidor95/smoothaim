@@ -1,6 +1,6 @@
 class_name Weapon
 extends Node3D
-## First-person weapons: AK-74M with a red dot, SVD and Mosin sniper rifles.
+## First-person weapons: AK-74M with a red dot and the SVD sniper rifle.
 ## Each viewmodel (gun + gloved hands) and its animations come from Blender
 ## (tools/blender/build_sketchfab_kit.py); scoped rifles look through the
 ## scope (HUD overlay) when aimed. This script
@@ -37,18 +37,6 @@ const DEFS := [
 		"sound": "sniper",
 		"shell": "rifle", "shell_at": 0.0, "alert": 60.0, "flash": 1.4, "cam_recoil": 4.5,
 		"yaw": 2.5, "ads_dist": 0.1, "ads_fov": 0.22, "fire_last": "", "reload_empty": "",
-	},
-	{
-		"id": "mosin", "name": "Мосина", "scene": "res://assets/weapons/mosin_fp.glb", "scope": "pu",
-		"title": "Мосина + ПУ", "desc": "Снайперская винтовка 1891/30, ручной затвор.",
-		"stats": ["Урон: 100 (пробивает тела)", "Магазин: 5", "Прицел ПУ ×3,5"],
-		"capacity": 5, "pellets": 1, "impulse": 29.0, "cooldown": 1.25, "power": 3.3, "auto": false,
-		"damage": {"head": 100.0, "chest": 100.0, "pelvis": 90.0, "uarm_l": 55.0, "uarm_r": 55.0, "farm_l": 50.0,
-				"farm_r": 50.0, "thigh_l": 70.0, "thigh_r": 70.0, "shin_l": 55.0, "shin_r": 55.0},
-		"spread_hip": 2.6, "spread_ads": 0.02, "falloff_start": 400.0, "falloff_min": 0.85,
-		"sound": "sniper",
-		"shell": "rifle", "shell_at": 0.62, "alert": 60.0, "flash": 1.3, "cam_recoil": 5.5,
-		"yaw": 2.5, "ads_dist": 0.1, "ads_fov": 0.27, "fire_last": "", "reload_empty": "",
 	},
 ]
 ## Bullet power lost going through each body part (power 1 = pistol round).
@@ -107,6 +95,7 @@ var _throw_anim: AnimationPlayer
 var _throw_t := -1.0
 var _released := false
 var _lower := 0.0 # gun lowered out of view while the other hand throws
+var _sprint_t := 0.0 # gun swung across the chest while running
 
 
 func _ready() -> void:
@@ -275,6 +264,9 @@ func weapon_name() -> String:
 func trigger() -> void:
 	if player.piloting:
 		player.piloting.detonate()
+		return
+	if player.sprinting or _sprint_t > 0.3:
+		player.block_sprint(0.7) # the gun comes up from the run first
 		return
 	if reloading or _cooldown > 0.0 or player.dead or _throw_t >= 0.0:
 		return
@@ -545,8 +537,6 @@ func _process(frame_delta: float) -> void:
 			select(0)
 		if Input.is_action_just_pressed("weapon_2"):
 			select(1)
-		if Input.is_action_just_pressed("weapon_3"):
-			select(2)
 		if Input.is_action_just_pressed("weapon_next"):
 			next_weapon()
 		aiming = Input.is_action_pressed("aim")
@@ -586,5 +576,9 @@ func _process(frame_delta: float) -> void:
 
 	current.root.visible = not scoped()
 	var low := smoothstep(0.0, 1.0, _lower)
-	var offset := Transform3D(Basis(Vector3.RIGHT, _wall_push * 1.0 - low * 0.9), bob + Vector3(_sway.x * (1.0 - a * 0.6), _sway.y * (1.0 - a * 0.6) - low * 0.35, _wall_push * 0.5))
+	_sprint_t = move_toward(_sprint_t, 1.0 if player.sprinting else 0.0, delta * 5.0)
+	var run := smoothstep(0.0, 1.0, _sprint_t)
+	var offset := Transform3D(Basis(Vector3.RIGHT, _wall_push * 1.0 - low * 0.9 - run * 0.25) * Basis(Vector3.UP, run * 0.7)
+			* Basis(Vector3.BACK, run * 0.35),
+			bob + Vector3(_sway.x * (1.0 - a * 0.6) - run * 0.06, _sway.y * (1.0 - a * 0.6) - low * 0.35 - run * 0.06, _wall_push * 0.5 + run * 0.04))
 	_holder.transform = offset * Transform3D.IDENTITY.interpolate_with(current.ads, a)

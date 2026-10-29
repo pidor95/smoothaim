@@ -191,7 +191,6 @@ func _build_ui() -> void:
 			"«Grenade RGD-5» — _Alexandr (sketchfab.com/a_l_e_x_a_n_d_e_r)",
 			"«FPV kamikaze drone Low-poly» — Kvasovich (sketchfab.com/Kvasovich)",
 			"«SVD \"Dragunov\"» — Sergei3D (sketchfab.com/Sergei3D)",
-			"«Mosin Nagant M91/30 PU sniper» — Kaz Chesna (sketchfab.com/Kazches)",
 			"«Low-Poly EKP-1S-03 Kobra Red Dot Sight» — Mivoriss57 (sketchfab.com/Mivoriss57)",
 			"Остальное — сделано в Blender скриптами проекта."]:
 		_credits_box.add_child(UiKit.label(line, 22, Color(0.8, 0.8, 0.8)))

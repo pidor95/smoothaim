@@ -2000,6 +2000,8 @@ func _aim_point(t: Node3D) -> Vector3:
 		return (t as Npc).center()
 	if t is FpvDrone:
 		return t.global_position
+	if t is Player:
+		return t.global_position + Vector3.UP * ((t as Player).eye_height() - 0.3) # lower when he crouches
 	return t.global_position + Vector3.UP * 1.3
 
 
