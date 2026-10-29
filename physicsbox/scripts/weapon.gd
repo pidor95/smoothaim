@@ -24,7 +24,7 @@ const DEFS := [
 		"spread_hip": 1.8, "spread_ads": 0.12, "falloff_start": 120.0, "falloff_min": 0.7,
 		"sound": "rifle",
 		"shell": "rifle", "shell_at": 0.0, "alert": 30.0, "flash": 1.1, "cam_recoil": 1.35,
-		"yaw": 3.0, "ads_dist": 0.3, "ads_fov": 0.7, "fire_last": "", "reload_empty": "reload_empty",
+		"yaw": 3.0, "ads_dist": 0.4, "ads_fov": 0.7, "fire_last": "", "reload_empty": "reload_empty",
 	},
 	{
 		"id": "svd", "name": "СВД", "scene": "res://assets/weapons/svd_fp.glb", "scope": "pso",

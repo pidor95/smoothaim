@@ -37,7 +37,7 @@ ARGS = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 bw.PREVIEW = ARGS[0] if ARGS else ""
 
 AK_SCALE = 0.1007  # model is 9.37 units long; an AK-74M is 0.943 m
-KOBRA_DOT = Vector((0.609, 0.0, 1.254))  # the reticle in the Kobra model
+KOBRA_DOT = Vector((0.62, 0.0, 1.272))  # the middle of the Kobra's window (model units)
 RGD_SCALE = 0.023
 RGD_CENTER = Vector((0.0, 0.0, 0.45))  # middle of the egg in model units
 
@@ -159,7 +159,7 @@ def build_ak_fp():
     body, mag, bolt, grip_m = ak_parts()
     shrink_images(2048)
     s = AK_SCALE
-    grip = Vector((0.13, 0.27, -0.23))  # camera-space hip position of the grip
+    grip = Vector((0.14, 0.28, -0.27))  # camera-space hip position of the grip (low: the sight stays out of the way)
     yaw = math.radians(3.0)
     rot = Matrix.Rotation(yaw, 4, "Z")
     to_cam = Matrix.Translation(grip) @ rot @ Matrix.Scale(s, 4) @ Matrix.Translation(-grip_m)
@@ -175,15 +175,30 @@ def build_ak_fp():
     # the bore's centre line, clamp hanging on the left-hand dovetail
     kobra = import_more("kobra")
     shrink_images(2048)
+    # see-through glass; the printed reticle plane goes, our own dot replaces it
+    for o in list(kobra):
+        if o.name.startswith("crosshair"):
+            kobra.remove(o)
+            bpy.data.objects.remove(o)
+        elif o.name.startswith("lens"):
+            glass = bpy.data.materials.new("KobraGlass")
+            glass.use_nodes = True
+            b = glass.node_tree.nodes["Principled BSDF"]
+            b.inputs["Base Color"].default_value = (0.7, 0.85, 0.95, 1)
+            b.inputs["Alpha"].default_value = 0.12
+            b.inputs["Roughness"].default_value = 0.05
+            glass.blend_method = "BLEND"
+            o.data.materials.clear()
+            o.data.materials.append(glass)
     dot_at = Vector((0.0, -0.2, 1.52))  # AK model units: the housing sits on the dust cover
     to_kobra = Matrix.Translation(dot_at) @ Matrix.Rotation(math.pi / 2, 4, "Z") @ Matrix.Scale(0.759, 4) \
         @ Matrix.Translation(-KOBRA_DOT)
     transform(kobra, to_cam @ to_kobra)
     kobra = bw.join(kobra, "Kobra")
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=10, ring_count=6, radius=0.0011, location=g(dot_at))
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=10, ring_count=6, radius=0.0016, location=g(dot_at))
     dot = bpy.context.active_object
     dot.name = "RedDot"
-    dot.data.materials.append(emissive("RedDot", (1.0, 0.05, 0.03)))
+    dot.data.materials.append(emissive("RedDot", (1.0, 0.04, 0.02), 1.6))
 
     glove, _ = bw.gloves()
     sleeve = bw.material("SleeveCamo", (0.075, 0.085, 0.055), roughness=0.95)
