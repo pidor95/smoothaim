@@ -103,6 +103,9 @@ func _process(_delta: float) -> bool:
 			w.trigger()
 			print("suppressed shot: flash visible=%s light=%s suppressor visible=%s heard within %.1f m" % [w._flash_root.visible,
 					w._flash_light.visible, w.current.suppressor.visible, w.current.def.alert * Weapon.SUPPRESSED_ALERT])
+			var sfx := root.get_node("Sfx")
+			var sup_sounds: Array = ["rifle_sup", "sniper_sup"].map(func(k): return sfx._pick(k) != null)
+			print("suppressed shot sounds loaded (AK, SVD): %s" % [sup_sounds])
 			_wait = 2
 		5:
 			_shot("k02_suppressed")

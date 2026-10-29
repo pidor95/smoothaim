@@ -394,7 +394,7 @@ func trigger() -> void:
 		_place_flash()
 		Sfx.play(d.sound, 0.0, 0.05)
 	else:
-		Sfx.play(d.sound + "_sup", -3.0, 0.05)
+		Sfx.play(d.sound + "_sup", -1.0, 0.05) # a dull thump and the bolt clack: quieter, not silent
 	var kick: float = d.cam_recoil
 	player.add_recoil(deg_to_rad(kick * randf_range(0.85, 1.15)), deg_to_rad(randf_range(-0.25, 0.25) * kick))
 	if d.shell_at <= 0.0:
