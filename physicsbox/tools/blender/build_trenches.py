@@ -39,7 +39,7 @@ random.seed(1916)
 rng = np.random.default_rng(1916)
 
 C = Matrix(((1, 0, 0), (0, 0, -1), (0, 1, 0)))  # Godot -> Blender axes
-X0, X1, Z0, Z1 = -150.0, 150.0, -170.0, 170.0
+X0, X1, Z0, Z1 = -270.0, 150.0, -170.0, 170.0
 CHX, CHZ = 30.0, 34.0  # terrain chunk size
 CELL = 60.0  # furniture meshes are split into cells this big (culling)
 WALL = 0.92        # half width of the trench floor (inner face of the walls)
@@ -75,13 +75,13 @@ TRENCHES = []  # [points, depths]
 FRONTS = []
 REARS = []
 for side, sgn in ((0, 1.0), (1, -1.0)):
-    front = zigzag(-142.0, 42.0, 11.0, sgn * 29.0, 2.6)
-    rear = zigzag(-138.0, 38.0, 17.0, sgn * 50.0, 2.0)
+    front = zigzag(-262.0, 42.0, 11.0, sgn * 29.0, 2.6)
+    rear = zigzag(-258.0, 38.0, 17.0, sgn * 50.0, 2.0)
     FRONTS.append(len(TRENCHES))
     TRENCHES.append([front, [FRONT_D] * len(front)])
     REARS.append(len(TRENCHES))
     TRENCHES.append([rear, [DEEP_D] * len(rear)])
-    for x in (-118.0, -74.0, -31.0, 14.0):
+    for x in (-240.0, -200.0, -160.0, -118.0, -74.0, -31.0, 14.0):
         f = nearest(front, x)
         r = nearest(rear, x + random.uniform(-6, 6))
         mid = ((f[0] + r[0]) / 2 + random.uniform(-4, 4), (f[1] + r[1]) / 2)
@@ -117,12 +117,17 @@ BUILDINGS = [
     ("HouseWood", -122.0, 86.0, 0.3), ("HouseBrick", -95.0, 97.0, -0.2), ("HouseWood", -62.0, 82.0, 0.1),
     ("Ruin2", -22.0, 102.0, 0.0), ("HouseBrick", 24.0, 86.0, 0.4), ("Garages", 62.0, 96.0, 0.0),
     ("HouseWood", 98.0, 92.0, -0.3), ("CarWreck", 40.0, 70.0, 0.9),
-    ("HouseWood", -116.0, -90.0, math.pi + 0.2), ("HouseBrick", -71.0, -86.0, math.pi), ("Ruin2", -26.0, -104.0, math.pi),
+    ("HouseWood", -116.0, -90.0, math.pi + 0.2),
+    # the western stretch of the line
+    ("Ruin2", -178.0, -3.0, 0.4), ("HouseWood", -228.0, 6.0, 1.1), ("CarWreck", -143.0, -6.0, 1.9),
+    ("CarWreck", -206.0, 8.0, 0.2), ("HouseBrick", -186.0, 92.0, 0.15), ("HouseWood", -246.0, 84.0, -0.25),
+    ("Garages", -214.0, 98.0, 0.0), ("HouseBrick", -170.0, -94.0, math.pi - 0.1), ("Ruin2", -232.0, -100.0, math.pi + 0.2),
+    ("HouseWood", -200.0, -84.0, math.pi + 0.4), ("HouseBrick", -71.0, -86.0, math.pi), ("Ruin2", -26.0, -104.0, math.pi),
     ("HouseWood", 19.0, -91.0, math.pi - 0.3), ("HouseBrick", 58.0, -96.0, math.pi + 0.2),
     ("Garages", 100.0, -94.0, math.pi), ("CarWreck", -40.0, -70.0, 2.5),
 ]
 TOWN = (52.0, 146.0, -62.0, 62.0)  # flat ground of the town sector
-ROADS = [[(-148.0, 64.0), (148.0, 64.0)], [(-148.0, -64.0), (148.0, -64.0)],
+ROADS = [[(-268.0, 64.0), (148.0, 64.0)], [(-268.0, -64.0), (148.0, -64.0)],
          [(97.0, 64.0), (97.0, 30.0)], [(97.0, -64.0), (97.0, -30.0)], [(55.0, 0.0), (140.0, 0.0)]]
 
 
@@ -176,12 +181,12 @@ def in_town(x, z, margin=0.0):
 
 
 CRATERS = []
-while len(CRATERS) < 170:
-    x, z = random.uniform(-146, 50), random.uniform(-22, 22)
+while len(CRATERS) < 270:
+    x, z = random.uniform(-266, 50), random.uniform(-22, 22)
     if all(math.hypot(x - c[0], z - c[1]) > 4.0 for c in CRATERS) and not in_pad(x, z, 3.0):
         CRATERS.append((x, z, random.uniform(1.4, 3.4), random.uniform(0.5, 1.3)))
-while len(CRATERS) < 260:  # shell holes behind the lines and in the town too
-    x, z = random.uniform(-146, 146), random.uniform(-160, 160)
+while len(CRATERS) < 400:  # shell holes behind the lines and in the town too
+    x, z = random.uniform(-266, 146), random.uniform(-160, 160)
     if abs(z) < 22 and x < 50:
         continue
     if in_pad(x, z, 3.0) or any(math.hypot(x - c[0], z - c[1]) < 4.0 for c in CRATERS):
@@ -568,7 +573,7 @@ def build_wire(m_post, m_wire):
     stakes = Cells("WireStakes", m_post)
     wire = Cells("Wire", m_wire)
     for z0 in (-14.0, 14.0):
-        x = -146.0
+        x = -266.0
         prev = None
         while x < 48.0:
             z = z0 + random.uniform(-1.0, 1.0)
@@ -618,7 +623,7 @@ def make_tree(name, m_bark, seed):
 def place_trees(variants):
     placed = []
     tries = 0
-    while len(placed) < 300 and tries < 20000:
+    while len(placed) < 420 and tries < 30000:
         tries += 1
         x, z = random.uniform(X0 + 3, X1 - 3), random.uniform(Z0 + 3, Z1 - 3)
         d, _ = trench_field(np.array(x), np.array(z))

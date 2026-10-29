@@ -12,6 +12,10 @@ var volume := 0.8
 var show_fps := false
 ## Bodycam look: wide lens, distortion, grain, timestamp.
 var bodycam := true
+## What the player takes into battle (weapon menu: ОРУЖИЕ / СНАРЯЖЕНИЕ):
+## item id -> carried; and which rifles wear the PBS-1 suppressor.
+var loadout := {"ak74": true, "svd": true, "grenade": true, "fpv": true, "bomber": true}
+var suppressed := {"ak74": false, "svd": false}
 ## Resources the menu loaded on background threads for the battle (kept
 ## referenced so they stay in the cache).
 var preloaded: Array = []
@@ -39,6 +43,10 @@ func load_settings() -> void:
 	show_fps = cfg.get_value("video", "show_fps", show_fps)
 	bodycam = cfg.get_value("video", "bodycam", bodycam)
 	volume = cfg.get_value("audio", "volume", volume)
+	for k in loadout:
+		loadout[k] = cfg.get_value("loadout", k, loadout[k])
+	for k in suppressed:
+		suppressed[k] = cfg.get_value("suppressor", k, suppressed[k])
 
 
 func save_settings() -> void:
@@ -51,7 +59,15 @@ func save_settings() -> void:
 	cfg.set_value("video", "show_fps", show_fps)
 	cfg.set_value("video", "bodycam", bodycam)
 	cfg.set_value("audio", "volume", volume)
+	for k in loadout:
+		cfg.set_value("loadout", k, loadout[k])
+	for k in suppressed:
+		cfg.set_value("suppressor", k, suppressed[k])
 	cfg.save(PATH)
+
+
+func carries(item: String) -> bool:
+	return loadout.get(item, true)
 
 
 func apply() -> void:
@@ -81,6 +97,8 @@ func _setup_input() -> void:
 	_key_action("weapon_menu", [KEY_B, KEY_TAB])
 	_key_action("grenade", [KEY_G])
 	_key_action("drone", [KEY_V])
+	_key_action("bomber", [KEY_X])
+	_key_action("holster", [KEY_H])
 	_key_action("fpv_climb", [KEY_E])
 	_key_action("fpv_sink", [KEY_Q])
 	for i in 6: # orders on 4..9, then 0 and minus

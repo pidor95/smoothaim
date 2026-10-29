@@ -11,8 +11,10 @@ const JOY_RADIUS := 80.0
 var player: Player
 var game: Node
 
-const SLOT_IDS := ["ak74", "svd", "grenade", "fpv"]
-const SLOT_KEYS := ["1", "2", "G", "V"]
+## Everything the hotbar can hold; it shows what the player carries
+## (weapon menu, ОРУЖИЕ / СНАРЯЖЕНИЕ).
+const SLOT_IDS := ["ak74", "svd", "grenade", "fpv", "bomber"]
+const SLOT_KEYS := ["1", "2", "G", "V", "X"]
 const SLOT_W := 100.0
 const SLOT_H := 66.0
 const ECG_N := 110
@@ -68,10 +70,19 @@ func order_feedback(text: String, note: String) -> void:
 	_order_t = 1.8
 
 
-## Hotbar slots: the two guns, the grenade, the FPV drone.
+## The hotbar's items: indices into SLOT_IDS of what is carried.
+func _slots() -> Array[int]:
+	var out: Array[int] = []
+	for i in SLOT_IDS.size():
+		if Settings.carries(SLOT_IDS[i]):
+			out.append(i)
+	return out
+
+
+## Hotbar slots: the guns, the grenade, the FPV and the drop drone.
 func _slot_rects() -> Array[Rect2]:
 	var out: Array[Rect2] = []
-	var n := SLOT_IDS.size()
+	var n := _slots().size()
 	var gap := 8.0
 	var x0 := size.x * 0.5 - (n * SLOT_W + (n - 1) * gap) * 0.5
 	for i in n:
@@ -79,26 +90,33 @@ func _slot_rects() -> Array[Rect2]:
 	return out
 
 
-func use_slot(i: int) -> void:
+## Hotbar slot `k` (of the carried items) pressed.
+func use_slot(k: int) -> void:
+	var i: int = _slots()[k]
 	match SLOT_IDS[i]:
 		"grenade":
 			player.throw_grenade()
 		"fpv":
 			reset_touches()
 			player.launch_drone()
+		"bomber":
+			reset_touches()
+			player.launch_bomber()
 		_:
-			player.weapon.select(i)
+			player.weapon.toggle(i) # the gun in hands again: put it away
 
 
 func _buttons() -> Dictionary:
 	var s := size
 	if player.piloting:
 		# flying the drone: it hovers; the arrows fly it (▲ forward where the
-		# camera looks, ▼ back, ◀ ▶ turn), ВЫШЕ / НИЖЕ, the trigger, a way back
+		# camera looks, ▼ back, ◀ ▶ turn), ВЫШЕ / НИЖЕ, the trigger (the drop
+		# drone lets a grenade go), a way back (the drop drone flies home)
 		var a := Vector2(s.x - 420, s.y - 200)
-		return {
-			"fire": {"pos": Vector2(s.x - 150, s.y - 175), "r": 76.0, "text": "ПОДРЫВ"},
-			"fpv": {"pos": Vector2(s.x - 80, s.y - 430), "r": 40.0, "text": "ВЫХОД"},
+		var bomber := player.piloting is BombDrone
+		var out := {
+			"fire": {"pos": Vector2(s.x - 150, s.y - 175), "r": 76.0, "text": "СБРОС" if bomber else "ПОДРЫВ"},
+			"exit": {"pos": Vector2(s.x - 80, s.y - 430), "r": 40.0, "text": "ДОМОЙ" if bomber else "ВЫХОД"},
 			"up": {"pos": a + Vector2(0, -82), "r": 42.0, "text": "▲"},
 			"down": {"pos": a + Vector2(0, 82), "r": 42.0, "text": "▼"},
 			"left": {"pos": a + Vector2(-82, 0), "r": 42.0, "text": "◀"},
@@ -106,6 +124,9 @@ func _buttons() -> Dictionary:
 			"climb": {"pos": Vector2(s.x - 150, s.y - 365), "r": 40.0, "text": "ВЫШЕ"},
 			"sink": {"pos": Vector2(s.x - 250, s.y - 300), "r": 40.0, "text": "НИЖЕ"},
 		}
+		if bomber:
+			out["zoom"] = {"pos": Vector2(s.x - 270, s.y - 430), "r": 40.0, "text": "ЗУМ"}
+		return out
 	var aim_on := player.weapon.aiming
 	return {
 		"fire": {"pos": Vector2(s.x - 170, s.y - 185), "r": 76.0, "text": "ОГОНЬ"},
@@ -188,9 +209,12 @@ func _touch_down(i: int, p: Vector2) -> void:
 					game.toggle_weapon_menu()
 				"orders":
 					_orders_open = not _orders_open
-				"fpv":
+				"exit":
 					reset_touches()
-					player.launch_drone()
+					player.exit_drone()
+				"zoom":
+					var bd := player.piloting as BombDrone
+					bd.zoomed = not bd.zoomed
 			_update_held()
 			return
 	if p.x < size.x * 0.42 and p.y > size.y * 0.25 and _joy_index == -1:
@@ -336,8 +360,8 @@ func _draw() -> void:
 		_draw_death()
 		return
 	if not player.touch_mode:
-		_text(Vector2(24, 132), "WASD ход · Shift бег · C присед · ЛКМ огонь · ПКМ прицел/оптика · R перезарядка · 1 АК, 2 СВД · G граната · V FPV · B меню · Esc пауза", 16, Color(1, 1, 1, 0.5))
-		_text(Vector2(24, 154), "Дрон: висит сам; ↑ вперёд, ↓ назад, ← → поворот, E выше, Q ниже, мышь — камера · Приказы: 4–9, 0, −", 16, Color(1, 1, 1, 0.5))
+		_text(Vector2(24, 132), "WASD ход · Shift бег · C присед · ЛКМ огонь · ПКМ прицел/оптика · R перезарядка · 1 АК, 2 СВД · H убрать оружие · G граната · V FPV · X дрон-сброс · B меню · Esc пауза", 16, Color(1, 1, 1, 0.5))
+		_text(Vector2(24, 154), "Дрон: висит сам; ↑ вперёд, ↓ назад, ← → поворот, E выше, Q ниже, мышь — камера; сброс — ЛКМ, X — домой · Приказы: 4–9, 0, −", 16, Color(1, 1, 1, 0.5))
 		return
 
 	# order list
@@ -366,7 +390,8 @@ func _draw() -> void:
 	for key in buttons:
 		var b: Dictionary = buttons[key]
 		var held: bool = _held.has(key) or (key == "aim" and player.weapon.aiming) or (key == "orders" and _orders_open) \
-				or (key == "sprint" and (player.sprint or player.sprinting)) or (key == "crouch" and player.crouching)
+				or (key == "sprint" and (player.sprint or player.sprinting)) or (key == "crouch" and player.crouching) \
+				or (key == "zoom" and player.piloting is BombDrone and (player.piloting as BombDrone).zoomed)
 		var fill := Color(0.75, 0.05, 0.08, 0.45) if held else Color(0, 0, 0, 0.25)
 		if key == "fire":
 			fill = Color(0.75, 0.05, 0.08, 0.55 if held else 0.3)
@@ -497,31 +522,33 @@ func _draw_status() -> void:
 		draw_rect(Rect2(bx, y - 9, bw * float(r[2]), 6), col)
 
 
-## Hotbar: AK-74M, M500, grenades, drones; the held gun is outlined.
+## Hotbar: the guns carried, grenades, drones; the gun in hands is outlined
+## (none when it is put away).
 func _draw_hotbar() -> void:
 	var slots := _slot_rects()
-	var held := player.weapon.slots.find(player.weapon.current)
+	var items := _slots()
+	var held := -1 if player.weapon.holstered else player.weapon.slots.find(player.weapon.current)
 	var counts := []
 	for k in player.weapon.slots.size():
 		counts.append("%d" % (_ammo if held == k else player.weapon.slots[k].ammo))
-	counts += ["×%d" % player.grenades, "×%d" % player.drones]
-	var keys := SLOT_KEYS
-	var ids := SLOT_IDS
+	counts += ["×%d" % player.grenades, "×%d" % player.drones, "×%d" % player.bombers]
 	for k in slots.size():
+		var i: int = items[k]
 		var r: Rect2 = slots[k]
-		var on := k == held
+		var on := i == held
 		draw_rect(r, Color(0.05, 0.05, 0.06, 0.7 if on else 0.5))
 		draw_rect(r, Color(1, 0.8, 0.3, 0.95) if on else Color(1, 1, 1, 0.25), false, 2.0 if on else 1.0)
-		var tex: Texture2D = _icons[ids[k]]
+		var tex: Texture2D = _icons[SLOT_IDS[i]]
 		var tr := r.grow(-6)
 		tr.size.y -= 12
 		var ts := tex.get_size()
 		var sc := minf(tr.size.x / ts.x, tr.size.y / ts.y)
 		var dst := Rect2(tr.get_center() - ts * sc * 0.5, ts * sc)
-		var empty: bool = (ids[k] == "grenade" and player.grenades == 0) or (ids[k] == "fpv" and player.drones == 0)
+		var empty: bool = (SLOT_IDS[i] == "grenade" and player.grenades == 0) or (SLOT_IDS[i] == "fpv" and player.drones == 0) \
+				or (SLOT_IDS[i] == "bomber" and player.bombers == 0)
 		draw_texture_rect(tex, dst, false, Color(1, 1, 1, 0.35 if empty else 1.0))
-		draw_string(_font, r.position + Vector2(5, 15), keys[k], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.6))
-		var cnt: String = counts[k]
+		draw_string(_font, r.position + Vector2(5, 15), SLOT_KEYS[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.6))
+		var cnt: String = counts[i]
 		var cw := _font.get_string_size(cnt, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
 		draw_string(_font, r.end - Vector2(cw + 6, 6), cnt, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.92))
 
@@ -531,6 +558,8 @@ func _draw_stamina() -> void:
 	if player.stamina >= 0.999:
 		return
 	var slots := _slot_rects()
+	if slots.is_empty():
+		return
 	var x0 := slots[0].position.x
 	var w := slots[slots.size() - 1].end.x - x0
 	var y := slots[0].position.y - 10.0
@@ -581,7 +610,10 @@ func _draw_fpv() -> void:
 		draw_rect(Rect2(Vector2(inset, inset), size - Vector2(inset, inset) * 2.0), Color(0, 0, 0, 0.09), false, 22.0)
 	# OSD
 	var w := Color(1, 1, 1, 0.9)
-	var bat := int(d.battery / FpvDrone.BATTERY * 100.0)
+	var bat := int(d.battery / d.battery_max * 100.0)
+	if d is BombDrone:
+		_draw_bomber(d as BombDrone, bat)
+		return
 	_text(Vector2(40, 200), "FPV", 24, w)
 	_text(Vector2(40, 232), "БАТ %d%%" % bat, 22, w if bat > 25 or int(Time.get_ticks_msec() / 300) % 2 == 0 else Color(1, 0.3, 0.2))
 	_text(Vector2(40, 260), "СКОР %d км/ч" % int(d.velocity.length() * 3.6), 22, w)
@@ -593,6 +625,37 @@ func _draw_fpv() -> void:
 	for dir in [Vector2.LEFT, Vector2.RIGHT]:
 		draw_line(c + dir * 22, c + dir * 46, w, 2.0)
 	var t2 := "ДЖОЙСТИК: вперёд — быстрее, назад — медленнее · СТРЕЛКИ или свайп — курс и высота · ПОДРЫВ"
+	if player.touch_mode:
+		draw_string(_font, Vector2(c.x - _font.get_string_size(t2, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x * 0.5, size.y - 18), t2, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.6))
+
+
+## The drop drone's picture: the gimbal camera's display (battery, height
+## over the ground, speed, grenades left), the centre cross and a red mark
+## where a grenade let go now would land.
+func _draw_bomber(d: BombDrone, bat: int) -> void:
+	var c := size * 0.5
+	var w := Color(1, 1, 1, 0.9)
+	_text(Vector2(40, 200), "СБРОС", 24, w)
+	_text(Vector2(40, 232), "БАТ %d%%" % bat, 22, w if bat > 20 or int(Time.get_ticks_msec() / 300) % 2 == 0 else Color(1, 0.3, 0.2))
+	_text(Vector2(40, 260), "ВЫС %.0f м" % d.agl, 22, w)
+	_text(Vector2(40, 288), "СКОР %d км/ч" % int(d.velocity.length() * 3.6), 22, w)
+	_text(Vector2(40, 316), "Ф-1 ×%d" % d.grenades, 22, Color(1, 0.85, 0.4) if d.grenades > 0 else Color(1, 0.4, 0.3))
+	if int(Time.get_ticks_msec() / 500) % 2 == 0:
+		draw_circle(Vector2(size.x - 120, 140), 7, Color(1, 0.1, 0.1))
+		_text(Vector2(size.x - 108, 148), "REC", 20, w)
+	for dir in [Vector2.LEFT, Vector2.RIGHT, Vector2.UP, Vector2.DOWN]:
+		draw_line(c + dir * 10, c + dir * 30, w, 2.0)
+	var cam := d.camera
+	if d.grenades > 0 and d.impact_valid and not cam.is_position_behind(d.impact_point):
+		var p := cam.unproject_position(d.impact_point)
+		var red := Color(1, 0.15, 0.1, 0.95)
+		draw_arc(p, 18, 0, TAU, 32, red, 2.5, true)
+		draw_line(p + Vector2(-26, 0), p + Vector2(-8, 0), red, 2.0)
+		draw_line(p + Vector2(8, 0), p + Vector2(26, 0), red, 2.0)
+		draw_line(p + Vector2(0, -26), p + Vector2(0, -8), red, 2.0)
+		draw_line(p + Vector2(0, 8), p + Vector2(0, 26), red, 2.0)
+		_text(p + Vector2(24, -20), "%.0f м" % d.global_position.distance_to(d.impact_point), 18, red)
+	var t2 := "СТРЕЛКИ — полёт · ВЫШЕ / НИЖЕ · свайп — камера · СБРОС — граната падает в красный круг · ДОМОЙ — дрон вернётся"
 	if player.touch_mode:
 		draw_string(_font, Vector2(c.x - _font.get_string_size(t2, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x * 0.5, size.y - 18), t2, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.6))
 

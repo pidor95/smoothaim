@@ -17,7 +17,7 @@ signal built
 const MAP := "res://assets/maps/trenches.glb"
 const BUILDINGS := "res://assets/maps/buildings.glb"
 const NAV := "res://assets/maps/trenches_nav.res"
-const NAV_AABB := AABB(Vector3(-150.0, -4.0, -170.0), Vector3(300.0, 26.0, 340.0))
+const NAV_AABB := AABB(Vector3(-270.0, -4.0, -170.0), Vector3(420.0, 26.0, 340.0))
 
 var nav_region := NavigationRegion3D.new()
 var geo := Node3D.new()

@@ -5,7 +5,9 @@ extends Node3D
 ## (tools/blender/build_sketchfab_kit.py); scoped rifles look through the
 ## scope (HUD overlay) when aimed. This script
 ## plays them and adds sway, bob, aiming, firing, hit processing, muzzle
-## flash and ejected shells.
+## flash and ejected shells. A rifle can wear the PBS-1 suppressor (weapon
+## menu, МОДИФИКАЦИИ): no flash, a quiet shot only soldiers close by hear.
+## The guns can be put away (empty hands) and left out of the kit.
 
 signal fired
 signal ammo_changed(ammo: int, capacity: int)
@@ -22,7 +24,7 @@ const DEFS := [
 		"damage": {"head": 100.0, "chest": 36.0, "pelvis": 32.0, "uarm_l": 20.0, "uarm_r": 20.0, "farm_l": 16.0,
 				"farm_r": 16.0, "thigh_l": 26.0, "thigh_r": 26.0, "shin_l": 18.0, "shin_r": 18.0},
 		"spread_hip": 1.8, "spread_ads": 0.12, "falloff_start": 120.0, "falloff_min": 0.7,
-		"sound": "rifle",
+		"sound": "rifle", "suppressor": Vector3(0.036, 0.036, 0.2),
 		"shell": "rifle", "shell_at": 0.0, "alert": 30.0, "flash": 1.1, "cam_recoil": 1.35,
 		"yaw": 3.0, "ads_dist": 0.4, "ads_fov": 0.7, "fire_last": "", "reload_empty": "reload_empty",
 	},
@@ -34,7 +36,7 @@ const DEFS := [
 		"damage": {"head": 100.0, "chest": 90.0, "pelvis": 80.0, "uarm_l": 50.0, "uarm_r": 50.0, "farm_l": 45.0,
 				"farm_r": 45.0, "thigh_l": 65.0, "thigh_r": 65.0, "shin_l": 50.0, "shin_r": 50.0},
 		"spread_hip": 2.6, "spread_ads": 0.03, "falloff_start": 400.0, "falloff_min": 0.85,
-		"sound": "sniper",
+		"sound": "sniper", "suppressor": Vector3(0.042, 0.042, 0.25),
 		"shell": "rifle", "shell_at": 0.0, "alert": 60.0, "flash": 1.4, "cam_recoil": 4.5,
 		"yaw": 2.5, "ads_dist": 0.1, "ads_fov": 0.22, "fire_last": "", "reload_empty": "",
 	},
@@ -47,6 +49,12 @@ const FLESH_COST := {"head": 0.9, "chest": 0.8, "pelvis": 0.8, "uarm_l": 0.45, "
 const GORE_PELLETS := 3
 const GUTS_RANGE := 4.0
 const SEVER_RANGE := 3.5
+## The PBS-1 (Blender, tools/blender/build_drone_kit.py): 1 m long along -Z,
+## scaled per rifle by DEFS "suppressor" (diameter, diameter, length).
+const SUPPRESSOR_SCENE := "res://assets/weapons/suppressor.glb"
+const SUPPRESSOR_MODEL_D := 0.266 # its diameter at 1 m length
+## How far soldiers hear a suppressed shot, as a share of the open one.
+const SUPPRESSED_ALERT := 0.22
 
 
 class Slot:
@@ -58,6 +66,7 @@ class Slot:
 	var eject := -1
 	var ammo := 0
 	var ads := Transform3D.IDENTITY
+	var suppressor: Node3D
 
 
 ## The grenade throw (grenade_fp.glb, "throw"): the hand lets go at this time.
@@ -69,6 +78,7 @@ var trigger_held := false # touch fire button held (automatic fire)
 var aiming := false
 var aim_t := 0.0
 var reloading := false
+var holstered := false # the gun is put away: empty hands
 var slots: Array[Slot] = []
 var current: Slot
 var ammo: int:
@@ -119,6 +129,7 @@ func _ready() -> void:
 			(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		s.root.visible = false
 		s.anim.play("idle")
+		_fit_suppressor(s)
 		slots.append(s)
 	_build_flash()
 	_build_shells()
@@ -128,7 +139,61 @@ func _ready() -> void:
 	for mi in _throw_root.find_children("*", "MeshInstance3D", true, false):
 		(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_throw_root.visible = false
-	select(0, false)
+	var first := _first_carried()
+	if first < 0: # no gun in the kit: empty hands
+		current = slots[0]
+		holstered = true
+	else:
+		select(first, false)
+	apply_mods()
+
+
+## The PBS-1 screwed onto the muzzle bone, along the bore (the viewmodel is
+## built turned by `yaw`), hidden until the rifle wears it.
+func _fit_suppressor(s: Slot) -> void:
+	var size: Vector3 = s.def.suppressor
+	var mount := BoneAttachment3D.new()
+	mount.bone_name = "muzzle"
+	s.skel.add_child(mount)
+	var to_skel := s.root.global_transform.affine_inverse() * s.skel.global_transform
+	var bone := to_skel * s.skel.get_bone_global_rest(s.muzzle)
+	var bore := Basis(Vector3.UP, deg_to_rad(s.def.yaw))
+	var want := Transform3D(bore.scaled(Vector3(size.x, size.y, size.z) / Vector3(SUPPRESSOR_MODEL_D, SUPPRESSOR_MODEL_D, 1.0)),
+			bone.origin + bore * Vector3(0, 0, 0.015)) # a little over the muzzle brake it replaces
+	var can: Node3D = load(SUPPRESSOR_SCENE).instantiate()
+	mount.add_child(can)
+	can.transform = bone.affine_inverse() * want
+	for mi in can.find_children("*", "MeshInstance3D", true, false):
+		(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	s.suppressor = mount
+
+
+## Applies the weapon menu's choices: suppressors on or off, guns left out
+## of the kit (the one in hands goes back if it was left out).
+func apply_mods() -> void:
+	for s in slots:
+		s.suppressor.visible = suppressed(s)
+	if not carried(slots.find(current)) and not holstered:
+		var other := _first_carried()
+		if other >= 0:
+			select(other)
+		else:
+			holster()
+
+
+func suppressed(s: Slot = null) -> bool:
+	return Settings.suppressed.get((s if s else current).def.id, false)
+
+
+func carried(index: int) -> bool:
+	return Settings.carries(slots[index].def.id)
+
+
+func _first_carried() -> int:
+	for i in slots.size():
+		if carried(i):
+			return i
+	return -1
 
 
 func _build_flash() -> void:
@@ -204,10 +269,13 @@ func _build_shells() -> void:
 
 func select(index: int, animate := true) -> void:
 	var s := slots[index]
-	if s == current:
+	if not carried(index):
+		return
+	if s == current and not holstered:
 		return
 	if current:
 		current.root.visible = false
+	holstered = false
 	current = s
 	s.root.visible = true
 	reloading = false
@@ -224,6 +292,28 @@ func select(index: int, animate := true) -> void:
 	ammo_changed.emit(s.ammo, s.def.capacity)
 
 
+## Puts the gun away (back on its sling): empty hands. Picking a gun on the
+## hotbar (or the same one again) takes it back out.
+func holster() -> void:
+	if holstered:
+		return
+	holstered = true
+	aiming = false
+	reloading = false
+	trigger_held = false
+	_events.clear()
+	Sfx.play("ui_click", -8.0)
+	weapon_changed.emit("")
+
+
+## Hotbar / keys on a gun: out if it is away, away if it is already in hands.
+func toggle(index: int) -> void:
+	if slots[index] == current and not holstered:
+		holster()
+	else:
+		select(index)
+
+
 ## Starts the grenade throw: the gun drops out of view, the right hand comes
 ## up with the grenade, the left pulls the ring, the arm swings over and
 ## lets go (player.release_grenade). False when busy.
@@ -238,12 +328,13 @@ func start_throw() -> bool:
 	_throw_root.visible = true
 	_throw_anim.stop()
 	_throw_anim.play("throw")
+	current.root.visible = not holstered
 	return true
 
 
 ## Looking through a scope: the HUD draws it and the viewmodel is hidden.
 func scoped() -> bool:
-	return current.def.has("scope") and aim_t > 0.85 and _throw_t < 0.0
+	return current.def.has("scope") and aim_t > 0.85 and _throw_t < 0.0 and not holstered
 
 
 func throwing() -> bool:
@@ -251,7 +342,12 @@ func throwing() -> bool:
 
 
 func next_weapon() -> void:
-	select((slots.find(current) + 1) % slots.size())
+	var i := slots.find(current)
+	for k in slots.size():
+		i = (i + 1) % slots.size()
+		if carried(i):
+			select(i)
+			return
 
 
 func weapon_name() -> String:
@@ -263,7 +359,9 @@ func weapon_name() -> String:
 ## Trigger pull (one shot per press; the shotgun also needs its pump cycle).
 func trigger() -> void:
 	if player.piloting:
-		player.piloting.detonate()
+		player.piloting.trigger_pressed()
+		return
+	if holstered:
 		return
 	if player.sprinting or _sprint_t > 0.3:
 		player.block_sprint(0.7) # the gun comes up from the run first
@@ -285,14 +383,18 @@ func trigger() -> void:
 	current.anim.play(anim_name)
 	if anim_name != d.fire_last:
 		current.anim.queue("idle")
-	_flash_time = 0.05
-	_flash_root.visible = true
-	_flash_light.visible = true
-	_flash_light.light_energy = 3.0 * d.flash
-	_flash_root.scale = Vector3.ONE * randf_range(0.8, 1.2) * d.flash
-	_flash_root.get_node("Front").rotation.z = randf() * TAU
-	_place_flash()
-	Sfx.play(d.sound, 0.0, 0.05)
+	var quiet := suppressed()
+	if not quiet: # the suppressor swallows the flash
+		_flash_time = 0.05
+		_flash_root.visible = true
+		_flash_light.visible = true
+		_flash_light.light_energy = 3.0 * d.flash
+		_flash_root.scale = Vector3.ONE * randf_range(0.8, 1.2) * d.flash
+		_flash_root.get_node("Front").rotation.z = randf() * TAU
+		_place_flash()
+		Sfx.play(d.sound, 0.0, 0.05)
+	else:
+		Sfx.play(d.sound + "_sup", -3.0, 0.05)
 	var kick: float = d.cam_recoil
 	player.add_recoil(deg_to_rad(kick * randf_range(0.85, 1.15)), deg_to_rad(randf_range(-0.25, 0.25) * kick))
 	if d.shell_at <= 0.0:
@@ -300,7 +402,7 @@ func trigger() -> void:
 	else:
 		_events.append([d.shell_at, _eject_shell])
 	_shoot()
-	_alert_npcs(d.alert)
+	_alert_npcs(d.alert * (SUPPRESSED_ALERT if quiet else 1.0))
 	player.add_stress(0.06)
 	player.cam_kick(kick / 2.0)
 	fired.emit()
@@ -309,7 +411,7 @@ func trigger() -> void:
 
 func reload() -> void:
 	var d := current.def
-	if reloading or current.ammo >= d.capacity or _cooldown > 0.3:
+	if holstered or reloading or current.ammo >= d.capacity or _cooldown > 0.3:
 		return
 	reloading = true
 	var anim_name := "reload"
@@ -322,7 +424,7 @@ func reload() -> void:
 
 
 func set_aiming(value: bool) -> void:
-	aiming = value
+	aiming = value and not holstered
 
 
 func _alert_npcs(radius: float) -> void:
@@ -522,8 +624,9 @@ func _process(frame_delta: float) -> void:
 		if _throw_t >= _throw_anim.current_animation_length:
 			_throw_t = -1.0
 			_throw_root.visible = false
-			current.anim.play("draw")
-			current.anim.queue("idle")
+			if not holstered:
+				current.anim.play("draw")
+				current.anim.queue("idle")
 			_cooldown = 0.3
 	_lower = move_toward(_lower, 1.0 if _throw_t >= 0.0 and _throw_t < _throw_anim.current_animation_length - 0.25 else 0.0, delta * 5.0)
 	var held := trigger_held
@@ -534,16 +637,18 @@ func _process(frame_delta: float) -> void:
 		if Input.is_action_just_pressed("reload"):
 			reload()
 		if Input.is_action_just_pressed("weapon_1"):
-			select(0)
+			toggle(0)
 		if Input.is_action_just_pressed("weapon_2"):
-			select(1)
+			toggle(1)
 		if Input.is_action_just_pressed("weapon_next"):
 			next_weapon()
-		aiming = Input.is_action_pressed("aim")
-	if held and current.def.auto and _cooldown <= 0.0 and current.ammo > 0:
+		if Input.is_action_just_pressed("holster"):
+			holster()
+		aiming = Input.is_action_pressed("aim") and not holstered
+	if held and current.def.auto and _cooldown <= 0.0 and current.ammo > 0 and not holstered:
 		trigger()
 
-	var aim_target := 1.0 if aiming and not reloading and _throw_t < 0.0 else 0.0
+	var aim_target := 1.0 if aiming and not reloading and _throw_t < 0.0 and not holstered else 0.0
 	aim_t = move_toward(aim_t, aim_target, delta * 6.0)
 	var a := smoothstep(0.0, 1.0, aim_t)
 
@@ -574,7 +679,7 @@ func _process(frame_delta: float) -> void:
 			wall = reach - cam.global_position.distance_to(hit.position)
 	_wall_push = lerpf(_wall_push, wall, clampf(delta * 12.0, 0.0, 1.0))
 
-	current.root.visible = not scoped()
+	current.root.visible = not scoped() and not holstered
 	var low := smoothstep(0.0, 1.0, _lower)
 	_sprint_t = move_toward(_sprint_t, 1.0 if player.sprinting else 0.0, delta * 5.0)
 	var run := smoothstep(0.0, 1.0, _sprint_t)

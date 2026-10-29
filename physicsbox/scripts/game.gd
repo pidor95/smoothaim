@@ -30,9 +30,10 @@ var _pause_layer := CanvasLayer.new()
 var _pause_panel: Control
 var _weapon_layer := CanvasLayer.new()
 var _weapon_panel: Control
-var _weapon_cards: Array = [] # [button, slot index]
+var _weapon_cards: Array = [] # [button, slot index, item id, kind: take / carry / suppressor]
 var _weapon_tabs: Array = [] # [tab button, page]
 var _immortal_button: Button
+var _holster_button: Button
 var weapon_menu_open := false
 var _loading_layer: CanvasLayer
 var _loading_label: Label
@@ -471,13 +472,60 @@ func _show_weapon_tab(page: Control) -> void:
 		t[0].button_pressed = t[1] == page
 
 
+## Every button's text and state from the current choices.
 func _refresh_weapon_cards() -> void:
 	_immortal_button.text = "БЕССМЕРТИЕ: " + ("ВКЛ" if Player.immortal else "ВЫКЛ")
+	var w := player.weapon
 	for c in _weapon_cards:
 		var b: Button = c[0]
-		var held: bool = player.weapon.slots[c[1]] == player.weapon.current
-		b.text = "В РУКАХ" if held else "ВЗЯТЬ"
-		b.disabled = held
+		var id: String = c[2]
+		var i: int = c[1]
+		var carried := Settings.carries(id)
+		match c[3]:
+			"take":
+				var held: bool = w.slots[i] == w.current and not w.holstered
+				b.text = "В РУКАХ" if held else "ВЗЯТЬ В РУКИ"
+				b.disabled = held or not carried
+			"carry":
+				b.text = "В СНАРЯЖЕНИИ ✓" if carried else "УБРАНО — ВЕРНУТЬ"
+			"suppressor":
+				b.text = "ГЛУШИТЕЛЬ: УСТАНОВЛЕН" if Settings.suppressed.get(id, false) else "ГЛУШИТЕЛЬ: СНЯТ"
+	_holster_button.text = "ОРУЖИЕ УБРАНО (руки свободны)" if w.holstered else "УБРАТЬ ОРУЖИЕ ИЗ РУК"
+	_holster_button.disabled = w.holstered
+
+
+func _small_button(text: String, callback: Callable, width := 340.0) -> Button:
+	var b := UiKit.button(text, callback, width)
+	b.custom_minimum_size.y = 50
+	b.add_theme_font_size_override("font_size", 22)
+	return b
+
+
+func _icon(id: String, sz: Vector2) -> TextureRect:
+	var icon := TextureRect.new()
+	icon.texture = load("res://assets/ui/icon_%s.png" % id)
+	icon.custom_minimum_size = sz
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	return icon
+
+
+func _card(parent: Control) -> VBoxContainer:
+	var card := PanelContainer.new()
+	parent.add_child(card)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 5)
+	card.add_child(v)
+	return v
+
+
+## Taking a gun in hand, leaving things out of the kit, the suppressor:
+## the choices stick (Settings) and take effect at once.
+func _set_carried(id: String, on: bool) -> void:
+	Settings.loadout[id] = on
+	player.weapon.apply_mods()
+	Settings.save_settings()
+	_refresh_weapon_cards()
 
 
 func _build_weapon_menu() -> void:
@@ -497,55 +545,104 @@ func _build_weapon_menu() -> void:
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.add_child(center)
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 16)
+	col.add_theme_constant_override("separation", 14)
 	center.add_child(col)
-	# tabs: weapons | immortality | x-ray
+	# tabs: weapons | kit | modifications | immortality, and the way out
 	var tabs := HBoxContainer.new()
-	tabs.add_theme_constant_override("separation", 12)
+	tabs.add_theme_constant_override("separation", 10)
 	tabs.alignment = BoxContainer.ALIGNMENT_CENTER
 	col.add_child(tabs)
+	var w := player.weapon
+
+	# ОРУЖИЕ: take a gun in hand, leave it out of the kit, put it away
+	var guns := VBoxContainer.new()
+	guns.add_theme_constant_override("separation", 12)
+	col.add_child(guns)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 24)
-	col.add_child(row)
+	row.add_theme_constant_override("separation", 20)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	guns.add_child(row)
+	for i in w.slots.size():
+		var d: Dictionary = w.slots[i].def
+		var v := _card(row)
+		v.add_child(_icon(d.id, Vector2(360, 140)))
+		v.add_child(UiKit.label(d.title, 30, Color(1, 1, 1)))
+		v.add_child(UiKit.label(d.desc, 18, Color(0.75, 0.75, 0.75)))
+		for line in d.stats:
+			v.add_child(UiKit.label(line, 19, Color(0.9, 0.85, 0.7)))
+		var idx := i
+		var id: String = d.id
+		var take := _small_button("ВЗЯТЬ В РУКИ", func():
+			w.select(idx)
+			toggle_weapon_menu(), 360)
+		v.add_child(take)
+		_weapon_cards.append([take, i, id, "take"])
+		var carry := _small_button("", func(): _set_carried(id, not Settings.carries(id)), 360)
+		v.add_child(carry)
+		_weapon_cards.append([carry, i, id, "carry"])
+	_holster_button = _small_button("", func():
+		w.holster()
+		_refresh_weapon_cards(), 520)
+	_holster_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	guns.add_child(_holster_button)
+
+	# СНАРЯЖЕНИЕ: grenades and drones taken along or left behind
+	var kit := HBoxContainer.new()
+	kit.add_theme_constant_override("separation", 16)
+	kit.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.add_child(kit)
+	for it in [["grenade", "Гранаты РГД-5", "Бросок анимацией, ×4,\nпополняются со временем."],
+			["fpv", "FPV-дрон", "Камикадзе с зарядом ПГ-7:\nлетишь через его камеру."],
+			["bomber", "Дрон-сброс", "Mavic с двумя Ф-1 на сбросе:\nвисит, сбрасывает и летит домой."]]:
+		var v := _card(kit)
+		v.add_child(_icon(it[0], Vector2(250, 125)))
+		v.add_child(UiKit.label(it[1], 26, Color(1, 1, 1)))
+		v.add_child(UiKit.label(it[2], 17, Color(0.75, 0.75, 0.75)))
+		var id: String = it[0]
+		var b := _small_button("", func(): _set_carried(id, not Settings.carries(id)), 250)
+		v.add_child(b)
+		_weapon_cards.append([b, -1, id, "carry"])
+
+	# МОДИФИКАЦИИ: the PBS-1 on each rifle
+	var mods := HBoxContainer.new()
+	mods.add_theme_constant_override("separation", 20)
+	mods.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.add_child(mods)
+	for i in w.slots.size():
+		var d: Dictionary = w.slots[i].def
+		var v := _card(mods)
+		v.add_child(_icon(d.id, Vector2(360, 120)))
+		v.add_child(UiKit.label(d.title, 28, Color(1, 1, 1)))
+		var line := HBoxContainer.new()
+		line.add_theme_constant_override("separation", 8)
+		line.add_child(_icon("suppressor", Vector2(110, 55)))
+		line.add_child(UiKit.label("Глушитель ПБС-1", 22, Color(0.9, 0.85, 0.7)))
+		v.add_child(line)
+		v.add_child(UiKit.label("Нет вспышки у ствола, выстрел тихий:\nсолдаты слышат его только вблизи.", 17, Color(0.75, 0.75, 0.75)))
+		var id: String = d.id
+		var b := _small_button("", func():
+			Settings.suppressed[id] = not Settings.suppressed.get(id, false)
+			w.apply_mods()
+			Settings.save_settings()
+			_refresh_weapon_cards(), 360)
+		v.add_child(b)
+		_weapon_cards.append([b, i, id, "suppressor"])
+
 	var immortal_page := _toggle_page("Пули и осколки не наносят вам урона.\nБез бессмертия: пятая пуля убивает, раны кровоточат,\nпри смерти — возрождение в своей траншее.")
 	_immortal_button = immortal_page.get_child(1)
 	_immortal_button.pressed.connect(func():
 		Player.immortal = not Player.immortal
 		_refresh_weapon_cards())
 	col.add_child(immortal_page)
-	for t in [["ОРУЖИЕ", row], ["БЕССМЕРТИЕ", immortal_page]]:
+	for t in [["ОРУЖИЕ", guns], ["СНАРЯЖЕНИЕ", kit], ["МОДИФИКАЦИИ", mods], ["БЕССМЕРТИЕ", immortal_page]]:
 		var page: Control = t[1]
-		var tb := UiKit.button(t[0], func(): _show_weapon_tab(page), 250)
+		var tb := _small_button(t[0], func(): _show_weapon_tab(page), 200)
 		tb.toggle_mode = true
 		tabs.add_child(tb)
 		_weapon_tabs.append([tb, page])
-	_show_weapon_tab(row)
-	for i in player.weapon.slots.size():
-		var d: Dictionary = player.weapon.slots[i].def
-		var card := PanelContainer.new()
-		row.add_child(card)
-		var v := VBoxContainer.new()
-		v.add_theme_constant_override("separation", 6)
-		card.add_child(v)
-		var icon := TextureRect.new()
-		icon.texture = load("res://assets/ui/icon_%s.png" % d.id)
-		icon.custom_minimum_size = Vector2(380, 190)
-		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		v.add_child(icon)
-		v.add_child(UiKit.label(d.title, 34, Color(1, 1, 1)))
-		v.add_child(UiKit.label(d.desc, 20, Color(0.75, 0.75, 0.75)))
-		for line in d.stats:
-			v.add_child(UiKit.label(line, 22, Color(0.9, 0.85, 0.7)))
-		var idx := i
-		var b := UiKit.button("ВЗЯТЬ", func():
-			player.weapon.select(idx)
-			toggle_weapon_menu(), 380)
-		v.add_child(b)
-		_weapon_cards.append([b, i])
-	var close := UiKit.button("ЗАКРЫТЬ", toggle_weapon_menu, 300)
-	close.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	col.add_child(close)
+	var close := _small_button("✕", toggle_weapon_menu, 64)
+	tabs.add_child(close)
+	_show_weapon_tab(guns)
 	root.visible = false
 
 

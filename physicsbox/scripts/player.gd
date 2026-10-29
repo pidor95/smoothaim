@@ -65,11 +65,15 @@ var _muffle := AudioEffectLowPassFilter.new()
 var _muffle_idx := -1
 
 ## Grenades and FPV drones carried; one more comes back every so often.
+## The drop drone (a Mavic with two F-1s) flies back when called home; a
+## lost one is replaced after a while.
 const MAX_GRENADES := 4
 const MAX_DRONES := 2
+const MAX_BOMBERS := 1
 var grenades := MAX_GRENADES
 var drones := MAX_DRONES
-var piloting: FpvDrone # flying a drone through its camera
+var bombers := MAX_BOMBERS
+var piloting: FpvDrone # flying a drone (FPV or the drop drone) through its camera
 var signal_lost := 0.0 # HUD static after the drone is gone
 var shake := 0.0
 var drone_arrows := Vector2.ZERO # on-screen arrows while flying the drone (HUD)
@@ -89,6 +93,7 @@ var _jr_v := Vector3.ZERO
 var _was_on_floor := true
 var _grenade_regen := 0.0
 var _drone_regen := 0.0
+var _bomber_regen := 0.0
 
 
 func _ready() -> void:
@@ -243,7 +248,7 @@ func add_shake(amount: float) -> void:
 ## Pulls the pin and lobs a grenade where he looks: the arm animation
 ## (Weapon.start_throw) lets go of it in release_grenade().
 func throw_grenade() -> void:
-	if grenades <= 0 or dead or piloting:
+	if grenades <= 0 or dead or piloting or not Settings.carries("grenade"):
 		return
 	if weapon.start_throw():
 		grenades -= 1
@@ -258,12 +263,32 @@ func release_grenade() -> void:
 ## Sends an FPV drone up from his position and flies it through its camera.
 func launch_drone() -> void:
 	if piloting:
-		piloting.detonate()
+		exit_drone()
 		return
-	if drones <= 0 or dead:
+	if drones <= 0 or dead or not Settings.carries("fpv"):
 		return
 	drones -= 1
-	var d := FpvDrone.new()
+	_fly(FpvDrone.new())
+
+
+## Sends the drop drone up (two F-1s under it); again: calls it home.
+func launch_bomber() -> void:
+	if piloting:
+		exit_drone()
+		return
+	if bombers <= 0 or dead or not Settings.carries("bomber"):
+		return
+	bombers -= 1
+	_fly(BombDrone.new())
+
+
+## ВЫХОД: an FPV goes off, the drop drone flies home.
+func exit_drone() -> void:
+	if piloting:
+		piloting.exit_pressed()
+
+
+func _fly(d: FpvDrone) -> void:
 	d.team = 0
 	d.pilot = self
 	d.add_collision_exception_with(self)
@@ -274,6 +299,7 @@ func launch_drone() -> void:
 	d.velocity = Vector3.UP * 5.0 # pops up off the hand, then hangs
 	piloting = d
 	touch_move = Vector2.ZERO
+	weapon.trigger_held = false
 
 
 ## The drone went off (or its battery died): back to his own eyes.
@@ -282,6 +308,14 @@ func drone_lost(d: FpvDrone) -> void:
 		piloting = null
 		camera.current = true
 		signal_lost = 0.7
+
+
+## The drop drone came home: back in the bag, grenades re-armed.
+func bomber_back(d: BombDrone) -> void:
+	bombers = mini(bombers + 1, MAX_BOMBERS)
+	if piloting == d:
+		piloting = null
+		camera.current = true
 
 
 func _respawn() -> void:
@@ -317,11 +351,20 @@ func _physics_process(delta: float) -> void:
 	if _drone_regen > 40.0:
 		_drone_regen = 0.0
 		drones = mini(drones + 1, MAX_DRONES)
+	if bombers < MAX_BOMBERS and not (piloting is BombDrone):
+		_bomber_regen += delta
+		if _bomber_regen > 60.0:
+			_bomber_regen = 0.0
+			bombers += 1
+	else:
+		_bomber_regen = 0.0
 	if not touch_mode and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		if Input.is_action_just_pressed("grenade"):
 			throw_grenade()
 		if Input.is_action_just_pressed("drone"):
 			launch_drone()
+		if Input.is_action_just_pressed("bomber"):
+			launch_bomber()
 	_body_process(delta)
 	if dead:
 		# down on the floor; back at the start after a while

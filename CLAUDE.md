@@ -21,7 +21,7 @@ https://github.com/pidor95/smoothaim/releases/download/latest/PhysicsBox.apk
 ## Что уже есть
 - **NPC WAR** (новое имя, папка/APK прежние): только война, карт «дом»/«магазин»
   нет (house.gd/shop.gd удалены). Меню: «В БОЙ», настройки, «АВТОРЫ МОДЕЛЕЙ».
-- Карта ФРОНТ 300×340 м: `build_trenches.py` (чанки рельефа `Terrain_i_j` с
+- Карта ФРОНТ 420×340 м (траншеи ~300 м — «длиннее окопы», X0 = −270): `build_trenches.py` (чанки рельефа `Terrain_i_j` с
   шагом 0.5/1/2 м и «юбками», мебель траншей разбита по ячейкам 60 м
   `Planks_i_j`…, пустышки `B_<Proto>_<A|B|N>_k` — где стоят здания, Spawn/Post/Player).
   Здания — прототипы `build_buildings.py` → `buildings.glb` (`P_<Name>`; дети
@@ -65,11 +65,25 @@ https://github.com/pidor95/smoothaim/releases/download/latest/PhysicsBox.apk
   раскачка, дыхание от пульса, `_jolt`/`cam_kick` на выстрел/попадание/приземление),
   `scope_shift` для оптики. Граната — анимация `grenade_fp.glb`
   "throw", отпуск на `THROW_RELEASE` → `player.release_grenade()`.
-- Sketchfab (CC-BY, авторы в README и меню): АК-74М, РГД-5, FPV-дрон, СВД, «Кобра». Токен —
-  у пользователя (в репо не класть): `SKETCHFAB_TOKEN=... python3 tools/fetch_sketchfab.py`
+- Sketchfab (CC-BY, авторы в README и меню): АК-74М, РГД-5, FPV-дрон, СВД, «Кобра», Mavic 2 Pro,
+  Ф-1, ПБС-1. Токен — у пользователя (в репо не класть):
+  `SKETCHFAB_TOKEN=... python3 tools/fetch_sketchfab.py [имена]`
   → `tools/model_sources/` (gitignore) → `build_sketchfab_kit.py` (АК FP, бросок,
   `npc_rifle.glb` — `RIFLE_MUZZLE` печатает скрипт, `grenade.glb`, `fpv_drone.glb` с Prop0..3).
-- Тесты: `tools/war_test.gd`, `tools/mechanics_test.gd` (обморок, судороги,
+- Меню оружия (`game._build_weapon_menu`): вкладки ОРУЖИЕ (взять / убрать из снаряжения / убрать из рук),
+  СНАРЯЖЕНИЕ (гранаты, FPV, дрон-сброс), МОДИФИКАЦИИ (глушитель ПБС-1), БЕССМЕРТИЕ.
+  `Settings.loadout` / `Settings.suppressed` (сохраняются), `Settings.carries(id)`;
+  `Weapon.holstered`/`holster()`/`toggle(i)`/`apply_mods()`; хотбар (`Hud._slots()`) — только взятое.
+- Глушитель: `suppressor.glb` (ПБС-1, Sketchfab 3dYaroslav) на BoneAttachment3D кости `muzzle`, размер — DEFS
+  "suppressor"; без вспышки/света, звук `rifle_sup`/`sniper_sup` (`build_suppressed_sounds.py`),
+  `alert × SUPPRESSED_ALERT`.
+- Дрон-сброс (пользователь прислал фото: Mavic 3 с белым печатным сбросом и двумя Ф-1 по бокам —
+  не самолёт-UAV и не FPV!): `bomb_drone.gd` (`BombDrone extends FpvDrone`, висит, сам взлетает на 22 м,
+  камера-подвес вниз, `trigger_pressed` = сброс, `exit_pressed` = домой → `player.bomber_back`),
+  модель `build_drone_kit.py` (Mavic 2 Pro MattMaksymowicz + Ф-1 notcplkerry), падающая Ф-1 —
+  `Grenade.throw(..., f1.glb, impact=true)`. Только у игрока, клавиша X.
+- Тесты: `tools/war_test.gd`, `tools/kit_test.gd` (кобура, снаряжение, глушитель, дрон-сброс, меню),
+  `tools/mechanics_test.gd` (обморок, судороги,
   шея 5 с, авто-огонь, граната, стрелки FPV, смерть игрока), `tools/explosives_test.gd`.
   В контейнере Vulkan нет — Godot сам падает на OpenGL (llvmpipe), это медленно.
 - Вылет при входе в бой (жалоба): текстуры оружия были 2048 без VRAM-сжатия (~250 МБ видеопамяти)

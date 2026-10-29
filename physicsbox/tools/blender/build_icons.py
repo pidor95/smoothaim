@@ -1,19 +1,21 @@
 """Renders the icons for the weapon menu and the hotbar in Blender from the
 exported models: assets/ui/icon_<id>.png (transparent, 512x256, side view)
-for the guns (viewmodels) and the grenade and the FPV drone.
+for the guns (viewmodels), the grenade, the FPV drone, the bomber drone and the suppressor.
 
 Run (after build_weapons.py / build_sketchfab_kit.py):
-  blender -b --python tools/blender/build_icons.py
+  blender -b --python tools/blender/build_icons.py [-- id ...]
 """
 import math
 import os
+import sys
 
 import bpy
 from mathutils import Matrix, Vector
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 WEAPONS = {"ak74": 3.0, "svd": 2.5}  # id -> yaw the viewmodel was built with
-PROPS = {"grenade": "grenade.glb", "fpv": "fpv_drone.glb"}
+PROPS = {"grenade": "grenade.glb", "fpv": "fpv_drone.glb", "bomber": "bomb_drone.glb", "suppressor": "suppressor.glb"}
+ONLY = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []  # icon ids to render (all by default)
 SKIP = ("Hand", "Arm", "Thumb", "Shell", "MagNew", "Clip", "Round", "RedDot")
 
 
@@ -79,6 +81,8 @@ def render_icon(wid, yaw, path=None):
 
 
 for wid, yaw in WEAPONS.items():
-    render_icon(wid, yaw)
+    if not ONLY or wid in ONLY:
+        render_icon(wid, yaw)
 for wid, f in PROPS.items():
-    render_icon(wid, 0.0, os.path.join(ROOT, "assets", "weapons", f))
+    if not ONLY or wid in ONLY:
+        render_icon(wid, 0.0, os.path.join(ROOT, "assets", "weapons", f))

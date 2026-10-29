@@ -13,7 +13,9 @@ const BATTERY := 60.0
 var team := 1
 var pilot: Player # flown by the player
 var target: Node3D # hunted by itself
+var battery_max := BATTERY
 var battery := BATTERY
+var scene_path := SCENE
 var camera := Camera3D.new()
 var dead := false
 
@@ -31,12 +33,13 @@ func _ready() -> void:
 	collision_layer = 2 # props: bullets hit it
 	collision_mask = 1 | 2 | 4 | 8 | 16
 	set_meta("drone", true)
+	battery = battery_max
 	var cs := CollisionShape3D.new()
 	var sh := BoxShape3D.new()
 	sh.size = Vector3(0.36, 0.14, 0.4)
 	cs.shape = sh
 	add_child(cs)
-	var model: Node3D = (load(SCENE) as PackedScene).instantiate()
+	var model: Node3D = (load(scene_path) as PackedScene).instantiate()
 	add_child(model)
 	# its own camera does not see the frame and props
 	for mi in model.find_children("*", "MeshInstance3D", true, false):
@@ -66,6 +69,22 @@ func _ready() -> void:
 	if pilot:
 		camera.current = true
 		_speed = 0.0 # it lifts off and hangs there until told to go
+	_setup(model)
+
+
+## Subclasses: place the camera, find their own parts in the model.
+func _setup(_model: Node3D) -> void:
+	pass
+
+
+## The pilot's trigger (ОГОНЬ / ЛКМ): this one goes off.
+func trigger_pressed() -> void:
+	detonate()
+
+
+## ВЫХОД / V again: an FPV has no way back, so it goes off too.
+func exit_pressed() -> void:
+	detonate()
 
 
 ## Mouse / swipe from the pilot: turn and tilt the camera (forward flies
@@ -107,9 +126,7 @@ func _pilot_flight(delta: float) -> void:
 	var before := velocity.length()
 	var col := move_and_collide(velocity * delta)
 	if col:
-		var hit := col.get_collider()
-		if before > 3.5 or hit is Player or (hit is Object and hit.has_meta("npc")) or hit is Npc:
-			detonate()
+		if _crash(col.get_collider(), before):
 			return
 		velocity = velocity.slide(col.get_normal())
 	_buzz.pitch_scale = 0.85 + velocity.length() / MAX_SPEED * 0.5 + absf(climb) * 0.1
@@ -163,14 +180,20 @@ func _physics_process(delta: float) -> void:
 	var before := velocity.length()
 	var col := move_and_collide(velocity * delta)
 	if col:
-		var hit := col.get_collider()
-		if before > 3.5 or hit is Player or (hit is Object and hit.has_meta("npc")) or hit is Npc:
-			detonate()
+		if _crash(col.get_collider(), before):
 			return
 		velocity = velocity.slide(col.get_normal())
 	_buzz.pitch_scale = 0.85 + velocity.length() / MAX_SPEED * 0.5
 	if global_position.y < -30.0:
 		_finish()
+
+
+## Bumped into something at `speed`: true when that was the end of it.
+func _crash(hit: Object, speed: float) -> bool:
+	if speed > 3.5 or hit is Player or (hit != null and hit.has_meta("npc")) or hit is Npc:
+		detonate()
+		return true
+	return false
 
 
 ## Shot by someone.
