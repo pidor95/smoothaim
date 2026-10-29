@@ -190,7 +190,7 @@ def build_ak_fp():
             glass.blend_method = "BLEND"
             o.data.materials.clear()
             o.data.materials.append(glass)
-    dot_at = Vector((0.0, -0.2, 1.52))  # AK model units: the housing sits on the dust cover
+    dot_at = Vector((0.0, -0.2, 1.4))  # AK model units: the housing sunk onto the dust cover, the line of sight just over the front post
     to_kobra = Matrix.Translation(dot_at) @ Matrix.Rotation(math.pi / 2, 4, "Z") @ Matrix.Scale(0.759, 4) \
         @ Matrix.Translation(-KOBRA_DOT)
     transform(kobra, to_cam @ to_kobra)

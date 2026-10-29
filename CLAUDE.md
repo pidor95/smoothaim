@@ -49,7 +49,8 @@ https://github.com/pidor95/smoothaim/releases/download/latest/PhysicsBox.apk
   настройка `Settings.bodycam`, +14° FOV.
 - Оружие игрока: АК-74М с «Коброй» (`ak74_fp.glb`, авто, `trigger_held`, sight = красная точка;
   высота «Кобры» — `dot_at` в build_sketchfab_kit.py, опущена по просьбе; стекло прозрачное, точка
-  в центре окна `KOBRA_DOT`; ads_dist 0.4, бедро ниже — пользователь жаловался «прицел высоко»),
+  в центре окна `KOBRA_DOT`; ads_dist 0.4, бедро ниже — пользователь дважды жаловался «прицел высоко»,
+  dot_at.z = 1.4 — корпус утоплен в крышку). От бедра вместо перекрестия — маленькая белая точка (просьба).
   СВД+ПСО-1 (`svd_fp.glb`); у DEFS ключ `scope` ("pso") → `Weapon.scoped()`, HUD `_draw_scope`;
   дробовика, пистолета и Мосинки нет (убраны по просьбе; у NPC пистолет для самоубийства остался).
 - Бег/присед: `player.sprint`/`sprint_stick` (джойстик за кольцом вверх)/Shift, `stamina`,

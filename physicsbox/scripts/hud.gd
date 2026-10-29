@@ -1,6 +1,6 @@
 class_name Hud
 extends Control
-## In-game HUD: crosshair, the status panel (heart rate, blood,
+## In-game HUD: the aiming dot, the status panel (heart rate, blood,
 ## consciousness, bottom left), the hotbar, counters, the death and
 ## fainting overlays and the multitouch controls (floating joystick, look
 ## area, fire / aim / jump / reload buttons, drone arrows, the list of
@@ -23,7 +23,6 @@ var _mag := 30
 var _kills := 0
 var _tickets := [0, 0]
 var _winner := -1
-var _fire_flash := 0.0
 var _icons := {}
 var _ecg := PackedFloat32Array()
 var _ecg_t := 0.0
@@ -54,7 +53,6 @@ func _ready() -> void:
 	player.weapon.ammo_changed.connect(func(a, m):
 		_ammo = a
 		_mag = m)
-	player.weapon.fired.connect(func(): _fire_flash = 1.0)
 
 
 func set_stats(kills: int, tickets: Array, winner: int) -> void:
@@ -276,7 +274,6 @@ func _process(delta: float) -> void:
 		_ecg.append(_ecg_value(player.heart_phase) if player.bpm > 1.0 else randf_range(-0.02, 0.02))
 	_order_t = maxf(_order_t - delta, 0.0)
 	_order_pressed_t = maxf(_order_pressed_t - delta, 0.0)
-	_fire_flash = maxf(_fire_flash - delta * 6.0, 0.0)
 	queue_redraw()
 
 
@@ -307,14 +304,11 @@ func _draw() -> void:
 
 	if player.weapon.scoped() and not player.piloting and not player.dead:
 		_draw_scope(player.weapon.current.def.scope)
-	# crosshair
+	# a small white dot for shots from the hip (no scope)
 	if aim < 0.6 and not player.piloting and not player.dead:
 		var a := 1.0 - aim / 0.6
-		var spread := 7.0 + _fire_flash * 10.0 + Vector2(player.velocity.x, player.velocity.z).length() * 2.0
-		var col := Color(1, 1, 1, 0.9 * a)
-		for d in [Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN]:
-			_line_outlined(c + d * spread, c + d * (spread + 9.0), col, 2.0)
-		draw_circle(c, 1.5, Color(1, 1, 1, 0.8 * a))
+		draw_circle(c, 3.0, Color(0, 0, 0, 0.45 * a))
+		draw_circle(c, 2.0, Color(1, 1, 1, 0.95 * a))
 
 	# counters
 	_text(Vector2(24, 44), "УБИЙСТВ: %d" % _kills, 26, Color(1, 1, 1, 0.9))
@@ -650,8 +644,3 @@ func _draw_score() -> void:
 func _text(pos: Vector2, text: String, fs: int, col: Color) -> void:
 	draw_string_outline(_font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 5, Color(0, 0, 0, 0.5 * col.a))
 	draw_string(_font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
-
-
-func _line_outlined(a: Vector2, b: Vector2, col: Color, w: float) -> void:
-	draw_line(a, b, Color(0, 0, 0, col.a * 0.6), w + 2.0, true)
-	draw_line(a, b, col, w, true)
