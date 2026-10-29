@@ -65,13 +65,56 @@ func _ready() -> void:
 	_yaw = rotation.y
 	if pilot:
 		camera.current = true
+		_speed = 0.0 # it lifts off and hangs there until told to go
 
 
-## Mouse / swipe from the pilot: turn and climb / dive.
+## Mouse / swipe from the pilot: turn and tilt the camera (forward flies
+## where the camera looks, so tilt it down to dive).
 func look_input(delta_px: Vector2) -> void:
 	var s := 0.0022 * Settings.sensitivity
 	_yaw -= delta_px.x * s
 	_pitch = clampf(_pitch - delta_px.y * s, -1.3, 1.0)
+
+
+## Flown by the player: it hangs in the air on its own. ▲ / stick forward
+## flies where the camera looks, ▼ backs off, ◀ ▶ turn, the stick sideways
+## strafes, ВЫШЕ / НИЖЕ (E / Q) climb and sink; let go and it stops and
+## hovers.
+func _pilot_flight(delta: float) -> void:
+	var stick := pilot.touch_move
+	var arrows := pilot.drone_arrows
+	var climb := pilot.drone_climb
+	if not pilot.touch_mode:
+		stick += Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+		arrows += Input.get_vector("fpv_left", "fpv_right", "fpv_down", "fpv_up")
+		climb += Input.get_axis("fpv_sink", "fpv_climb")
+	var throttle := clampf(arrows.y - stick.y, -1.0, 1.0)
+	var turn := clampf(arrows.x, -1.0, 1.0)
+	var strafe := clampf(stick.x, -1.0, 1.0)
+	climb = clampf(climb, -1.0, 1.0)
+	_yaw -= turn * 1.7 * delta
+	var look := Basis(Vector3.UP, _yaw) * Basis(Vector3.RIGHT, _pitch)
+	var want := look * Vector3.FORWARD * throttle * (MAX_SPEED if throttle > 0.0 else 8.0) \
+			+ look * Vector3.RIGHT * strafe * 7.0 + Vector3.UP * climb * 6.0
+	# no input: it brakes and hangs where it is
+	velocity = velocity.lerp(want, clampf(delta * (2.2 if want.length() > 0.1 else 3.0), 0.0, 1.0))
+	_speed = velocity.length()
+	# the frame tips into its motion and banks into turns
+	var local := Basis(Vector3.UP, _yaw).inverse() * velocity
+	var tip := clampf(local.z / MAX_SPEED, -0.5, 0.5) * 0.7
+	var bank := clampf(-local.x / 8.0 - turn * 0.25, -0.5, 0.5)
+	basis = (look * Basis(Vector3.RIGHT, tip) * Basis(Vector3.BACK, bank)).orthonormalized()
+	var before := velocity.length()
+	var col := move_and_collide(velocity * delta)
+	if col:
+		var hit := col.get_collider()
+		if before > 3.5 or hit is Player or (hit is Object and hit.has_meta("npc")) or hit is Npc:
+			detonate()
+			return
+		velocity = velocity.slide(col.get_normal())
+	_buzz.pitch_scale = 0.85 + velocity.length() / MAX_SPEED * 0.5 + absf(climb) * 0.1
+	if global_position.y < -30.0:
+		_finish()
 
 
 func _physics_process(delta: float) -> void:
@@ -86,17 +129,9 @@ func _physics_process(delta: float) -> void:
 	var fwd := Vector3.FORWARD
 	var strafe := 0.0
 	if pilot:
-		# stick: forward = faster, back = slower; sideways = strafe
-		var stick := pilot.touch_move
-		if not pilot.touch_mode:
-			stick += Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-		_speed = clampf(_speed - stick.y * 18.0 * delta, 4.0, MAX_SPEED)
-		strafe = stick.x
-		# the arrows (on screen or on the keyboard): turn and climb / dive
-		var arrows := pilot.drone_arrows + Input.get_vector("fpv_left", "fpv_right", "fpv_down", "fpv_up")
-		_yaw -= clampf(arrows.x, -1.0, 1.0) * 1.9 * delta
-		_pitch = clampf(_pitch + clampf(arrows.y, -1.0, 1.0) * 1.3 * delta, -1.3, 1.0)
-	elif is_instance_valid(target) and not (target is Npc and target.dead):
+		_pilot_flight(delta)
+		return
+	if is_instance_valid(target) and not (target is Npc and target.dead):
 		# hunts its target: stays high over the trees, weaving a little, then
 		# dives onto it from above
 		var aim: Vector3 = (target.center() if target is Npc else target.global_position + Vector3.UP * 1.1)

@@ -72,13 +72,17 @@ func _setup_input() -> void:
 	_key_action("pause", [KEY_ESCAPE])
 	_key_action("weapon_1", [KEY_1])
 	_key_action("weapon_2", [KEY_2])
+	_key_action("weapon_3", [KEY_3])
 	_key_action("weapon_next", [KEY_F])
 	_key_action("weapon_menu", [KEY_B, KEY_TAB])
 	_key_action("grenade", [KEY_G])
 	_key_action("drone", [KEY_V])
-	for i in 7: # orders on 3..9, then 0
-		_key_action("order_%d" % (i + 1), [KEY_3 + i])
-	_key_action("order_8", [KEY_0])
+	_key_action("fpv_climb", [KEY_E])
+	_key_action("fpv_sink", [KEY_Q])
+	for i in 6: # orders on 4..9, then 0 and minus
+		_key_action("order_%d" % (i + 1), [KEY_4 + i])
+	_key_action("order_7", [KEY_0])
+	_key_action("order_8", [KEY_MINUS])
 	_mouse_action("fire", MOUSE_BUTTON_LEFT)
 	_mouse_action("aim", MOUSE_BUTTON_RIGHT)
 

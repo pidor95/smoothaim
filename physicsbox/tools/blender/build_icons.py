@@ -12,9 +12,9 @@ import bpy
 from mathutils import Matrix, Vector
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-WEAPONS = {"ak74": 3.0, "m500": 3.5}  # id -> yaw the viewmodel was built with
+WEAPONS = {"ak74": 3.0, "svd": 2.5, "mosin": 2.5}  # id -> yaw the viewmodel was built with
 PROPS = {"grenade": "grenade.glb", "fpv": "fpv_drone.glb"}
-SKIP = ("Hand", "Arm", "Thumb", "Shell", "MagNew")
+SKIP = ("Hand", "Arm", "Thumb", "Shell", "MagNew", "Clip", "Round", "RedDot")
 
 
 def render_icon(wid, yaw, path=None):

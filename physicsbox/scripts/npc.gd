@@ -56,6 +56,13 @@ const RIFLE_BASIS := Basis(Vector3(0.4422, 0.4624, -0.7685), Vector3(-0.4624, -0
 		Vector3(-0.7685, 0.6371, -0.0588))
 const RIFLE_MUZZLE := Vector3(0, 0.105, -0.666)
 const RIFLE_MAG := 30
+# Snipers carry an SVD (tools/blender/build_sketchfab_kit.py, same rifle frame).
+const SVD_SCENE := "res://assets/npc/npc_svd.glb"
+const SVD_MUZZLE := Vector3(0, 0.095, -0.992)
+const SVD_MAG := 10
+## A round with this much push (sniper rifles) goes through the plate and
+## always puts a man down.
+const HEAVY_ROUND := 20.0
 const MAX_DROPPED_GUNS := 8
 const MAGAZINE := 8
 const BULLET_DAMAGE_PLAYER := 16.0
@@ -257,6 +264,7 @@ var _wild_left := -1.0 # -1: not decided yet (first neck wound decides)
 var _spasm_time := 0.0
 var _spasm_cd := 0.0
 var _shove := Vector3.ZERO
+var _down_time := 2.0 # how long a knocked-down man stays down before he tries to rise
 var _shove_v := Vector3.ZERO
 
 
@@ -555,7 +563,7 @@ func _compute_pose() -> Array[Transform3D]:
 		# weapon in hand: held ready or aimed (a pistol turns at the shoulder,
 		# a rifle in both hands turns the whole upper body), or a pistol
 		# pressed to the temple
-		var rifle := weapon == "rifle" and _gun != null
+		var rifle := weapon != "pistol" and _gun != null
 		if i == 5 or i == 6 or (rifle and (i == 3 or i == 4 or (i == 2 and _aim_w > 0.001))):
 			if _ready_w > 0.001 and i != 2:
 				q = q.slerp(L.rot(_c_ready, i, 0.0), _ready_w)
@@ -808,14 +816,26 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 		impulse: float, fx := 1.0) -> int:
 	var part_name: String = part.get_meta("part")
 	var is_head := part == head
-	Blood.wound(part, pos, normal)
-	Blood.mist(pos, normal * 0.6 - dir * 0.4, 0.8 * fx)
-	Blood.spray(pos + dir * 0.12, dir + Vector3.UP * 0.1, int(10 * fx), 2.5, 6.5, 0.3)
-	if _wounds.size() < 10:
-		_wounds.append([part, part.to_local(pos)])
-	_bleed_left = maxf(_bleed_left, 14.0)
-
 	var local := part.to_local(pos)
+	# the plate carrier: steel plates front and back over the vitals stop a
+	# rifle round - no wound, but the blow knocks the wind out of him and
+	# often off his feet. A sniper's round goes through.
+	var plate := part == chest and absf(local.x) < 0.13 and local.y > -0.17 and local.y < 0.2 \
+			and absf(local.z) > 0.04 and impulse < HEAVY_ROUND
+	if plate:
+		Sfx.play_3d("metal_hit", pos, -3.0, 0.15)
+		Blood.dust(pos, normal, Color(0.32, 0.32, 0.28))
+		damage *= 0.12
+		_pain += 16.0
+		impulse *= 1.25 # all of it goes into the man
+	else:
+		Blood.wound(part, pos, normal)
+		Blood.mist(pos, normal * 0.6 - dir * 0.4, 0.8 * fx)
+		Blood.spray(pos + dir * 0.12, dir + Vector3.UP * 0.1, int(10 * fx), 2.5, 6.5, 0.3)
+		if _wounds.size() < 10:
+			_wounds.append([part, part.to_local(pos)])
+		_bleed_left = maxf(_bleed_left, 14.0)
+
 	var local_normal := part.global_basis.inverse() * normal
 	if is_head and local.y < -0.065:
 		# neck: not an instant kill, but the carotid opens up and he chokes
@@ -837,7 +857,7 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 			health = 0.0
 			_die(part, pos, dir, impulse * 1.5, true)
 			return 2
-	else:
+	elif not plate:
 		var artery := _artery_strength(part_name, local)
 		if artery > 0.0:
 			_add_artery(part, local, local_normal, artery)
@@ -908,10 +928,18 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 		_hit_frame = frame
 		return 0
 	var falling_on_knee := state == State.STAGGER and _stagger_fall
+	# a round in the body often drops a man where he stands, plate or not
+	var collapse := 0.0
+	if part == chest or part == pelvis:
+		collapse = 0.22 if plate else 0.33
+	elif part_name.begins_with("thigh"):
+		collapse = 0.35
+	if impulse >= HEAVY_ROUND:
+		collapse = 1.0
 	if knee and not falling_on_knee:
 		_start_stagger("knee_fall_" + part_name.right(1), true, part, pos, dir, impulse)
-	elif balance < 0.0 and not falling_on_knee:
-		_knockdown(part, pos, dir, impulse)
+	elif (balance < 0.0 or randf() < collapse) and not falling_on_knee and not display_only:
+		_knockdown(part, pos, dir, impulse * 1.3)
 	elif frame != _hit_frame and not falling_on_knee:
 		_start_stagger(_pick_stagger(part_name, dir), false, part, pos, dir, impulse)
 	_hit_frame = frame
@@ -1148,6 +1176,7 @@ func _go_limp(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> 
 func _knockdown(part: RigidBody3D, pos: Vector3, dir: Vector3, impulse: float) -> void:
 	state = State.KNOCKED
 	_knock_time = 0.0
+	_down_time = randf_range(2.2, 5.0) # lies there a while, hurt, before he tries to rise
 	_go_limp(part, pos, dir, impulse)
 	# legs give way
 	shin_l.angular_velocity = global_transform.basis.x * randf_range(-3, 3)
@@ -1264,7 +1293,7 @@ func _knocked_process(delta: float) -> void:
 		if (_knock_time > 1.0 and settled) or _knock_time > 4.0:
 			_start_floor_choke()
 		return
-	if (_knock_time > 1.8 and settled) or _knock_time > 6.0:
+	if (_knock_time > _down_time and settled) or _knock_time > _down_time + 4.0:
 		_start_getup()
 
 
@@ -1324,7 +1353,8 @@ func _getup_process(delta: float) -> void:
 		_w_panic = 0.0
 		if _gun == null and not display_only and _order == "":
 			# back on his feet he takes up a rifle again (a mate's, his own)
-			weapon = "rifle"
+			if weapon == "pistol":
+				weapon = "rifle"
 			_attach_gun()
 		if _neck_wound:
 			_start_choke()
@@ -1781,11 +1811,12 @@ func _set_order(cmd: String) -> void:
 
 func _attach_gun() -> void:
 	armed = true
-	if weapon == "rifle":
-		_gun = (load(RIFLE_SCENE) as PackedScene).instantiate()
+	if weapon != "pistol":
+		var svd := weapon == "svd"
+		_gun = (load(SVD_SCENE if svd else RIFLE_SCENE) as PackedScene).instantiate()
 		_gun.transform = Transform3D(RIFLE_BASIS, GUN_HAND)
-		_muzzle = RIFLE_MUZZLE
-		_ammo = RIFLE_MAG
+		_muzzle = SVD_MUZZLE if svd else RIFLE_MUZZLE
+		_ammo = SVD_MAG if svd else RIFLE_MAG
 		_c_ready = _lib.clip("rifle_ready")
 		_c_aim = _lib.clip("rifle_aim")
 		for mi in _gun.find_children("*", "MeshInstance3D", true, false):
@@ -1821,7 +1852,11 @@ func drop_gun(vel: Vector3) -> void:
 	rb.set_meta("surface", "metal")
 	var cs := CollisionShape3D.new()
 	var box := BoxShape3D.new()
-	if weapon == "rifle":
+	if weapon == "svd":
+		rb.mass = 4.3
+		box.size = Vector3(0.05, 0.2, 1.25)
+		cs.position = Vector3(0, 0.04, -0.3)
+	elif weapon == "rifle":
 		rb.mass = 3.4
 		box.size = Vector3(0.05, 0.2, 1.0)
 		cs.position = Vector3(0, 0.03, -0.19)
@@ -1880,7 +1915,7 @@ func _despair_check(delta: float) -> void:
 func _start_suicide(ordered := false) -> void:
 	if _gun == null or _suicide_t >= 0.0 or dead:
 		return
-	if weapon == "rifle":
+	if weapon != "pistol":
 		# a rifle won't do: he lets it fall and draws his pistol
 		drop_gun(-global_transform.basis.z * 0.3 + Vector3.UP * 0.2)
 		weapon = "pistol"
@@ -1953,7 +1988,7 @@ func _update_gun_arm(delta: float) -> void:
 ## Turns the aim towards a point: yaw / pitch about the right shoulder for a
 ## pistol, about the rifle's butt (the upper body turns) for a rifle.
 func _aim_towards(target: Vector3) -> void:
-	var pivot := P_SHOULDER_R if weapon != "rifle" else Vector3(0.1, 1.44, 0.0)
+	var pivot := P_SHOULDER_R if weapon == "pistol" else Vector3(0.1, 1.44, 0.0)
 	var local := to_local(target) - pivot
 	_aim_yaw = clampf(atan2(-local.x, -local.z), -0.7, 0.7)
 	_aim_pitch = clampf(atan2(local.y, Vector2(local.x, local.z).length()), -1.0, 1.0)
@@ -2012,7 +2047,7 @@ func _war_think(delta: float) -> void:
 	var eye := head.global_position
 	var fwd := -global_transform.basis.z
 	var best: Node3D = null
-	var best_d := 75.0
+	var best_d := 170.0 if weapon == "svd" else 75.0
 	for e in _enemies():
 		var tp := _aim_point(e)
 		var d := eye.distance_to(tp)
@@ -2060,23 +2095,29 @@ func _shoot_process(delta: float) -> void:
 	if _reload_t > 0.0:
 		_reload_t -= delta
 		if _reload_t <= 0.0:
-			_ammo = RIFLE_MAG if weapon == "rifle" else MAGAZINE
+			_ammo = {"rifle": RIFLE_MAG, "svd": SVD_MAG}.get(weapon, MAGAZINE)
 		return
 	_nade_cd -= delta
-	if _nade_cd <= 0.0:
+	if _nade_cd <= 0.0 and weapon != "svd":
 		_nade_cd = randf_range(10.0, 25.0)
 		if not (_target is FpvDrone) and randf() < 0.45:
 			_throw_grenade(target)
 	_shoot_cd -= delta
 	if _shoot_cd > 0.0 or _aim_w < 0.85:
 		return
-	# farther, hurt men shoot worse; a rifle fires short bursts
+	# farther, hurt men shoot worse; a rifle fires short bursts, a sniper
+	# takes his time over every shot
 	var dist := head.global_position.distance_to(target)
-	_fire_at(target, 0.5 + dist * 0.028 + (100.0 - health) * 0.04)
+	if weapon == "svd":
+		_fire_at(target, 0.15 + dist * 0.0035 + (100.0 - health) * 0.02)
+	else:
+		_fire_at(target, 0.5 + dist * 0.028 + (100.0 - health) * 0.04)
 	if _ammo <= 0:
-		_reload_t = 2.6
+		_reload_t = 2.6 if weapon != "svd" else 3.2
 		_burst_left = 0
 		_shoot_cd = 0.3
+	elif weapon == "svd":
+		_shoot_cd = randf_range(2.2, 4.2)
 	elif weapon == "rifle":
 		if _burst_left <= 0:
 			_burst_left = randi_range(2, 5)
@@ -2175,7 +2216,8 @@ func _fire_at(target: Vector3, spread_deg: float, wild := 0.0) -> void:
 				q.exclude = ex
 				q.from = pos + dir * 0.01
 				continue
-			(c as Player).take_damage(BULLET_DAMAGE_PLAYER * (1.15 if weapon == "rifle" else 1.0), dir)
+			(c as Player).take_damage(BULLET_DAMAGE_PLAYER * (1.15 if weapon == "rifle" else 1.0), dir,
+					"sniper" if weapon == "svd" else "bullet")
 			break
 		if c.has_meta("npc"):
 			var other = c.get_meta("npc")
@@ -2187,7 +2229,10 @@ func _fire_at(target: Vector3, spread_deg: float, wild := 0.0) -> void:
 				continue
 			if is_instance_valid(other):
 				other.last_hit_by_player = false
-				other.take_hit(c, pos, normal, dir, BULLET_DAMAGE_NPC * (1.2 if weapon == "rifle" else 1.0), 9.0)
+				if weapon == "svd":
+					other.take_hit(c, pos, normal, dir, BULLET_DAMAGE_NPC * 2.6, 24.0)
+				else:
+					other.take_hit(c, pos, normal, dir, BULLET_DAMAGE_NPC * (1.2 if weapon == "rifle" else 1.0), 11.0)
 			break
 		if c.get_meta("surface", "") == "glass" and c.has_method("shatter"):
 			c.shatter(pos, dir)
@@ -2252,7 +2297,7 @@ func blast(center: Vector3, f: float, power: float) -> void:
 
 
 func _muzzle_flash(muzzle: Vector3, dir: Vector3) -> void:
-	Sfx.play_3d("rifle" if weapon == "rifle" else "gunshot", muzzle)
+	Sfx.play_3d({"rifle": "rifle", "svd": "sniper"}.get(weapon, "gunshot"), muzzle, 3.0 if weapon == "svd" else 0.0)
 	var root := get_tree().current_scene
 	var light := OmniLight3D.new()
 	light.light_color = Color(1.0, 0.72, 0.38)

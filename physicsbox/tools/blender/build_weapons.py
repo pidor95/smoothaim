@@ -1,11 +1,7 @@
-"""Builds the first-person weapon viewmodels (gun + gloved hands) and their
-animations in Blender, exported as glTF for Godot.
-
-Run:
-  blender -b --python tools/blender/build_weapons.py -- <m500.usdz> [preview_dir]
-
-Outputs assets/weapons/m500_fp.glb (the AK-74M viewmodel is made by
-build_sketchfab_kit.py with the helpers here).
+"""Helpers for the first-person weapon viewmodels (gun + gloved hands) and
+their animations in Blender, exported as glTF for Godot; the viewmodels
+themselves (AK-74M, SVD, Mosin, the grenade throw) are made by
+build_sketchfab_kit.py with these.
 
 Coordinates are camera space (Blender axes): +Y forward, +Z up, +X right; the
 exporter converts them to Godot's -Z forward / +Y up. Each viewmodel is an
@@ -24,8 +20,7 @@ from mathutils import Euler, Matrix, Vector
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ARGS = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-USDZ = ARGS[0] if ARGS else ""
-PREVIEW = ARGS[1] if len(ARGS) > 1 else ""
+PREVIEW = ""  # set by the caller: renders previews there
 OUT_DIR = os.path.join(ROOT, "assets", "weapons")
 FPS = 30
 
@@ -240,148 +235,3 @@ def preview(name, frames_by_action):
 def gloves():
     return (material("Glove", (0.03, 0.03, 0.035), roughness=0.85),
             material("Sleeve", (0.045, 0.045, 0.05), roughness=0.95))
-
-
-# ---------------------------------------------------------------- M500
-
-PUMP_PARTS = ("Cylinder_007", "Cylinder_026", "Cylinder_009", "Cylinder_008", "Cylinder_027")
-
-
-def build_m500():
-    reset()
-    bpy.ops.wm.usd_import(filepath=USDZ)
-    meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
-    for o in meshes:
-        mw = o.matrix_world.copy()
-        o.parent = None
-        o.matrix_world = mw
-    for o in [o for o in bpy.context.scene.objects if o.type == "EMPTY"]:
-        bpy.data.objects.remove(o)
-
-    # model units -> metres, origin at the grip (behind the trigger)
-    s = 0.00255
-    grip_model = Vector((0.0, -80.0, 48.0))
-    grip = Vector((0.12, 0.25, -0.215))
-    yaw = math.radians(3.5)
-    rot = Matrix.Rotation(yaw, 4, "Z")
-    to_cam = Matrix.Translation(grip) @ rot @ Matrix.Scale(s, 4) @ Matrix.Translation(-grip_model)
-    for o in meshes:
-        o.matrix_world = to_cam @ o.matrix_world
-        apply_all(o)
-        n = len(o.data.vertices)
-        if n > 3000:
-            mod = o.modifiers.new("dec", "DECIMATE")
-            mod.ratio = max(3000.0 / n, 0.22)
-            bpy.context.view_layer.objects.active = o
-            bpy.ops.object.modifier_apply(modifier=mod.name)
-        for p in o.data.polygons:
-            p.use_smooth = True
-
-    def g(model_v):  # model units -> camera space
-        return grip + rot.to_3x3() @ ((Vector(model_v) - grip_model) * s)
-
-    for img in bpy.data.images:
-        if img.size[0] > 1024:
-            img.scale(1024, 1024)
-
-    pump = join([o for o in meshes if o.name.split("_Barrel")[0] in PUMP_PARTS], "Pump")
-    body = join([o for o in bpy.context.scene.objects if o.type == "MESH" and o is not pump], "Shotgun")
-
-    glove, sleeve = gloves()
-    shell_mat = material("ShellHull", (0.6, 0.05, 0.04), roughness=0.4)
-    brass = material("Brass", (0.85, 0.62, 0.25), metallic=1.0, roughness=0.3)
-
-    pump_grip = g((0.0, 70.0, 44.0))
-    hand_r = fist("HandR", g((0.0, -82.0, 40.0)), glove, rot=(-25, 0, 0), scale=(1.1, 1.0, 1.3))
-    arm_r = limb_between("ArmR", g((0.0, -95.0, 30.0)), (0.3, -0.05, -0.45), 0.045, sleeve)
-    hand_l = fist("HandL", pump_grip + Vector((-0.005, 0, -0.012)), glove, rot=(0, 0, 0), scale=(1.15, 1.6, 1.1))
-    arm_l = limb_between("ArmL", pump_grip + Vector((-0.01, -0.03, -0.03)), (-0.22, 0.02, -0.45), 0.045, sleeve)
-    shell = capsule("Shell", 0.0105, 0.068, shell_mat, segments=10)
-    base_cap = capsule("ShellBase", 0.0112, 0.02, brass, segments=10)
-    base_cap.location = (0, -0.026, 0)
-    apply_all(base_cap)
-    shell = join([shell, base_cap], "Shell")
-    shell.matrix_world = Matrix.Translation(pump_grip + Vector((0, 0.0, -0.035)))
-    apply_all(shell)
-
-    arm = make_armature([
-        ("gun", grip, None),
-        ("pump", grip, "gun"),
-        ("hand_l", pump_grip, "gun"),
-        ("shell", pump_grip, "hand_l"),
-        ("muzzle", g((0.0, 293.0, 71.5)), "gun"),
-        ("eject", g((7.0, -20.0, 68.0)), "gun"),
-        ("sight", g((0.0, -40.0, 79.5)), "gun"),
-    ])
-    for o, b in [(body, "gun"), (hand_r, "gun"), (arm_r, "gun"), (pump, "pump"),
-                 (hand_l, "hand_l"), (arm_l, "hand_l"), (shell, "shell")]:
-        bind(o, arm, b)
-
-    PUMP_BACK = (0, -0.085, 0)
-    PORT = (g((0.0, -30.0, 52.0)) - pump_grip)  # loading port, relative to the hand's rest
-
-    c = Clip(arm, "idle")
-    c.key("shell", 0, scale=0.0)
-    c.hold_all([0, 1])
-    c.finish()
-
-    # fire + pump cycle (shell is ejected by the game at 0.6 s)
-    c = Clip(arm, "fire")
-    c.key("shell", 0, scale=0.0)
-    c.hold_all([0])
-    c.key("gun", 0, loc=(0, 0, 0), rot=(0, 0, 0))
-    c.key("gun", 2, loc=(0, -0.07, 0.015), rot=(12, 0, -3))
-    c.key("gun", 7, loc=(0, -0.02, 0.004), rot=(4, 0, -1))
-    c.key("gun", 12, loc=(0, 0, 0), rot=(0, 0, 0))
-    c.key("gun", 15, loc=(0, -0.01, 0), rot=(-2, 4, -6))
-    c.key("gun", 25, loc=(0, -0.005, 0), rot=(-1, 2, -3))
-    c.key("gun", 29, loc=(0, 0, 0), rot=(0, 0, 0))
-    for b in ("pump", "hand_l"):
-        c.key(b, 12, loc=(0, 0, 0))
-        c.key(b, 17, loc=PUMP_BACK)
-        c.key(b, 20, loc=PUMP_BACK)
-        c.key(b, 25, loc=(0, 0, 0))
-    c.finish()
-
-    # reload: tilt, two shells pushed into the loading port, rack the pump
-    c = Clip(arm, "reload")
-    c.hold_all([0])
-    tilt = dict(loc=(-0.05, 0.02, 0.05), rot=(10, 28, 4))
-    c.key("gun", 0, loc=(0, 0, 0), rot=(0, 0, 0))
-    c.key("gun", 6, **tilt)
-    c.key("gun", 36, **tilt)
-    c.key("gun", 42, loc=(0, 0, 0), rot=(0, 0, 0))
-    c.step("shell", 0, scale=0.0)
-    c.key("hand_l", 0, loc=(0, 0, 0), rot=(0, 0, 0))
-    below = PORT + Vector((0.0, -0.06, -0.12))
-    t = 4
-    for _ in range(2):
-        c.key("hand_l", t + 3, loc=tuple(below), rot=(30, 0, 40))
-        c.step("shell", t + 3, scale=1.0)
-        c.key("hand_l", t + 9, loc=tuple(PORT + Vector((0, -0.03, -0.01))), rot=(10, 0, 30))
-        c.key("hand_l", t + 12, loc=tuple(PORT + Vector((0, 0.03, 0.0))), rot=(10, 0, 30))
-        c.step("shell", t + 13, scale=0.0)
-        t += 14
-    c.key("hand_l", 38, loc=(0, 0, 0), rot=(0, 0, 0))
-    c.key("pump", 38, loc=(0, 0, 0))
-    for b in ("pump", "hand_l"):
-        c.key(b, 42, loc=(0, 0, 0))
-        c.key(b, 45, loc=PUMP_BACK)
-        c.key(b, 48, loc=(0, 0, 0))
-    c.key("hand_l", 51, loc=(0, 0, 0))
-    c.finish()
-
-    c = Clip(arm, "draw")
-    c.key("shell", 0, scale=0.0)
-    c.hold_all([0])
-    c.key("gun", 0, loc=(0, -0.1, -0.25), rot=(-50, 0, 25))
-    c.key("gun", 14, loc=(0, 0, 0), rot=(0, 0, 0))
-    c.finish()
-
-    preview("m500", [("idle", 0), ("fire", 2), ("fire", 18), ("reload", 12)])
-    export(os.path.join(OUT_DIR, "m500_fp.glb"))
-
-
-if __name__ == "__main__":
-    if USDZ:
-        build_m500()

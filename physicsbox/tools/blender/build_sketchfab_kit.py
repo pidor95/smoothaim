@@ -2,10 +2,20 @@
   AK-74M      by SeveN          https://sketchfab.com/3d-models/ak-74m-84bb0a58a18047069706047639b82899
   RGD-5       by _Alexandr      https://sketchfab.com/3d-models/grenade-rgd-5-886637c9482b4cc4960d0112684baac6
   FPV drone   by Kvasovich      https://sketchfab.com/3d-models/fpv-kamikaze-drone-low-poly-87f5bbb5b08641b782bc084ddd4082a7
+  SVD         by Sergei3D       https://sketchfab.com/3d-models/svd-dragunov-7e5c38ec11b54b08b14e49843ad04ed5
+  Mosin PU    by Kaz Chesna     https://sketchfab.com/3d-models/mosin-nagant-m91-30-pu-sniper-47e79809ba174f1c8d15954b38102309
+  Kobra sight by Mivoriss57     https://sketchfab.com/3d-models/low-poly-ekp-1s-03-kobra-red-dot-sight-b95a9a049fdc4df1b9f02fb8c7a608e8
 
 Outputs:
-  assets/weapons/ak74_fp.glb     first-person AK-74M with gloved hands: idle,
-                                 fire, reload, reload_empty, draw
+  assets/weapons/ak74_fp.glb     first-person AK-74M with a Kobra red dot on the
+                                 side rail and gloved hands: idle, fire,
+                                 reload, reload_empty, draw
+  assets/weapons/svd_fp.glb      first-person SVD with the PSO-1: idle, fire,
+                                 reload, draw
+  assets/weapons/mosin_fp.glb    first-person Mosin M91/30 with the PU: idle,
+                                 fire (with the bolt worked by the right
+                                 hand), reload (stripper clip), draw
+  assets/npc/npc_svd.glb         the enemy and friendly snipers' SVD
   assets/weapons/grenade_fp.glb  first-person grenade throw: right hand with
                                  an RGD-5, left hand pulls the ring ("throw")
   assets/npc/npc_rifle.glb       the soldiers' AK (rifle frame of npc.gd)
@@ -31,6 +41,7 @@ ARGS = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 bw.PREVIEW = ARGS[0] if ARGS else ""
 
 AK_SCALE = 0.1007  # model is 9.37 units long; an AK-74M is 0.943 m
+KOBRA_DOT = Vector((0.609, 0.0, 1.254))  # the reticle in the Kobra model
 RGD_SCALE = 0.023
 RGD_CENTER = Vector((0.0, 0.0, 0.45))  # middle of the egg in model units
 
@@ -49,6 +60,35 @@ def import_gltf(name):
     for o in meshes:
         bw.apply_all(o)
     return meshes
+
+
+def import_more(name):
+    """Imports another model into the current scene; returns its meshes,
+    unparented with their transforms applied."""
+    before = set(bpy.context.scene.objects)
+    bpy.ops.import_scene.gltf(filepath=os.path.join(SRC, name, "scene.gltf"))
+    new = [o for o in bpy.context.scene.objects if o not in before]
+    meshes = [o for o in new if o.type == "MESH"]
+    for o in meshes:
+        mw = o.matrix_world.copy()
+        o.parent = None
+        o.matrix_world = mw
+    for o in new:
+        if o.type != "MESH":
+            bpy.data.objects.remove(o)
+    for o in meshes:
+        bw.apply_all(o)
+    return meshes
+
+
+def emissive(name, color, strength=6.0):
+    m = bpy.data.materials.new(name)
+    m.use_nodes = True
+    b = m.node_tree.nodes["Principled BSDF"]
+    b.inputs["Base Color"].default_value = (*color, 1)
+    b.inputs["Emission Color"].default_value = (*color, 1)
+    b.inputs["Emission Strength"].default_value = strength
+    return m
 
 
 def shrink_images(size):
@@ -135,6 +175,20 @@ def build_ak_fp():
     def g(model_v):  # model units -> camera space
         return grip + rot.to_3x3() @ ((Vector(model_v) - grip_m) * s)
 
+    # Kobra red dot on the side rail: its reticle over the dust cover, on
+    # the bore's centre line, clamp hanging on the left-hand dovetail
+    kobra = import_more("kobra")
+    shrink_images(2048)
+    dot_at = Vector((0.0, -0.2, 1.886))  # AK model units
+    to_kobra = Matrix.Translation(dot_at) @ Matrix.Rotation(math.pi / 2, 4, "Z") @ Matrix.Scale(0.759, 4) \
+        @ Matrix.Translation(-KOBRA_DOT)
+    transform(kobra, to_cam @ to_kobra)
+    kobra = bw.join(kobra, "Kobra")
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=10, ring_count=6, radius=0.0011, location=g(dot_at))
+    dot = bpy.context.active_object
+    dot.name = "RedDot"
+    dot.data.materials.append(emissive("RedDot", (1.0, 0.05, 0.03)))
+
     glove, _ = bw.gloves()
     sleeve = bw.material("SleeveCamo", (0.075, 0.085, 0.055), roughness=0.95)
     guard = g((0.0, 1.0, 0.42))  # under the handguard
@@ -161,9 +215,9 @@ def build_ak_fp():
         ("mag_new", guard, "hand_l"),
         ("muzzle", g((0.0, 4.72, 0.99)), "gun"),
         ("eject", g((0.22, -0.55, 0.98)), "gun"),
-        ("sight", g((0.0, 0.18, 1.30)), "gun"),
+        ("sight", g(dot_at), "gun"),
     ])
-    for o, b in [(body, "gun"), (hand_r, "gun"), (arm_r, "gun"), (bolt, "bolt"), (mag, "mag"),
+    for o, b in [(body, "gun"), (kobra, "gun"), (dot, "gun"), (hand_r, "gun"), (arm_r, "gun"), (bolt, "bolt"), (mag, "mag"),
                  (hand_l, "hand_l"), (arm_l, "hand_l"), (mag_new, "mag_new")]:
         bw.bind(o, arm, b)
 
@@ -257,6 +311,232 @@ def build_npc_rifle():
     muzzle = (Vector((0.0, 4.72, 0.99)) - grip_m) * AK_SCALE
     print("NPC RIFLE muzzle (Godot) = (0, %.3f, %.3f)" % (muzzle.z, -muzzle.y))
     bw.export(os.path.join(ROOT, "assets", "npc", "npc_rifle.glb"))
+
+
+# ---------------------------------------------------------------- sniper rifles
+
+# Each rifle in "model" metres: barrel +Y, right +X, up +Z, origin in the
+# middle of the grip. Points the hands, bones and the game use, same frame.
+SNIPERS = {
+    "svd": {
+        # the model: muzzle -X, its right +Y, metres; grip under the thumbhole
+        "to_model": Matrix.Translation((0.0, 0.235, 0.065)) @ Matrix.Rotation(-math.pi / 2, 4, "Z"),
+        "muzzle": (0.0, 0.992, 0.095), "guard": (0.0, 0.40, 0.035), "mag": (0.0, 0.21, 0.065),
+        "sight": (-0.005, -0.21, 0.17), "eject": (0.045, 0.235, 0.115),
+        "grip_cam": (0.12, 0.3, -0.225), "yaw": 2.5, "mag_obj": "magazine",
+    },
+    "mosin": {
+        # the model: muzzle +X, its right -Y, centimetres, centred at y = -64.3
+        "to_model": Matrix.Translation((0.0, 0.304, 0.012)) @ Matrix.Scale(0.00608, 4)
+        @ Matrix.Rotation(math.pi / 2, 4, "Z") @ Matrix.Translation((0.0, 64.3, 0.0)),
+        "muzzle": (0.0, 0.918, 0.052), "guard": (0.0, 0.36, -0.01), "bolt": (0.0, 0.106, 0.05),
+        "handle": (0.045, 0.045, 0.035), "sight": (-0.0067, -0.02, 0.104), "eject": (0.03, 0.08, 0.06),
+        "grip_cam": (0.12, 0.33, -0.21), "yaw": 2.5, "bolt_obj": "Bolt19",
+    },
+}
+
+
+def sniper_parts(wid):
+    """The rifle's meshes in model metres (see SNIPERS): body, magazine or
+    bolt (None when the model has none)."""
+    spec = SNIPERS[wid]
+    meshes = import_gltf(wid)
+    transform(meshes, spec["to_model"])
+    extra = None
+    key = spec.get("mag_obj") or spec.get("bolt_obj")
+    for o in meshes:
+        if o.name.startswith(key):
+            extra = o
+    rest = [o for o in meshes if o is not extra]
+    body = bw.join(rest, wid.upper())
+    for o in (body, extra):
+        for p in o.data.polygons:
+            p.use_smooth = True
+    return body, extra
+
+
+def build_sniper_fp(wid):
+    bw.reset()
+    spec = SNIPERS[wid]
+    body, extra = sniper_parts(wid)
+    shrink_images(2048)
+    grip = Vector(spec["grip_cam"])
+    rot = Matrix.Rotation(math.radians(spec["yaw"]), 4, "Z")
+    to_cam = Matrix.Translation(grip) @ rot
+    transform([body, extra], to_cam)
+
+    def g(v):
+        return grip + rot.to_3x3() @ Vector(v)
+
+    glove, _ = bw.gloves()
+    sleeve = bw.material("SleeveCamo", (0.075, 0.085, 0.055), roughness=0.95)
+    guard = g(spec["guard"]) + Vector((0, 0, -0.03))
+    hand_r = bw.fist("HandR", g((0.0, 0.0, 0.005)), glove, rot=(-22, 0, 0), scale=(1.1, 1.0, 1.35))
+    arm_r = bw.limb_between("ArmR", g((0.0, -0.06, -0.03)), (0.32, -0.08, -0.5), 0.046, sleeve)
+    hand_l = bw.fist("HandL", guard, glove, rot=(0, 0, 0), scale=(1.2, 1.55, 1.1))
+    arm_l = bw.limb_between("ArmL", guard + Vector((-0.01, -0.035, -0.035)), (-0.24, 0.0, -0.48), 0.046, sleeve)
+    bolt_action = "bolt" in spec
+    bones = [("gun", grip, None), ("hand_r", g((0, 0, 0)), "gun"), ("hand_l", guard, "gun"),
+             ("muzzle", g(spec["muzzle"]), "gun"), ("eject", g(spec["eject"]), "gun"), ("sight", g(spec["sight"]), "gun")]
+    binds = [(body, "gun"), (hand_r, "hand_r"), (arm_r, "hand_r"), (hand_l, "hand_l"), (arm_l, "hand_l")]
+    if bolt_action:
+        bones.append(("bolt", g(spec["bolt"]), "gun"))
+        binds.append((extra, "bolt"))
+        # stripper clip with five rounds, carried by the right hand on reloads
+        brass = bw.material("Brass", (0.8, 0.6, 0.25), metallic=1.0, roughness=0.35)
+        # built at the hand: when the hand is over the receiver (loc "on"
+        # below) the rounds sit right in the action
+        clip_parts = []
+        for k in range(5):
+            r = bw.capsule("Round%d" % k, 0.0062, 0.075, brass, segments=8)
+            r.matrix_world = Matrix.Translation(g(((k - 2) * 0.0125, 0.0, 0.012 + abs(k - 2) * -0.002)))
+            bw.apply_all(r)
+            clip_parts.append(r)
+        clip = bw.join(clip_parts, "Clip")
+        bones.append(("clip", g((0, 0, 0)), "hand_r"))
+        binds.append((clip, "clip"))
+    else:
+        mag_pos = g(spec["mag"])
+        mag_new = extra.copy()
+        mag_new.data = extra.data.copy()
+        mag_new.name = "MagNew"
+        bpy.context.scene.collection.objects.link(mag_new)
+        INSERT = mag_pos - guard + Vector((0.0, -0.02, -0.06))
+        mag_new.matrix_world = Matrix.Translation(-INSERT) @ mag_new.matrix_world
+        bw.apply_all(mag_new)
+        bones += [("mag", mag_pos, "gun"), ("mag_new", guard, "hand_l")]
+        binds += [(extra, "mag"), (mag_new, "mag_new")]
+    arm = bw.make_armature(bones)
+    for o, b in binds:
+        bw.bind(o, arm, b)
+    hidden = "clip" if bolt_action else "mag_new"
+
+    c = bw.Clip(arm, "idle")
+    c.key(hidden, 0, scale=0.0)
+    c.hold_all([0, 1])
+    c.finish()
+
+    # bolt handle path (relative to the right hand's rest on the grip)
+    if bolt_action:
+        P = Vector(spec["bolt"])
+        H = Vector(spec["handle"])
+
+        def handle(up, back):
+            v = Matrix.Rotation(math.radians(-60 * up), 3, "Y") @ (H - P) + P
+            return tuple(rot.to_3x3() @ (v + Vector((0, -back, 0))))
+
+        def cycle(c, t0):
+            """Right hand to the handle, up, back, forward, down, back to the grip."""
+            c.key("hand_r", t0, loc=(0, 0, 0), rot=(0, 0, 0))
+            c.key("bolt", t0 + 4, loc=(0, 0, 0), rot=(0, 0, 0))
+            c.key("hand_r", t0 + 4, loc=handle(0, 0), rot=(0, 0, 40))
+            c.key("bolt", t0 + 7, loc=(0, 0, 0), rot=(0, -60, 0))
+            c.key("hand_r", t0 + 7, loc=handle(1, 0), rot=(0, 0, 40))
+            c.key("bolt", t0 + 11, loc=(0, -0.085, 0), rot=(0, -60, 0))
+            c.key("hand_r", t0 + 11, loc=handle(1, 0.085), rot=(0, 0, 40))
+            return t0 + 11
+
+        def close(c, t0):
+            c.key("bolt", t0 + 4, loc=(0, 0, 0), rot=(0, -60, 0))
+            c.key("hand_r", t0 + 4, loc=handle(1, 0), rot=(0, 0, 40))
+            c.key("bolt", t0 + 7, loc=(0, 0, 0), rot=(0, 0, 0))
+            c.key("hand_r", t0 + 7, loc=handle(0, 0), rot=(0, 0, 40))
+            c.key("hand_r", t0 + 13, loc=(0, 0, 0), rot=(0, 0, 0))
+            return t0 + 13
+
+    c = bw.Clip(arm, "fire")
+    c.key(hidden, 0, scale=0.0)
+    c.hold_all([0])
+    c.key("gun", 0, loc=(0, 0, 0), rot=(0, 0, 0))
+    c.key("gun", 1, loc=(0.003, -0.05, 0.016), rot=(8.0, 0, -1.5))
+    c.key("gun", 7, loc=(0, -0.005, 0.002), rot=(1.0, 0, 0))
+    c.key("gun", 10, loc=(0, 0, 0), rot=(0, 0, 0))
+    if bolt_action:
+        c.key("gun", 12, loc=(0, 0, 0), rot=(0, 0, 0))
+        c.key("gun", 18, loc=(-0.01, 0, 0.01), rot=(0, 10, 4))
+        t = cycle(c, 12)
+        t = close(c, t)
+        c.key("gun", t - 6, loc=(-0.01, 0, 0.01), rot=(0, 10, 4))
+        c.key("gun", t, loc=(0, 0, 0), rot=(0, 0, 0))
+    c.finish()
+
+    c = bw.Clip(arm, "reload")
+    c.hold_all([0])
+    if bolt_action:
+        c.step("clip", 0, scale=0.0)
+        tilt = dict(loc=(-0.03, 0.02, 0.03), rot=(6, 14, 8))
+        c.key("gun", 0, loc=(0, 0, 0), rot=(0, 0, 0))
+        c.key("gun", 8, **tilt)
+        t = cycle(c, 2)
+        # the hand fetches a clip and strips the rounds down into the magazine
+        top = Vector(spec["bolt"]) + Vector((0, -0.02, 0.03))
+        above = tuple(rot.to_3x3() @ (top + Vector((0.02, 0, 0.12))))
+        on = tuple(rot.to_3x3() @ top)
+        c.key("hand_r", t + 6, loc=(0.15, -0.15, -0.25), rot=(0, 0, 0))
+        c.step("clip", t + 7, scale=1.0)
+        c.key("hand_r", t + 16, loc=above, rot=(0, 0, 0))
+        c.key("hand_r", t + 21, loc=on, rot=(0, 0, 0))
+        c.key("hand_r", t + 30, loc=tuple(Vector(on) + Vector((0, 0, -0.035))), rot=(0, 0, 0))
+        c.step("clip", t + 31, scale=0.0)
+        c.key("hand_r", t + 34, loc=handle(1, 0.085), rot=(0, 0, 40))
+        t = close(c, t + 34)
+        c.key("gun", t - 6, **tilt)
+        c.key("gun", t, loc=(0, 0, 0), rot=(0, 0, 0))
+    else:
+        mag_pos = g(spec["mag"])
+        MAG_AT = tuple(mag_pos - guard + Vector((0.0, 0.01, -0.05)))
+        AWAY = (-0.15, -0.3, -0.35)
+        INSERT = mag_pos - guard + Vector((0.0, -0.02, -0.06))
+        tilt = dict(loc=(-0.05, 0.03, 0.04), rot=(10, -6, -28))
+        c.key("gun", 0, loc=(0, 0, 0), rot=(0, 0, 0))
+        c.key("gun", 7, **tilt)
+        c.key("gun", 50, **tilt)
+        c.key("gun", 60, loc=(0, 0, 0), rot=(0, 0, 0))
+        c.step("mag_new", 0, scale=0.0)
+        c.key("hand_l", 0, loc=(0, 0, 0))
+        c.key("hand_l", 9, loc=MAG_AT)
+        c.key("mag", 0, loc=(0, 0, 0), scale=1.0)
+        c.key("mag", 10, loc=(0, 0, 0))
+        c.key("hand_l", 15, loc=tuple(Vector(MAG_AT) + Vector((0, 0.04, -0.12))))
+        c.key("mag", 15, loc=(0, 0.04, -0.12))
+        c.key("hand_l", 21, loc=AWAY)
+        c.key("mag", 21, loc=tuple(Vector(AWAY) - Vector(MAG_AT)))
+        c.step("mag", 21, scale=0.0)
+        c.step("mag_new", 22, scale=1.0)
+        c.key("hand_l", 31, loc=tuple(INSERT + Vector((0, 0.04, -0.1))))
+        c.key("hand_l", 37, loc=tuple(INSERT))
+        c.step("mag", 37, loc=(0, 0, 0), scale=1.0)
+        c.step("mag_new", 37, scale=0.0)
+        c.key("hand_l", 41, loc=tuple(INSERT))
+        c.key("hand_l", 52, loc=(0, 0, 0))
+        c.key("hand_l", 60, loc=(0, 0, 0))
+    c.finish()
+
+    c = bw.Clip(arm, "draw")
+    c.key(hidden, 0, scale=0.0)
+    c.hold_all([0])
+    c.key("gun", 0, loc=(0, -0.12, -0.3), rot=(-45, 0, 30))
+    c.key("gun", 14, loc=(0, 0, 0), rot=(0, 0, 0))
+    c.finish()
+
+    bw.preview(wid, [("idle", 0), ("fire", 1), ("fire", 20), ("reload", 25)])
+    bw.export(os.path.join(bw.OUT_DIR, "%s_fp.glb" % wid))
+
+
+def build_npc_svd():
+    """The snipers' SVD in the rifle frame of npc.gd (as npc_rifle.glb)."""
+    bw.reset()
+    body, mag = sniper_parts("svd")
+    shrink_images(512)
+    svd = bw.join([body, mag], "SVD")
+    decimate(svd, 5000)
+    for m in svd.data.materials:
+        bsdf = m.node_tree.nodes.get("Principled BSDF")
+        for link in list(bsdf.inputs["Normal"].links):
+            m.node_tree.links.remove(link)
+    mz = SNIPERS["svd"]["muzzle"]
+    print("NPC SVD muzzle (Godot) = (0, %.3f, %.3f)" % (mz[2], -mz[1]))
+    bw.export(os.path.join(ROOT, "assets", "npc", "npc_svd.glb"))
 
 
 # ---------------------------------------------------------------- RGD-5
@@ -401,6 +681,9 @@ def build_drone():
 
 if __name__ == "__main__":
     build_ak_fp()
+    build_sniper_fp("svd")
+    build_sniper_fp("mosin")
+    build_npc_svd()
     build_grenade_fp()
     build_npc_rifle()
     build_grenade()

@@ -1,7 +1,9 @@
 class_name Weapon
 extends Node3D
-## First-person weapons. Each viewmodel (gun + gloved hands) and its
-## animations come from Blender (tools/blender/build_weapons.py); this script
+## First-person weapons: AK-74M with a red dot, SVD and Mosin sniper rifles.
+## Each viewmodel (gun + gloved hands) and its animations come from Blender
+## (tools/blender/build_sketchfab_kit.py); scoped rifles look through the
+## scope (HUD overlay) when aimed. This script
 ## plays them and adds sway, bob, aiming, firing, hit processing, muzzle
 ## flash and ejected shells.
 
@@ -14,7 +16,7 @@ const MAX_SHELLS := 24
 const DEFS := [
 	{
 		"id": "ak74", "name": "АК-74М", "scene": "res://assets/weapons/ak74_fp.glb",
-		"title": "АК-74М", "desc": "Автомат 5,45 мм, как у солдат. Очередями.",
+		"title": "АК-74М + «Кобра»", "desc": "Автомат 5,45 мм, как у солдат, с коллиматором.",
 		"stats": ["Урон: 36 (голова — насмерть)", "Магазин: 30", "Темп: 650 выстр/мин"],
 		"capacity": 30, "pellets": 1, "impulse": 12.0, "cooldown": 0.092, "power": 1.4, "auto": true,
 		"damage": {"head": 100.0, "chest": 36.0, "pelvis": 32.0, "uarm_l": 20.0, "uarm_r": 20.0, "farm_l": 16.0,
@@ -22,19 +24,31 @@ const DEFS := [
 		"spread_hip": 1.8, "spread_ads": 0.12, "falloff_start": 120.0, "falloff_min": 0.7,
 		"sound": "rifle",
 		"shell": "rifle", "shell_at": 0.0, "alert": 30.0, "flash": 1.1, "cam_recoil": 1.35,
-		"yaw": 3.0, "ads_dist": 0.2, "ads_fov": 0.75, "fire_last": "", "reload_empty": "reload_empty",
+		"yaw": 3.0, "ads_dist": 0.3, "ads_fov": 0.7, "fire_last": "", "reload_empty": "reload_empty",
 	},
 	{
-		"id": "m500", "name": "M500", "scene": "res://assets/weapons/m500_fp.glb",
-		"title": "Mossberg 500", "desc": "Помповый дробовик с глушителем.",
-		"stats": ["Урон: 8 дробин × 16", "Магазин: 5+1", "Вблизи рвёт на части"],
-		"capacity": 6, "pellets": 8, "impulse": 5.5, "cooldown": 0.95, "power": 0.55,
-		"damage": {"head": 45.0, "chest": 16.0, "pelvis": 15.0, "uarm_l": 9.0, "uarm_r": 9.0, "farm_l": 8.0,
-				"farm_r": 8.0, "thigh_l": 11.0, "thigh_r": 11.0, "shin_l": 9.0, "shin_r": 9.0},
-		"spread_hip": 3.6, "spread_ads": 2.4, "falloff_start": 7.0, "falloff_min": 0.3, "auto": false,
-		"sound": "shotgun_shot",
-		"shell": "shotgun", "shell_at": 0.55, "alert": 12.0, "flash": 0.45, "cam_recoil": 6.5,
-		"yaw": 3.5, "ads_dist": 0.36, "ads_fov": 0.8, "fire_last": "", "reload_empty": "",
+		"id": "svd", "name": "СВД", "scene": "res://assets/weapons/svd_fp.glb", "scope": "pso",
+		"title": "СВД + ПСО-1", "desc": "Снайперская винтовка 7,62×54R, полуавтомат.",
+		"stats": ["Урон: 90 (пробивает тела)", "Магазин: 10", "Прицел ПСО-1 ×4"],
+		"capacity": 10, "pellets": 1, "impulse": 26.0, "cooldown": 0.32, "power": 3.0, "auto": false,
+		"damage": {"head": 100.0, "chest": 90.0, "pelvis": 80.0, "uarm_l": 50.0, "uarm_r": 50.0, "farm_l": 45.0,
+				"farm_r": 45.0, "thigh_l": 65.0, "thigh_r": 65.0, "shin_l": 50.0, "shin_r": 50.0},
+		"spread_hip": 2.6, "spread_ads": 0.03, "falloff_start": 400.0, "falloff_min": 0.85,
+		"sound": "sniper",
+		"shell": "rifle", "shell_at": 0.0, "alert": 60.0, "flash": 1.4, "cam_recoil": 4.5,
+		"yaw": 2.5, "ads_dist": 0.1, "ads_fov": 0.22, "fire_last": "", "reload_empty": "",
+	},
+	{
+		"id": "mosin", "name": "Мосина", "scene": "res://assets/weapons/mosin_fp.glb", "scope": "pu",
+		"title": "Мосина + ПУ", "desc": "Снайперская винтовка 1891/30, ручной затвор.",
+		"stats": ["Урон: 100 (пробивает тела)", "Магазин: 5", "Прицел ПУ ×3,5"],
+		"capacity": 5, "pellets": 1, "impulse": 29.0, "cooldown": 1.25, "power": 3.3, "auto": false,
+		"damage": {"head": 100.0, "chest": 100.0, "pelvis": 90.0, "uarm_l": 55.0, "uarm_r": 55.0, "farm_l": 50.0,
+				"farm_r": 50.0, "thigh_l": 70.0, "thigh_r": 70.0, "shin_l": 55.0, "shin_r": 55.0},
+		"spread_hip": 2.6, "spread_ads": 0.02, "falloff_start": 400.0, "falloff_min": 0.85,
+		"sound": "sniper",
+		"shell": "rifle", "shell_at": 0.62, "alert": 60.0, "flash": 1.3, "cam_recoil": 5.5,
+		"yaw": 2.5, "ads_dist": 0.1, "ads_fov": 0.27, "fire_last": "", "reload_empty": "",
 	},
 ]
 ## Bullet power lost going through each body part (power 1 = pistol round).
@@ -238,6 +252,11 @@ func start_throw() -> bool:
 	return true
 
 
+## Looking through a scope: the HUD draws it and the viewmodel is hidden.
+func scoped() -> bool:
+	return current.def.has("scope") and aim_t > 0.85 and _throw_t < 0.0
+
+
 func throwing() -> bool:
 	return _throw_t >= 0.0
 
@@ -291,6 +310,7 @@ func trigger() -> void:
 	_shoot()
 	_alert_npcs(d.alert)
 	player.add_stress(0.06)
+	player.cam_kick(kick / 2.0)
 	fired.emit()
 	ammo_changed.emit(current.ammo, d.capacity)
 
@@ -525,6 +545,8 @@ func _process(frame_delta: float) -> void:
 			select(0)
 		if Input.is_action_just_pressed("weapon_2"):
 			select(1)
+		if Input.is_action_just_pressed("weapon_3"):
+			select(2)
 		if Input.is_action_just_pressed("weapon_next"):
 			next_weapon()
 		aiming = Input.is_action_pressed("aim")
@@ -562,6 +584,7 @@ func _process(frame_delta: float) -> void:
 			wall = reach - cam.global_position.distance_to(hit.position)
 	_wall_push = lerpf(_wall_push, wall, clampf(delta * 12.0, 0.0, 1.0))
 
+	current.root.visible = not scoped()
 	var low := smoothstep(0.0, 1.0, _lower)
 	var offset := Transform3D(Basis(Vector3.RIGHT, _wall_push * 1.0 - low * 0.9), bob + Vector3(_sway.x * (1.0 - a * 0.6), _sway.y * (1.0 - a * 0.6) - low * 0.35, _wall_push * 0.5))
 	_holder.transform = offset * Transform3D.IDENTITY.interpolate_with(current.ads, a)

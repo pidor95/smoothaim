@@ -57,7 +57,20 @@ var piloting: FpvDrone # flying a drone through its camera
 var signal_lost := 0.0 # HUD static after the drone is gone
 var shake := 0.0
 var drone_arrows := Vector2.ZERO # on-screen arrows while flying the drone (HUD)
-var _cam_bob := 0.0
+var drone_climb := 0.0 # ВЫШЕ / НИЖЕ buttons while flying the drone
+var scope_shift := Vector2.ZERO # the eyepiece's shadow drifting with the sway (HUD)
+# bodycam: the camera rides on the chest (see _bodycam_motion)
+var _last_yaw := 0.0
+var _last_pitch := 0.0
+var _lag := Vector2.ZERO
+var _lag_v := Vector2.ZERO
+var _step_phase := 0.0
+var _cam_t := 0.0
+var _jp := Vector3.ZERO
+var _jp_v := Vector3.ZERO
+var _jr := Vector3.ZERO
+var _jr_v := Vector3.ZERO
+var _was_on_floor := true
 var _grenade_regen := 0.0
 var _drone_regen := 0.0
 
@@ -140,7 +153,9 @@ func look(delta_px: Vector2, scale := 1.0) -> void:
 	if piloting:
 		piloting.look_input(delta_px * scale)
 		return
-	var s := 0.13 * Settings.sensitivity * scale * lerpf(1.0, 0.55, weapon.aim_t)
+	# slower when aiming, much slower through a scope
+	var zoom: float = clampf(weapon.current.def.ads_fov * 1.3, 0.28, 0.6)
+	var s := 0.13 * Settings.sensitivity * scale * lerpf(1.0, zoom, weapon.aim_t)
 	yaw -= deg_to_rad(delta_px.x * s)
 	pitch = clampf(pitch - deg_to_rad(delta_px.y * s), deg_to_rad(-88), deg_to_rad(88))
 	_look_accum += delta_px * scale
@@ -183,7 +198,8 @@ func take_damage(amount: float, dir: Vector3, kind := "bullet") -> void:
 		if amount >= 75.0:
 			die()
 		return
-	hits += 1
+	hits += 2 if kind == "sniper" else 1
+	_jolt(Vector3(dir.x, 0.0, dir.z) * 0.03, Vector3(-0.06, randf_range(-0.04, 0.04), randf_range(-0.06, 0.06)))
 	blood -= randf_range(120.0, 260.0)
 	bleed_rate += randf_range(4.0, 7.0)
 	ear_ring = maxf(ear_ring, 0.3)
@@ -237,6 +253,7 @@ func launch_drone() -> void:
 	d.global_position = camera.global_position + Vector3.UP * 0.4 - Basis(Vector3.UP, yaw).z * 0.8
 	d.rotation.y = yaw
 	d._yaw = yaw
+	d.velocity = Vector3.UP * 5.0 # pops up off the hand, then hangs
 	piloting = d
 	touch_move = Vector2.ZERO
 
@@ -318,7 +335,12 @@ func _physics_process(delta: float) -> void:
 		velocity.y -= GRAVITY * delta
 	jump_queued = false
 
+	var fall_speed := velocity.y
 	move_and_slide()
+	if is_on_floor() and not _was_on_floor and fall_speed < -3.0:
+		var f := clampf(-fall_speed / 8.0, 0.0, 1.5)
+		_jolt(Vector3(0.0, -0.06 * f, 0.0), Vector3(-0.06 * f, 0.0, randf_range(-0.03, 0.03) * f))
+	_was_on_floor = is_on_floor()
 	_push_bodies(wish * speed)
 	_kick_loose_bodies()
 	_footsteps(delta)
@@ -330,13 +352,7 @@ func _physics_process(delta: float) -> void:
 	_recoil = _recoil.lerp(Vector2.ZERO, clampf(delta * 9.0, 0.0, 1.0))
 	var sh := shake * shake * 0.07
 	head.rotation = Vector3(pitch + _recoil.x + randf_range(-sh, sh), _recoil.y + randf_range(-sh, sh), randf_range(-sh, sh) * 0.5)
-	# a camera on the chest rocks with every step
-	var hspeed := Vector2(velocity.x, velocity.z).length()
-	if is_on_floor():
-		_cam_bob += delta * hspeed * 1.9
-	var amt := clampf(hspeed / SPEED, 0.0, 1.0) * (1.0 - weapon.aim_t * 0.7) * (1.0 if Settings.bodycam else 0.35)
-	head.position = Vector3(sin(_cam_bob) * 0.022 * amt, EYE_HEIGHT - absf(cos(_cam_bob)) * 0.035 * amt, 0.0)
-	head.rotation.z += sin(_cam_bob) * 0.014 * amt
+	_bodycam_motion(delta, Vector2(velocity.x, velocity.z).length())
 
 	if global_position.y < -30.0:
 		global_transform = _spawn
@@ -382,6 +398,60 @@ func _body_process(delta: float) -> void:
 
 func add_stress(amount: float) -> void:
 	_stress = clampf(_stress + amount, 0.0, 1.0)
+
+
+## Bodycam: the camera rides on the chest, not in the eyes. It trails quick
+## turns and swings past, dips and rolls with every footfall (harder at a
+## run), sways from foot to foot, breathes and drifts standing (heavier with
+## a racing heart), and jolts on landing, on every shot and every hit. With
+## the "Бодикам" setting off the motion is much gentler.
+func _bodycam_motion(delta: float, hspeed: float) -> void:
+	var k := 1.0 if Settings.bodycam else 0.35
+	var aim := weapon.aim_t
+	var dt := maxf(delta, 0.001)
+	var turn_rate := wrapf(yaw - _last_yaw, -PI, PI) / dt
+	var pitch_rate := (pitch - _last_pitch) / dt
+	_last_yaw = yaw
+	_last_pitch = pitch
+	var lag_target := Vector2(clampf(-pitch_rate * 0.03, -0.1, 0.1), clampf(-turn_rate * 0.035, -0.14, 0.14)) * k
+	_lag_v += ((lag_target - _lag) * 80.0 - _lag_v * 10.0) * delta
+	_lag += _lag_v * delta
+	# footfalls: each foot coming down knocks the camera
+	var gait := clampf(hspeed / SPEED, 0.0, 1.4) * (1.0 - aim * 0.6)
+	if is_on_floor() and hspeed > 0.3:
+		var stride := 0.95 if hspeed > SPEED * 0.85 else 0.75
+		var prev := _step_phase
+		_step_phase += hspeed * delta / stride
+		if floorf(_step_phase) != floorf(prev):
+			var foot := 1.0 if int(floorf(_step_phase)) % 2 == 0 else -1.0
+			var hard := clampf(hspeed / SPEED, 0.4, 1.4) * (1.0 - aim * 0.6)
+			_jolt(Vector3(foot * 0.004, -0.02, 0.0) * hard, Vector3(-0.022, foot * 0.012, foot * 0.026) * hard)
+	var ph := _step_phase * PI
+	var sway := Vector3(sin(ph) * 0.028, -absf(sin(ph)) * 0.026, 0.0) * gait
+	var sway_rot := Vector3(sin(ph * 2.0) * 0.009, sin(ph) * 0.014, sin(ph) * 0.032) * gait
+	# standing still: breathing and the drift of a body that never is still
+	_cam_t += delta
+	var t := _cam_t
+	var breathe := Vector3(sin(t * 1.4) * 0.004 + sin(t * 0.37) * 0.005, sin(t * 0.53 + 1.0) * 0.006 + sin(t * 0.21) * 0.004,
+			sin(t * 0.71) * 0.005) * (1.0 + clampf((bpm - 75.0) / 45.0, 0.0, 2.0))
+	_jp_v += (-_jp * 160.0 - _jp_v * 12.0) * delta
+	_jp += _jp_v * delta
+	_jr_v += (-_jr * 140.0 - _jr_v * 10.0) * delta
+	_jr += _jr_v * delta
+	head.position = Vector3(0.0, EYE_HEIGHT, 0.0) + (sway + _jp) * k
+	head.rotation += (sway_rot + breathe * (1.0 - aim * 0.4) + _jr) * k + Vector3(_lag.x, _lag.y, -_lag.y * 0.5)
+	scope_shift = Vector2(-_lag.y - (sway_rot.y + _jr.y) * k, _lag.x + (sway_rot.x + _jr.x) * k) * 1.4
+
+
+## A knock to the chest camera: `pos` metres, `rot` radians (peak).
+func _jolt(pos: Vector3, rot: Vector3) -> void:
+	_jp_v += pos * 20.0
+	_jr_v += rot * 20.0
+
+
+## Every shot shoves the camera on the chest.
+func cam_kick(strength: float) -> void:
+	_jolt(Vector3(0.0, 0.0, 0.01) * strength, Vector3(0.02, randf_range(-0.008, 0.008), randf_range(-0.02, 0.02)) * strength)
 
 
 func _push_bodies(wish_vel: Vector3) -> void:

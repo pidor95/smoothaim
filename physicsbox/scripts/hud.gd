@@ -11,7 +11,9 @@ const JOY_RADIUS := 80.0
 var player: Player
 var game: Node
 
-const SLOT_W := 104.0
+const SLOT_IDS := ["ak74", "svd", "mosin", "grenade", "fpv"]
+const SLOT_KEYS := ["1", "2", "3", "G", "V"]
+const SLOT_W := 100.0
 const SLOT_H := 66.0
 const ECG_N := 110
 
@@ -46,7 +48,7 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_font = ThemeDB.fallback_font
-	for id in ["ak74", "m500", "grenade", "fpv"]:
+	for id in SLOT_IDS:
 		_icons[id] = load("res://assets/ui/icon_%s.png" % id)
 	_ecg.resize(ECG_N)
 	player.weapon.ammo_changed.connect(func(a, m):
@@ -68,10 +70,10 @@ func order_feedback(text: String, note: String) -> void:
 	_order_t = 1.8
 
 
-## Hotbar slots: the two guns, the grenade, the FPV drone.
+## Hotbar slots: the three guns, the grenade, the FPV drone.
 func _slot_rects() -> Array[Rect2]:
 	var out: Array[Rect2] = []
-	var n := 4
+	var n := SLOT_IDS.size()
 	var gap := 8.0
 	var x0 := size.x * 0.5 - (n * SLOT_W + (n - 1) * gap) * 0.5
 	for i in n:
@@ -80,28 +82,31 @@ func _slot_rects() -> Array[Rect2]:
 
 
 func use_slot(i: int) -> void:
-	match i:
-		0, 1:
-			player.weapon.select(i)
-		2:
+	match SLOT_IDS[i]:
+		"grenade":
 			player.throw_grenade()
-		3:
+		"fpv":
 			reset_touches()
 			player.launch_drone()
+		_:
+			player.weapon.select(i)
 
 
 func _buttons() -> Dictionary:
 	var s := size
 	if player.piloting:
-		# flying the drone: speed on the stick, the arrows steer, the trigger and a way back
-		var a := Vector2(s.x - 400, s.y - 210)
+		# flying the drone: it hovers; the arrows fly it (▲ forward where the
+		# camera looks, ▼ back, ◀ ▶ turn), ВЫШЕ / НИЖЕ, the trigger, a way back
+		var a := Vector2(s.x - 420, s.y - 200)
 		return {
 			"fire": {"pos": Vector2(s.x - 150, s.y - 175), "r": 76.0, "text": "ПОДРЫВ"},
 			"fpv": {"pos": Vector2(s.x - 80, s.y - 430), "r": 40.0, "text": "ВЫХОД"},
-			"up": {"pos": a + Vector2(0, -78), "r": 38.0, "text": "▲"},
-			"down": {"pos": a + Vector2(0, 78), "r": 38.0, "text": "▼"},
-			"left": {"pos": a + Vector2(-78, 0), "r": 38.0, "text": "◀"},
-			"right": {"pos": a + Vector2(78, 0), "r": 38.0, "text": "▶"},
+			"up": {"pos": a + Vector2(0, -82), "r": 42.0, "text": "▲"},
+			"down": {"pos": a + Vector2(0, 82), "r": 42.0, "text": "▼"},
+			"left": {"pos": a + Vector2(-82, 0), "r": 42.0, "text": "◀"},
+			"right": {"pos": a + Vector2(82, 0), "r": 42.0, "text": "▶"},
+			"climb": {"pos": Vector2(s.x - 150, s.y - 365), "r": 40.0, "text": "ВЫШЕ"},
+			"sink": {"pos": Vector2(s.x - 250, s.y - 300), "r": 40.0, "text": "НИЖЕ"},
 		}
 	var aim_on := player.weapon.aiming
 	return {
@@ -234,6 +239,7 @@ func _update_held() -> void:
 	if _held.has("down"):
 		arrows.y -= 1.0
 	player.drone_arrows = arrows
+	player.drone_climb = (1.0 if _held.has("climb") else 0.0) - (1.0 if _held.has("sink") else 0.0)
 
 
 ## Drop every touch (used when pausing).
@@ -246,6 +252,7 @@ func reset_touches() -> void:
 		player.touch_move = Vector2.ZERO
 		player.weapon.trigger_held = false
 		player.drone_arrows = Vector2.ZERO
+		player.drone_climb = 0.0
 
 
 # ------------------------------------------------------------------ drawing
@@ -288,6 +295,8 @@ func _draw() -> void:
 			var inset := k * 18.0
 			draw_rect(Rect2(Vector2(inset, inset), size - Vector2(inset, inset) * 2.0), Color(0.8, 0.0, 0.0, 0.07 * f), false, 18.0)
 
+	if player.weapon.scoped() and not player.piloting and not player.dead:
+		_draw_scope(player.weapon.current.def.scope)
 	# crosshair
 	if aim < 0.6 and not player.piloting and not player.dead:
 		var a := 1.0 - aim / 0.6
@@ -322,8 +331,8 @@ func _draw() -> void:
 		_draw_death()
 		return
 	if not player.touch_mode:
-		_text(Vector2(24, 132), "WASD ход · ЛКМ огонь · ПКМ прицел · R перезарядка · 1/2 оружие · G граната · V FPV (стрелки — руль) · B меню · Esc пауза", 16, Color(1, 1, 1, 0.5))
-		_text(Vector2(24, 154), "Приказы: 3 стоять, 4 руки вверх, 5 на колени, 6 брось оружие, 7 ко мне, 8 проваливай, 9 вольно, 0 застрелись", 16, Color(1, 1, 1, 0.5))
+		_text(Vector2(24, 132), "WASD ход · ЛКМ огонь · ПКМ прицел/оптика · R перезарядка · 1 АК, 2 СВД, 3 Мосина · G граната · V FPV · B меню · Esc пауза", 16, Color(1, 1, 1, 0.5))
+		_text(Vector2(24, 154), "Дрон: висит сам; ↑ вперёд, ↓ назад, ← → поворот, E выше, Q ниже, мышь — камера · Приказы: 4–9, 0, −", 16, Color(1, 1, 1, 0.5))
 		return
 
 	# order list
@@ -362,6 +371,49 @@ func _draw() -> void:
 			fs = 26
 		var w := _font.get_string_size(b.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		draw_string(_font, b.pos + Vector2(-w * 0.5, fs * 0.35), b.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, 0.85))
+
+
+## Looking through the scope: black all round the eyepiece, a dark rim and
+## the reticle - PSO-1 (chevrons, drop marks, rangefinder) or PU (post and
+## bars).
+func _draw_scope(kind: String) -> void:
+	var c := size * 0.5 + player.scope_shift * size.y
+	var r := size.y * 0.47
+	var ink := Color(0.02, 0.02, 0.02, 0.95)
+	# outside the eyepiece: black
+	draw_arc(c, r + size.x * 0.5, 0, TAU, 96, Color(0, 0, 0), size.x, false)
+	for k in 6:
+		draw_arc(c, r - k * 7.0, 0, TAU, 96, Color(0, 0, 0, 0.32 - k * 0.05), 8.0, true)
+	var u := r / 10.0 # reticle unit
+	var o := size * 0.5 # the reticle stays on the line of the bore
+	if kind == "pso":
+		var red := Color(0.85, 0.08, 0.05, 0.95)
+		for k in 4: # the aiming chevron and three below it (300..1000 m)
+			var p := o + Vector2(0, k * u * 1.0)
+			var w := u * (0.55 if k == 0 else 0.4)
+			draw_polyline(PackedVector2Array([p + Vector2(-w, w * 0.9), p, p + Vector2(w, w * 0.9)]), red if k == 0 else ink, 2.0, true)
+		draw_line(o + Vector2(-r * 0.93, 0), o + Vector2(-u * 1.2, 0), ink, 2.0)
+		draw_line(o + Vector2(u * 1.2, 0), o + Vector2(r * 0.93, 0), ink, 2.0)
+		for k in range(1, 11): # windage marks
+			var h := u * (0.45 if k % 5 == 0 else 0.25)
+			for sgn in [-1.0, 1.0]:
+				var x: float = o.x + sgn * (u * 1.2 + k * u * 0.7)
+				draw_line(Vector2(x, o.y), Vector2(x, o.y + h), ink, 1.5)
+		# rangefinder: the curve fitted to a 1.7 m man
+		var pts := PackedVector2Array()
+		for k in 9:
+			var x := o.x - u * 7.2 + k * u * 0.8
+			pts.append(Vector2(x, o.y + u * 2.4 + u * 1.7 * pow(k / 8.0, 1.6)))
+		draw_polyline(pts, ink, 1.5, true)
+		draw_line(Vector2(o.x - u * 7.2, o.y + u * 4.1), Vector2(o.x - u * 0.8, o.y + u * 4.1), ink, 1.5)
+		for k in [2, 4, 6, 8, 10]:
+			draw_string(_font, Vector2(o.x - u * 7.4 + (k - 2) * u * 0.8, o.y + u * 2.2), str(k), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, ink)
+	else:
+		# PU: a thick post from below up to the aim point, bars from the sides
+		draw_colored_polygon(PackedVector2Array([o + Vector2(-u * 0.22, r), o + Vector2(-u * 0.22, u * 0.5), o,
+				o + Vector2(u * 0.22, u * 0.5), o + Vector2(u * 0.22, r)]), ink)
+		draw_rect(Rect2(o.x - r, o.y - u * 0.09, r - u * 1.6, u * 0.18), ink)
+		draw_rect(Rect2(o.x + u * 1.6, o.y - u * 0.09, r - u * 1.6, u * 0.18), ink)
 
 
 ## ECG shape over one beat (phase 0..1): P wave, QRS spike, T wave.
@@ -448,10 +500,12 @@ func _draw_status() -> void:
 func _draw_hotbar() -> void:
 	var slots := _slot_rects()
 	var held := player.weapon.slots.find(player.weapon.current)
-	var counts := ["%d" % (_ammo if held == 0 else player.weapon.slots[0].ammo),
-		"%d" % (_ammo if held == 1 else player.weapon.slots[1].ammo), "×%d" % player.grenades, "×%d" % player.drones]
-	var keys := ["1", "2", "G", "V"]
-	var ids := ["ak74", "m500", "grenade", "fpv"]
+	var counts := []
+	for k in player.weapon.slots.size():
+		counts.append("%d" % (_ammo if held == k else player.weapon.slots[k].ammo))
+	counts += ["×%d" % player.grenades, "×%d" % player.drones]
+	var keys := SLOT_KEYS
+	var ids := SLOT_IDS
 	for k in slots.size():
 		var r: Rect2 = slots[k]
 		var on := k == held
@@ -463,7 +517,7 @@ func _draw_hotbar() -> void:
 		var ts := tex.get_size()
 		var sc := minf(tr.size.x / ts.x, tr.size.y / ts.y)
 		var dst := Rect2(tr.get_center() - ts * sc * 0.5, ts * sc)
-		var empty := (k == 2 and player.grenades == 0) or (k == 3 and player.drones == 0)
+		var empty: bool = (ids[k] == "grenade" and player.grenades == 0) or (ids[k] == "fpv" and player.drones == 0)
 		draw_texture_rect(tex, dst, false, Color(1, 1, 1, 0.35 if empty else 1.0))
 		draw_string(_font, r.position + Vector2(5, 15), keys[k], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.6))
 		var cnt: String = counts[k]

@@ -3,7 +3,8 @@ extends SceneTree
 ## physics, fainting from pain and finishing off, the death throes, blind
 ## fire after a neck wound (at most 5 s), the player's wounds and death
 ## (black screen round a white dot), the grenade throw animation, automatic
-## fire and steering the FPV drone with the arrows.
+## fire, the sniper rifles and their scopes, the plate carrier, and the FPV
+## drone hovering and flown with the arrows.
 ## Run: godot -s res://tools/mechanics_test.gd   (env SHOTS=<dir> for PNGs)
 
 var frame := 0
@@ -135,7 +136,54 @@ func _process(_delta: float) -> bool:
 				_mark.ammo5 = npc._ammo
 			if _mark.t == 60 * 8:
 				print("blind fire: shots in first 5 s=%d, after=%d" % [_mark.ammo0 - _mark.ammo5, _mark.ammo5 - npc._ammo])
-				_step = 8
+				_step = 171
+			return false
+		171:
+			# a sniper round: always drops him, goes through the plate
+			p.weapon.select(1, false)
+			npc = _spawn(Vector3(100, 0.2, 0.0))
+			_wait = 30
+		172:
+			_aim_at(npc.chest.global_position)
+			_fire()
+			print("SVD chest hit: state=%s dead=%s health=%.0f" % [Npc.State.keys()[npc.state], npc.dead, npc.health])
+			_wait = 40
+		173:
+			_shot("m10_svd_hit")
+			# armour: an AK round on the plate
+			p.weapon.select(0, false)
+			npc = _spawn(Vector3(98.5, 0.2, 1.0))
+			_wait = 30
+		174:
+			var h0 := npc.health
+			_aim_at(npc.chest.to_global(Vector3(0.05, 0.05, -0.12)))
+			_fire()
+			print("AK on the plate: health %.0f -> %.0f, state=%s pain=%.0f" % [h0, npc.health, Npc.State.keys()[npc.state], npc._pain])
+			_wait = 30
+		175:
+			# through the PSO-1
+			p.weapon.select(1, false)
+			_wait = 30
+		176:
+			_aim_at(Vector3(97, 4.0, -20.0))
+			p.weapon.aiming = true
+			_wait = 50
+		177:
+			_shot("m11_pso_scope")
+			p.weapon.select(2, false)
+			_wait = 30
+		178:
+			_shot("m12_pu_scope")
+			p.weapon.aiming = false
+			_wait = 20
+		179:
+			_fire()
+			_wait = 24
+		180:
+			_shot("m13_mosin_bolt")
+			p.weapon.select(0, false)
+			_step = 8
+			_wait = 30
 			return false
 		8:
 			# automatic fire with the touch button held
@@ -151,6 +199,7 @@ func _process(_delta: float) -> bool:
 			_mark.t += 1
 			if _mark.t == 60:
 				p.weapon.trigger_held = false
+				p.weapon.select(0, false)
 				print("held fire 1 s: %d rounds left of 30" % p.weapon.current.ammo)
 				_step = 9
 			return false
@@ -169,24 +218,35 @@ func _process(_delta: float) -> bool:
 			print("grenades in the air after the swing: %d (before %d)" % [get_nodes_in_group("grenades").size(), _mark.nades])
 			_wait = 150
 		12:
-			# FPV drone steered with the arrows
+			# FPV drone: it must hang in the air with no input
 			p.launch_drone()
-			_wait = 10
+			_wait = 120
 		13:
-			_mark.yaw = p.piloting._yaw
-			p.drone_arrows = Vector2(1, 0)
+			_mark.pos = p.piloting.global_position
 			_wait = 60
 		14:
-			print("drone turned by the right arrow: %.2f rad" % (p.piloting._yaw - _mark.yaw))
-			p.drone_arrows = Vector2(0, 1)
-			_mark.pitch = p.piloting._pitch
+			print("drone hovering: moved %.2f m in 1 s with no input" % p.piloting.global_position.distance_to(_mark.pos))
+			_mark.yaw = p.piloting._yaw
+			_mark.pos = p.piloting.global_position
+			p.drone_arrows = Vector2(1, 0)
 			_wait = 30
 		15:
-			print("drone pitched up by the up arrow: %.2f rad" % (p.piloting._pitch - _mark.pitch))
-			_shot("m06_fpv_arrows")
+			print("right arrow: turned %.2f rad, moved %.2f m" % [p.piloting._yaw - _mark.yaw, p.piloting.global_position.distance_to(_mark.pos)])
+			p.drone_arrows = Vector2(0, 1)
+			_mark.pos = p.piloting.global_position
+			_wait = 60
+			_step = 150
+		151:
+			print("up arrow (forward) 1 s: flew %.1f m" % p.piloting.global_position.distance_to(_mark.pos))
+			_shot("m06_fpv_forward")
 			p.drone_arrows = Vector2.ZERO
-			p.piloting.detonate()
 			_wait = 90
+		152:
+			print("let go 1.5 s: speed %.2f m/s" % p.piloting.velocity.length())
+			p.piloting.detonate()
+			_step = 16
+			_wait = 90
+			return false
 		16:
 			# the player's wounds: four bullets wound, the fifth kills
 			Player.immortal = false

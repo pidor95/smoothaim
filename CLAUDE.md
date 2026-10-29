@@ -47,10 +47,20 @@ https://github.com/pidor95/smoothaim/releases/download/latest/PhysicsBox.apk
   клавиши-стрелки `fpv_*`), хитмаркера нет.
 - Бодикам: `bodycam.gd` + `assets/shaders/bodycam.gdshader` (CanvasLayer 0 под HUD),
   настройка `Settings.bodycam`, +14° FOV.
-- Оружие игрока: АК-74М (`ak74_fp.glb`, авто, `trigger_held`) и M500; пистолета нет
-  (у NPC пистолет для самоубийства остался). Граната — анимация `grenade_fp.glb`
+- Оружие игрока: АК-74М с «Коброй» (`ak74_fp.glb`, авто, `trigger_held`, sight = красная точка),
+  СВД+ПСО-1 (`svd_fp.glb`) и Мосина+ПУ (`mosin_fp.glb`, затвор рукой в клипе "fire");
+  у DEFS ключ `scope` ("pso"/"pu") → `Weapon.scoped()`, HUD `_draw_scope`, модель скрыта;
+  дробовика и пистолета нет (у NPC пистолет для самоубийства остался).
+- NPC: бронеплиты (`plate` в take_hit: центр груди, импульс < `HEAVY_ROUND`), `collapse`
+  — шанс упасть от попадания в корпус/бедро, `_down_time`; снайперы `weapon == "svd"`
+  (`npc_svd.glb`, `SVD_MUZZLE`, `game.SNIPER_CHANCE`, посты выше 3 м).
+- Дрон игрока (`fpv_drone.gd` `_pilot_flight`): висит сам, ▲ вперёд по камере, ▼ назад,
+  ◀ ▶ поворот, `drone_climb` (ВЫШЕ/НИЖЕ, E/Q).
+- Бодикам-движение: `player._bodycam_motion` (отставание при поворотах, удары шагов,
+  раскачка, дыхание от пульса, `_jolt`/`cam_kick` на выстрел/попадание/приземление),
+  `scope_shift` для оптики. Граната — анимация `grenade_fp.glb`
   "throw", отпуск на `THROW_RELEASE` → `player.release_grenade()`.
-- Sketchfab (CC-BY, авторы в README и меню): АК-74М, РГД-5, FPV-дрон. Токен —
+- Sketchfab (CC-BY, авторы в README и меню): АК-74М, РГД-5, FPV-дрон, СВД, Мосина ПУ, «Кобра». Токен —
   у пользователя (в репо не класть): `SKETCHFAB_TOKEN=... python3 tools/fetch_sketchfab.py`
   → `tools/model_sources/` (gitignore) → `build_sketchfab_kit.py` (АК FP, бросок,
   `npc_rifle.glb` — `RIFLE_MUZZLE` печатает скрипт, `grenade.glb`, `fpv_drone.glb` с Prop0..3).

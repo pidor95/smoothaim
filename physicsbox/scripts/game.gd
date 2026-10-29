@@ -10,6 +10,8 @@ const TICKETS := 120
 ## The war is fought round the player: reinforcements come up and posts are
 ## taken this close to him (the front is far bigger than that).
 const ACTION_RADIUS := 75.0
+## This share of the men holding the line are snipers.
+const SNIPER_CHANCE := 0.18
 
 var house: TrenchLevel
 var player: Player
@@ -163,8 +165,15 @@ func spawn_soldier(team: int, assault_mode := -1, start := false) -> Npc:
 	if start and not assault:
 		var own: Array = _near_player(Npc.war_posts[team], ACTION_RADIUS * 0.8)
 		at = own[randi() % own.size()]
-	var npc := spawn_npc(at + Vector3(randf_range(-0.4, 0.4), 0, randf_range(-0.4, 0.4)), team)
+	# now and then a sniper with an SVD: he takes a post up in a building
+	var sniper := not assault and randf() < SNIPER_CHANCE
+	var npc := spawn_npc(at + Vector3(randf_range(-0.4, 0.4), 0, randf_range(-0.4, 0.4)), team, "svd" if sniper else "rifle")
 	npc.role = "assault" if assault else "hold"
+	if sniper:
+		var high := (Npc.war_posts[team] as Array).filter(func(p): return p.y > 3.0)
+		high = _near_player(high, ACTION_RADIUS * 1.6) if not high.is_empty() else high
+		if not high.is_empty():
+			posts = high
 	if not posts.is_empty():
 		npc.post = posts[randi() % posts.size()]
 	return npc
@@ -189,9 +198,10 @@ func send_enemy_drone() -> FpvDrone:
 	return d
 
 
-func spawn_npc(pos: Vector3, team := 1) -> Npc:
+func spawn_npc(pos: Vector3, team := 1, weapon := "rifle") -> Npc:
 	var npc := Npc.new()
 	npc.team = team
+	npc.weapon = weapon
 	npc.position = pos
 	npc.rotation.y = 0.0 if team == 0 else PI
 	add_child(npc)
