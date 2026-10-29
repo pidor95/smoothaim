@@ -9,6 +9,10 @@ extends Node3D
 ## its reinforcement points and firing positions; the buildings are placed
 ## from prototypes, with glass panes and hinged doors at their markers.
 ## The navigation mesh is baked once offline (tools/bake_nav.gd).
+## The map is put together a little each frame (`built` when done), so a
+## phone never sits frozen long enough for Android to kill the game.
+
+signal built
 
 const MAP := "res://assets/maps/trenches.glb"
 const BUILDINGS := "res://assets/maps/buildings.glb"
@@ -24,7 +28,11 @@ var player_spawn := Transform3D.IDENTITY
 var team_spawns: Array = [[], []]
 var team_posts: Array = [[], []]
 
+var is_built := false
+var progress := 0.0 # 0..1 while building (loading screen)
+
 var _protos := {} # name -> {meshes: [[mesh, material]], shape: Shape3D, markers: [[kind, Transform3D]]}
+var _slice := 0
 
 
 func _ready() -> void:
@@ -35,14 +43,29 @@ func _ready() -> void:
 	props_root.name = "Props"
 	add_child(props_root)
 	_make_materials()
-	_load_protos()
-	_build_map()
+	_build()
+
+
+func _build() -> void:
+	_slice = Time.get_ticks_msec()
+	await _load_protos()
+	await _build_map()
 	NavigationServer3D.map_set_cell_size(get_world_3d().navigation_map, 0.2)
 	NavigationServer3D.map_set_cell_height(get_world_3d().navigation_map, 0.1)
 	if ResourceLoader.exists(NAV):
 		nav_region.navigation_mesh = load(NAV)
 	else:
 		bake_navigation()
+	progress = 1.0
+	is_built = true
+	built.emit()
+
+
+## Lets a frame go by every ~25 ms of building.
+func _breathe() -> void:
+	if Time.get_ticks_msec() - _slice > 25:
+		await get_tree().process_frame
+		_slice = Time.get_ticks_msec()
 
 
 func _tex_mat(color: Color, tex: String, uv_scale: float, roughness := 0.85) -> StandardMaterial3D:
@@ -120,6 +143,7 @@ func _load_protos() -> void:
 			if c is MeshInstance3D:
 				if n.begins_with("C__"):
 					entry.shape = (c.mesh as Mesh).create_trimesh_shape()
+					await _breathe()
 				else:
 					entry.meshes.append([c.mesh, mats.get(n.get_slice("__", 0), mats.Concrete), c.transform])
 			else:
@@ -130,7 +154,11 @@ func _load_protos() -> void:
 
 func _build_map() -> void:
 	var scene: Node = load(MAP).instantiate()
-	for n in scene.get_children():
+	var count := scene.get_child_count()
+	for k in count:
+		var n := scene.get_child(k)
+		progress = 0.1 + 0.85 * k / count
+		await _breathe()
 		var node_name := String(n.name)
 		var xf: Transform3D = n.transform
 		if n is MeshInstance3D:
@@ -146,11 +174,13 @@ func _build_map() -> void:
 			if node_name.begins_with("Wire") or node_name.begins_with("Duckboards") or node_name.begins_with("Steps"):
 				mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 				mi.visibility_range_end = 90.0
+			if node_name.get_slice("_", 0) in ["Planks", "Posts", "Sandbags", "Logs", "WireStakes"]:
+				mi.visibility_range_end = 110.0 # small stuff: gone in the haze anyway
 			geo.add_child(mi)
 			if node_name.begins_with("Terrain"):
 				_static_trimesh(mesh, xf, "dirt")
 			elif node_name.begins_with("Tree"):
-				mi.visibility_range_end = 170.0
+				mi.visibility_range_end = 140.0
 				_trunk(xf)
 		elif node_name == "Player":
 			player_spawn = Transform3D(Basis.IDENTITY, xf.origin)

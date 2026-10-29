@@ -14,7 +14,8 @@ func _initialize() -> void:
 	await process_frame
 	var level: Node3D = load("res://scripts/trench_level.gd").new() # with no saved mesh it bakes in _ready
 	root.add_child(level)
-	await process_frame
+	if not level.is_built:
+		await level.built
 	await physics_frame
 	var nm: NavigationMesh = level.nav_region.navigation_mesh
 	var err := ResourceSaver.save(nm, NAV)

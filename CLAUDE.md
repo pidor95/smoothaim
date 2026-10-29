@@ -72,4 +72,9 @@ https://github.com/pidor95/smoothaim/releases/download/latest/PhysicsBox.apk
 - Тесты: `tools/war_test.gd`, `tools/mechanics_test.gd` (обморок, судороги,
   шея 5 с, авто-огонь, граната, стрелки FPV, смерть игрока), `tools/explosives_test.gd`.
   В контейнере Vulkan нет — Godot сам падает на OpenGL (llvmpipe), это медленно.
+- Вылет при входе в бой (жалоба): текстуры оружия были 2048 без VRAM-сжатия (~250 МБ видеопамяти)
+  и загрузка 10+ с одним кадром (ANR на Android). Сейчас: в `.import` 3D-текстур `compress/mode=2`
+  (+ `size_limit=1024` у оружия) — новые текстуры тоже так ставить! Меню грузит тяжёлое в потоках
+  (`main_menu.PRELOAD` → `Settings.preloaded`), `TrenchLevel` строится кусками (`_breathe`, сигнал
+  `built`, `is_built`, экран «ЗАГРУЗКА ФРОНТА»), `game._ready` ждёт его; тесты ждут `game.hud`.
 - Взрывы, гранаты, FPV, кровь, гор, двери, стёкла, звуки — см. README.

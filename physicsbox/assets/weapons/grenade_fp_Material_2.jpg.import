@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://djc6nm6jie3c4"
-path="res://.godot/imported/grenade_fp_Material_2.jpg-3b6d7020a52bb6600030388e167217f3.ctex"
+path.s3tc="res://.godot/imported/grenade_fp_Material_2.jpg-3b6d7020a52bb6600030388e167217f3.s3tc.ctex"
+path.etc2="res://.godot/imported/grenade_fp_Material_2.jpg-3b6d7020a52bb6600030388e167217f3.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "184f05d8041119e1a22b7570fb6a48ba"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/weapons/grenade_fp_Material_2.jpg"
-dest_files=["res://.godot/imported/grenade_fp_Material_2.jpg-3b6d7020a52bb6600030388e167217f3.ctex"]
+dest_files=["res://.godot/imported/grenade_fp_Material_2.jpg-3b6d7020a52bb6600030388e167217f3.s3tc.ctex", "res://.godot/imported/grenade_fp_Material_2.jpg-3b6d7020a52bb6600030388e167217f3.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -39,5 +41,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
+process/size_limit=1024
 detect_3d/compress_to=1

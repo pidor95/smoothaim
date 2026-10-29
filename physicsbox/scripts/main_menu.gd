@@ -11,6 +11,10 @@ var _main_box: Control
 var _credits_box: Control
 var _settings_box: Control
 var _loading: Label
+const PRELOAD := ["res://scenes/game.tscn", "res://assets/maps/trenches.glb", "res://assets/maps/buildings.glb",
+		"res://assets/maps/trenches_nav.res", "res://assets/weapons/ak74_fp.glb", "res://assets/weapons/svd_fp.glb",
+		"res://assets/weapons/grenade_fp.glb", "res://assets/npc/npc_rifle.glb", "res://assets/npc/npc_svd.glb",
+		"res://assets/npc/soldier_gear.glb", "res://assets/npc/mannequin_anims.glb"]
 
 
 func _ready() -> void:
@@ -224,9 +228,28 @@ func _show(box: Control) -> void:
 		b.visible = b == box
 
 
+## The heavy files (map, buildings, weapons, soldiers) are read on
+## background threads while the menu keeps drawing; they stay cached in
+## Settings.preloaded for the battle scene.
 func _start_game() -> void:
 	_main_box.get_parent().visible = false
 	_loading.visible = true
-	await get_tree().process_frame
-	await get_tree().process_frame
-	get_tree().change_scene_to_file("res://scenes/game.tscn")
+	for path in PRELOAD:
+		ResourceLoader.load_threaded_request(path, "", true)
+	var pending: Array = PRELOAD.duplicate()
+	while not pending.is_empty():
+		await get_tree().process_frame
+		var done := 0.0
+		for path in pending.duplicate():
+			var prog := []
+			var st := ResourceLoader.load_threaded_get_status(path, prog)
+			if st == ResourceLoader.THREAD_LOAD_LOADED or st == ResourceLoader.THREAD_LOAD_FAILED \
+					or st == ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
+				if st == ResourceLoader.THREAD_LOAD_LOADED:
+					Settings.preloaded.append(ResourceLoader.load_threaded_get(path))
+				pending.erase(path)
+			else:
+				done += prog[0] if not prog.is_empty() else 0.0
+		var total := PRELOAD.size()
+		_loading.text = "ЗАГРУЗКА… %d%%" % int((total - pending.size() + done) * 100.0 / total)
+	get_tree().change_scene_to_packed(load("res://scenes/game.tscn"))

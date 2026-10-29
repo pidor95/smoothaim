@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://d0s8ao3ahdpo7"
-path="res://.godot/imported/npc_rifle_Material.jpg-94af11aefd3b813e0735edf1a51599b7.ctex"
+path.s3tc="res://.godot/imported/npc_rifle_Material.jpg-94af11aefd3b813e0735edf1a51599b7.s3tc.ctex"
+path.etc2="res://.godot/imported/npc_rifle_Material.jpg-94af11aefd3b813e0735edf1a51599b7.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "a119a1db3581a4627c74271c4e2a4b0d"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/npc/npc_rifle_Material.jpg"
-dest_files=["res://.godot/imported/npc_rifle_Material.jpg-94af11aefd3b813e0735edf1a51599b7.ctex"]
+dest_files=["res://.godot/imported/npc_rifle_Material.jpg-94af11aefd3b813e0735edf1a51599b7.s3tc.ctex", "res://.godot/imported/npc_rifle_Material.jpg-94af11aefd3b813e0735edf1a51599b7.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

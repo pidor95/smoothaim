@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://baoblc70epkxp"
-path="res://.godot/imported/npc_svd_magazine_baseColor.jpg-6cc1da88a485c196fc9c79ccd4010760.ctex"
+path.s3tc="res://.godot/imported/npc_svd_magazine_baseColor.jpg-6cc1da88a485c196fc9c79ccd4010760.s3tc.ctex"
+path.etc2="res://.godot/imported/npc_svd_magazine_baseColor.jpg-6cc1da88a485c196fc9c79ccd4010760.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "c0971c39e71e9d1a9d0deec30d66e0d2"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/npc/npc_svd_magazine_baseColor.jpg"
-dest_files=["res://.godot/imported/npc_svd_magazine_baseColor.jpg-6cc1da88a485c196fc9c79ccd4010760.ctex"]
+dest_files=["res://.godot/imported/npc_svd_magazine_baseColor.jpg-6cc1da88a485c196fc9c79ccd4010760.s3tc.ctex", "res://.godot/imported/npc_svd_magazine_baseColor.jpg-6cc1da88a485c196fc9c79ccd4010760.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

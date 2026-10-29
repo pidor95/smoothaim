@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://8mo1n3giuacg"
-path="res://.godot/imported/npc_svd_material_2_metallicRoughness.jpg-af8361ba6f2122549a4f0d60b5c17d3e.ctex"
+path.s3tc="res://.godot/imported/npc_svd_material_2_metallicRoughness.jpg-af8361ba6f2122549a4f0d60b5c17d3e.s3tc.ctex"
+path.etc2="res://.godot/imported/npc_svd_material_2_metallicRoughness.jpg-af8361ba6f2122549a4f0d60b5c17d3e.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "267e41836ab9a352053fbd172e48ce61"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/npc/npc_svd_material_2_metallicRoughness.jpg"
-dest_files=["res://.godot/imported/npc_svd_material_2_metallicRoughness.jpg-af8361ba6f2122549a4f0d60b5c17d3e.ctex"]
+dest_files=["res://.godot/imported/npc_svd_material_2_metallicRoughness.jpg-af8361ba6f2122549a4f0d60b5c17d3e.s3tc.ctex", "res://.godot/imported/npc_svd_material_2_metallicRoughness.jpg-af8361ba6f2122549a4f0d60b5c17d3e.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

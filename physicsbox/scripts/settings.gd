@@ -12,6 +12,9 @@ var volume := 0.8
 var show_fps := false
 ## Bodycam look: wide lens, distortion, grain, timestamp.
 var bodycam := true
+## Resources the menu loaded on background threads for the battle (kept
+## referenced so they stay in the cache).
+var preloaded: Array = []
 
 
 func _ready() -> void:

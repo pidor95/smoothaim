@@ -34,6 +34,8 @@ var _weapon_cards: Array = [] # [button, slot index]
 var _weapon_tabs: Array = [] # [tab button, page]
 var _immortal_button: Button
 var weapon_menu_open := false
+var _loading_layer: CanvasLayer
+var _loading_label: Label
 
 
 func _ready() -> void:
@@ -46,6 +48,10 @@ func _ready() -> void:
 
 	house = TrenchLevel.new()
 	add_child(house)
+	if not house.is_built:
+		_show_loading()
+		await house.built
+		_loading_layer.queue_free()
 
 	player = Player.new()
 	player.transform = house.player_spawn
@@ -69,6 +75,22 @@ func _ready() -> void:
 	for t in 2:
 		for i in TEAM_ALIVE:
 			spawn_soldier(t, -1, true)
+
+
+## While the front is being put together: a black screen with the progress.
+func _show_loading() -> void:
+	_loading_layer = CanvasLayer.new()
+	_loading_layer.layer = 20
+	add_child(_loading_layer)
+	var bg := ColorRect.new()
+	bg.color = Color(0.02, 0.02, 0.02)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_loading_layer.add_child(bg)
+	_loading_label = UiKit.label("ЗАГРУЗКА ФРОНТА…", 44, Color(1, 1, 1))
+	_loading_label.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	_loading_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_loading_label.grow_vertical = Control.GROW_DIRECTION_BOTH
+	_loading_layer.add_child(_loading_label)
 
 
 func _build_environment() -> void:
@@ -294,6 +316,8 @@ func _order_targets() -> Array[Npc]:
 
 
 func _physics_process(delta: float) -> void:
+	if player == null:
+		return
 	if winner >= 0:
 		_round_end_t -= delta
 		if _round_end_t <= 0.0:
@@ -314,6 +338,10 @@ func _physics_process(delta: float) -> void:
 
 
 func _process(_delta: float) -> void:
+	if hud == null:
+		if is_instance_valid(_loading_label):
+			_loading_label.text = "ЗАГРУЗКА ФРОНТА… %d%%" % int(house.progress * 100.0)
+		return
 	hud.set_stats(kills, tickets, winner)
 	if not player.touch_mode:
 		if Input.is_action_just_pressed("weapon_menu"):

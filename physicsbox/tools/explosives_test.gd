@@ -55,9 +55,10 @@ func _report(label: String) -> void:
 
 
 func _process(_delta: float) -> bool:
+	if game == null or game.get("hud") == null:
+		game = current_scene if current_scene and current_scene.has_method("spawn_soldier") else null
+		return false # the front is still being put together
 	frame += 1
-	if frame == 5:
-		game = current_scene
 	if game == null or frame < 30:
 		return false
 	var p: Player = game.player

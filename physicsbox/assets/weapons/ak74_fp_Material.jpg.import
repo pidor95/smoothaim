@@ -3,9 +3,11 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dcu263486utdb"
-path="res://.godot/imported/ak74_fp_Material.jpg-791b5f468b4e20c74bdd9f5bc229e9e9.ctex"
+path.s3tc="res://.godot/imported/ak74_fp_Material.jpg-791b5f468b4e20c74bdd9f5bc229e9e9.s3tc.ctex"
+path.etc2="res://.godot/imported/ak74_fp_Material.jpg-791b5f468b4e20c74bdd9f5bc229e9e9.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "8bc56a7e7be4be07aed863b27123bf92"
@@ -14,11 +16,11 @@ generator_parameters={
 [deps]
 
 source_file="res://assets/weapons/ak74_fp_Material.jpg"
-dest_files=["res://.godot/imported/ak74_fp_Material.jpg-791b5f468b4e20c74bdd9f5bc229e9e9.ctex"]
+dest_files=["res://.godot/imported/ak74_fp_Material.jpg-791b5f468b4e20c74bdd9f5bc229e9e9.s3tc.ctex", "res://.godot/imported/ak74_fp_Material.jpg-791b5f468b4e20c74bdd9f5bc229e9e9.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
@@ -39,5 +41,5 @@ process/premult_alpha=false
 process/normal_map_invert_y=false
 process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
-process/size_limit=0
+process/size_limit=1024
 detect_3d/compress_to=1

@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bbxkg278ej8iw"
-path="res://.godot/imported/camo_green.png-51d8d9f39ccb04b26861897b62c66703.ctex"
+path.s3tc="res://.godot/imported/camo_green.png-51d8d9f39ccb04b26861897b62c66703.s3tc.ctex"
+path.etc2="res://.godot/imported/camo_green.png-51d8d9f39ccb04b26861897b62c66703.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/camo_green.png"
-dest_files=["res://.godot/imported/camo_green.png-51d8d9f39ccb04b26861897b62c66703.ctex"]
+dest_files=["res://.godot/imported/camo_green.png-51d8d9f39ccb04b26861897b62c66703.s3tc.ctex", "res://.godot/imported/camo_green.png-51d8d9f39ccb04b26861897b62c66703.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0
