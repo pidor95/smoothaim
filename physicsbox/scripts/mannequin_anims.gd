@@ -71,7 +71,12 @@ func _load() -> void:
 	scene.free()
 
 
+## A missing clip falls back to the idle (an error once, not a soldier
+## stuck sampling nothing every frame).
 func clip(name: String) -> Clip:
+	if not clips.has(name):
+		push_error("no mannequin clip '%s'" % name)
+		clips[name] = clips["idle"]
 	return clips[name]
 
 

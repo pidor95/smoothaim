@@ -937,7 +937,9 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 	if impulse >= HEAVY_ROUND:
 		collapse = 1.0
 	if knee and not falling_on_knee:
-		_start_stagger("knee_fall_" + part_name.right(1), true, part, pos, dir, impulse)
+		# shin / thigh: that side's knee gives; a gut shot folds either one
+		var side := part_name.right(1) if part_name.ends_with("_l") or part_name.ends_with("_r") else ("l" if randf() < 0.5 else "r")
+		_start_stagger("knee_fall_" + side, true, part, pos, dir, impulse)
 	elif (balance < 0.0 or randf() < collapse) and not falling_on_knee and not display_only:
 		_knockdown(part, pos, dir, impulse * 1.3)
 	elif frame != _hit_frame and not falling_on_knee:
@@ -1875,8 +1877,10 @@ func drop_gun(vel: Vector3) -> void:
 	_gun = null
 	armed = false
 	var guns := get_tree().get_nodes_in_group("dropped_guns")
-	if guns.size() > MAX_DROPPED_GUNS:
-		guns[0].queue_free()
+	while guns.size() > MAX_DROPPED_GUNS: # out of the group at once: a queued one must not count twice
+		var old: Node = guns.pop_front()
+		old.remove_from_group("dropped_guns")
+		old.queue_free()
 
 
 func _hopeless() -> bool:

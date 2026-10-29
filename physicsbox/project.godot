@@ -17,6 +17,11 @@ Settings="*res://scripts/settings.gd"
 Sfx="*res://scripts/sfx.gd"
 Blood="*res://scripts/blood.gd"
 
+[debug]
+
+file_logging/enable_file_logging=true
+file_logging/max_log_files=6
+
 [display]
 
 window/size/viewport_width=1280

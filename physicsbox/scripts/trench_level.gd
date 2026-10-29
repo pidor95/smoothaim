@@ -17,6 +17,13 @@ signal built
 const MAP := "res://assets/maps/trenches.glb"
 const BUILDINGS := "res://assets/maps/buildings.glb"
 const NAV := "res://assets/maps/trenches_nav.res"
+## The ground's collision: a height grid (tools/bake_heights.gd) cut into
+## HeightMapShape3D tiles, not trimesh shapes of the terrain chunks - those
+## took ~130 MB and phones ran out of memory.
+const HEIGHTS := "res://assets/maps/trenches_height.res"
+const HEIGHTS_ORIGIN := Vector2(-270.0, -170.0)
+const HEIGHTS_STEP := 0.5
+const HEIGHTS_TILE := 64
 const NAV_AABB := AABB(Vector3(-270.0, -4.0, -170.0), Vector3(420.0, 26.0, 340.0))
 
 var nav_region := NavigationRegion3D.new()
@@ -50,6 +57,7 @@ func _build() -> void:
 	_slice = Time.get_ticks_msec()
 	await _load_protos()
 	await _build_map()
+	await _build_ground()
 	NavigationServer3D.map_set_cell_size(get_world_3d().navigation_map, 0.2)
 	NavigationServer3D.map_set_cell_height(get_world_3d().navigation_map, 0.1)
 	if ResourceLoader.exists(NAV):
@@ -178,7 +186,8 @@ func _build_map() -> void:
 				mi.visibility_range_end = 110.0 # small stuff: gone in the haze anyway
 			geo.add_child(mi)
 			if node_name.begins_with("Terrain"):
-				_static_trimesh(mesh, xf, "dirt")
+				if not ResourceLoader.exists(HEIGHTS):
+					_static_trimesh(mesh, xf, "dirt")
 			elif node_name.begins_with("Tree"):
 				mi.visibility_range_end = 140.0
 				_trunk(xf)
@@ -251,6 +260,32 @@ func _door(t: Transform3D, width: float, height: float) -> void:
 	joint.set_param(HingeJoint3D.PARAM_LIMIT_UPPER, deg_to_rad(95))
 	joint.node_b = joint.get_path_to(leaf)
 	leaf.joint = joint
+
+
+## The ground's collision tiles, 32 x 32 m each (65 x 65 samples 0.5 m
+## apart: square, so Jolt makes a real height field of them). The grid holds
+## the heights doubled and each tile is scaled by 0.5 uniformly.
+func _build_ground() -> void:
+	if not ResourceLoader.exists(HEIGHTS):
+		return
+	var img: Image = load(HEIGHTS)
+	var n := HEIGHTS_TILE
+	var body := StaticBody3D.new()
+	body.name = "Ground"
+	body.set_meta("surface", "dirt")
+	geo.add_child(body)
+	for tj in (img.get_height() - 1) / n:
+		for ti in (img.get_width() - 1) / n:
+			var sh := HeightMapShape3D.new()
+			sh.map_width = n + 1
+			sh.map_depth = n + 1
+			sh.map_data = img.get_region(Rect2i(ti * n, tj * n, n + 1, n + 1)).get_data().to_float32_array()
+			var cs := CollisionShape3D.new()
+			cs.shape = sh
+			var centre := HEIGHTS_ORIGIN + Vector2(ti * n + n * 0.5, tj * n + n * 0.5) * HEIGHTS_STEP
+			cs.transform = Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * HEIGHTS_STEP), Vector3(centre.x, 0.0, centre.y))
+			body.add_child(cs)
+		await _breathe()
 
 
 func _static_trimesh(mesh: Mesh, xf: Transform3D, surface: String) -> void:

@@ -10,6 +10,8 @@ var _ui := Control.new()
 var _main_box: Control
 var _credits_box: Control
 var _settings_box: Control
+var _log_box: Control
+var _log_text: Label
 var _loading: Label
 const PRELOAD := ["res://scenes/game.tscn", "res://assets/maps/trenches.glb", "res://assets/maps/buildings.glb",
 		"res://assets/maps/trenches_nav.res", "res://assets/weapons/ak74_fp.glb", "res://assets/weapons/svd_fp.glb",
@@ -212,9 +214,31 @@ func _build_ui() -> void:
 	panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	_settings_box.add_child(panel)
 	panel.add_child(UiKit.settings_box())
-	_settings_box.add_child(UiKit.button("НАЗАД", func():
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	_settings_box.add_child(row)
+	row.add_child(UiKit.button("НАЗАД", func():
 		Settings.save_settings()
-		_show(_main_box)))
+		_show(_main_box), 300))
+	row.add_child(UiKit.button("ЖУРНАЛ ОШИБОК", _show_log, 320))
+
+	# the log of the last run (the one that froze or crashed): to copy and send
+	_log_box = VBoxContainer.new()
+	_log_box.add_theme_constant_override("separation", 10)
+	col.add_child(_log_box)
+	_log_box.add_child(UiKit.label("Журнал прошлого запуска (последние строки):", 26, Color(1, 0.25, 0.2)))
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(1080, 300)
+	_log_box.add_child(scroll)
+	_log_text = UiKit.label("", 15, Color(0.85, 0.85, 0.85))
+	_log_text.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	_log_text.custom_minimum_size.x = 1060
+	scroll.add_child(_log_text)
+	var log_row := HBoxContainer.new()
+	log_row.add_theme_constant_override("separation", 14)
+	_log_box.add_child(log_row)
+	log_row.add_child(UiKit.button("КОПИРОВАТЬ", func(): DisplayServer.clipboard_set(_log_text.text), 300))
+	log_row.add_child(UiKit.button("НАЗАД", func(): _show(_settings_box), 300))
 
 	var version := UiKit.label("v%s" % ProjectSettings.get_setting("application/config/version"), 18, Color(0.5, 0.5, 0.5))
 	_ui.add_child(version)
@@ -228,8 +252,21 @@ func _build_ui() -> void:
 
 
 func _show(box: Control) -> void:
-	for b in [_main_box, _credits_box, _settings_box]:
+	for b in [_main_box, _credits_box, _settings_box, _log_box]:
 		b.visible = b == box
+
+
+## The newest log of an earlier run (Godot keeps a few in user://logs; the
+## current run writes godot.log): its last lines, memory reports included.
+func _show_log() -> void:
+	var files := Array(DirAccess.get_files_at("user://logs")).filter(func(f): return f != "godot.log" and f.ends_with(".log"))
+	files.sort()
+	var text := "Журнала прошлого запуска нет."
+	if not files.is_empty():
+		var lines := FileAccess.get_file_as_string("user://logs/" + files[-1]).split("\n")
+		text = "%s\n%s" % [files[-1], "\n".join(lines.slice(maxi(0, lines.size() - 60)))]
+	_log_text.text = text
+	_show(_log_box)
 
 
 ## The heavy files (map, buildings, weapons, soldiers) are read on

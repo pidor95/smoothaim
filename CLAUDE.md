@@ -31,6 +31,15 @@ https://github.com/pidor95/smoothaim/releases/download/latest/PhysicsBox.apk
   посты по сторонам. Навмеш запечён заранее: `godot --headless -s res://tools/bake_nav.gd`
   → `assets/maps/trenches_nav.res` (cell 0.2/0.1, agent_radius 0.2 — иначе
   лестницы и двери закрываются). После правки карты — перезапечь!
+  Коллизия земли — НЕ trimesh (съедала ~130 МБ, телефоны вылетали/зависали): `tools/bake_heights.gd`
+  → `assets/maps/trenches_height.res` (Image RF, шаг 0.5 м, высоты ×2), `trench_level._build_ground`
+  режет на квадратные HeightMapShape3D 65×65 (Jolt делает height field только из квадратных) со
+  scale 0.5. После правки карты: build_trenches.py → bake_heights.gd → bake_nav.gd.
+- Вылеты/зависания на Samsung (жалоба): кроме памяти был баг — попадание в таз искало несуществующий
+  клип `knee_fall_s`, солдат ломался и каждый кадр сыпал ошибки. Лог пишется в файл
+  (`debug/file_logging`), `game._report` раз в 30 с пишет память; в меню НАСТРОЙКИ → «ЖУРНАЛ ОШИБОК»
+  показывает и копирует лог прошлого запуска — просить пользователя прислать его.
+  `tools/soak_test.gd` — долгий бой (память, объекты, худший кадр).
 - Война вокруг игрока: `game.gd` `TEAM_ALIVE`=9, `TICKETS`=120, `ACTION_RADIUS`
   — спавны/посты ближе к игроку; подкрепления всегда (нет авто/ИИ/замедления/+враг).
 - Солдат: `npc.gd` — `_faint` (без сознания `unconscious`, `_out_cold`, добить),

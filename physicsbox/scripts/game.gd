@@ -37,6 +37,7 @@ var _holster_button: Button
 var weapon_menu_open := false
 var _loading_layer: CanvasLayer
 var _loading_label: Label
+var _report_t := 0.0
 
 
 func _ready() -> void:
@@ -47,6 +48,7 @@ func _ready() -> void:
 	AudioServer.playback_speed_scale = 1.0
 	_build_environment()
 
+	_report("battle: building the front")
 	house = TrenchLevel.new()
 	add_child(house)
 	if not house.is_built:
@@ -76,7 +78,17 @@ func _ready() -> void:
 	for t in 2:
 		for i in TEAM_ALIVE:
 			spawn_soldier(t, -1, true)
+	_report("battle: started")
 
+
+## A line in the log (user://logs, the menu's ЖУРНАЛ ОШИБОК shows the last
+## run's): memory and what is going on, so a crash on a phone leaves a trace.
+func _report(what: String) -> void:
+	print("[%s] %s | mem %.0f MB (peak %.0f), video %.0f MB, objects %d, npcs %d, fps %d" % [
+			Time.get_time_string_from_system(), what, OS.get_static_memory_usage() / 1048576.0,
+			OS.get_static_memory_peak_usage() / 1048576.0, Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / 1048576.0,
+			Performance.get_monitor(Performance.OBJECT_COUNT), get_tree().get_nodes_in_group("npcs").size(),
+			Engine.get_frames_per_second()])
 
 ## While the front is being put together: a black screen with the progress.
 func _show_loading() -> void:
@@ -338,12 +350,16 @@ func _physics_process(delta: float) -> void:
 				spawn_soldier(t)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if hud == null:
 		if is_instance_valid(_loading_label):
 			_loading_label.text = "ЗАГРУЗКА ФРОНТА… %d%%" % int(house.progress * 100.0)
 		return
 	hud.set_stats(kills, tickets, winner)
+	_report_t += delta
+	if _report_t > 30.0:
+		_report_t = 0.0
+		_report("battle")
 	if not player.touch_mode:
 		if Input.is_action_just_pressed("weapon_menu"):
 			toggle_weapon_menu()
