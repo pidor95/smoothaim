@@ -214,6 +214,18 @@ func _draw() -> void:
 	var c := size * 0.5
 	var aim := player.weapon.aim_t
 
+	# taking fire / down
+	if player.dead:
+		draw_rect(Rect2(Vector2.ZERO, size), Color(0.35, 0.0, 0.0, 0.55))
+		var t := "ВЫ ПОГИБЛИ"
+		var tw := _font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 44).x
+		_text(Vector2(c.x - tw * 0.5, c.y - 10), t, 44, Color(1, 0.85, 0.85, 0.95))
+	elif player.hurt_flash > 0.0:
+		var f := player.hurt_flash
+		for k in 6: # red vignette: bands darker towards the edges
+			var inset := k * 18.0
+			draw_rect(Rect2(Vector2(inset, inset), size - Vector2(inset, inset) * 2.0), Color(0.8, 0.0, 0.0, 0.07 * f), false, 18.0)
+
 	# crosshair
 	if aim < 0.6:
 		var a := 1.0 - aim / 0.6
@@ -242,6 +254,12 @@ func _draw() -> void:
 		status_y += 28.0
 	if not Npc.ai_enabled:
 		_text(Vector2(24, status_y), "ИИ ОТКЛЮЧЁН", 22, Color(1, 0.75, 0.3, 0.9))
+		status_y += 28.0
+	if Player.immortal:
+		_text(Vector2(24, status_y), "БЕССМЕРТИЕ", 22, Color(0.5, 1, 0.6, 0.9))
+		status_y += 28.0
+	if Npc.xray:
+		_text(Vector2(24, status_y), "РЕНТГЕН", 22, Color(0.45, 0.75, 1, 0.9))
 	# the last order shouted
 	if _order_t > 0.0:
 		var a := clampf(_order_t / 0.4, 0.0, 1.0)
@@ -257,10 +275,14 @@ func _draw() -> void:
 	if not player.touch_mode:
 		ammo_pos = Vector2(size.x - 220, size.y - 30)
 	_text(ammo_pos, ammo_text, 30, Color(1, 1, 1, 0.9) if _ammo > 0 else Color(1, 0.3, 0.25, 0.95))
+	if not Player.immortal:
+		var hp_pos := Vector2(size.x * 0.5 - 330, size.y - 28) if player.touch_mode else Vector2(size.x - 220, size.y - 66)
+		var hp := int(ceil(player.health))
+		_text(hp_pos, "ЗДОРОВЬЕ %d" % hp, 26, Color(1, 1, 1, 0.85) if hp > 35 else Color(1, 0.25, 0.2, 0.95))
 	if not player.touch_mode:
 		_text(Vector2(24, size.y - 50), "WASD — ходьба, ЛКМ — огонь, ПКМ — прицел, R — перезарядка", 18, Color(1, 1, 1, 0.55))
 		_text(Vector2(24, size.y - 26), "1/2/F — оружие, B — меню оружия, N — выбор манекенов, E — манекен, Q — замедление, T — ИИ, Esc — пауза", 18, Color(1, 1, 1, 0.55))
-		_text(Vector2(24, size.y - 74), "Приказы: 3 стоять, 4 руки вверх, 5 на колени, 6 брось оружие, 7 ко мне, 8 проваливай, 9 вольно", 18, Color(1, 1, 1, 0.55))
+		_text(Vector2(24, size.y - 74), "Приказы: 3 стоять, 4 руки вверх, 5 на колени, 6 брось оружие, 7 ко мне, 8 проваливай, 9 вольно, 0 застрелись", 18, Color(1, 1, 1, 0.55))
 		return
 
 	# order list

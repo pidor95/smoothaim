@@ -173,6 +173,62 @@ func _process(_delta: float) -> bool:
 			_wait(1.5)
 		18:
 			_shot("b10_dropped_gun")
+			npc = _spawn(Vector3(-4.0, 0.05, -1.4), true)
+			_wait(0.6)
+		19:
+			_aim_at(npc.chest.global_position)
+			_shot("b11_armed_ready")
+			game.give_order(7) # застрелись
+			print("suicide order: suicide_t=", npc._suicide_t)
+			_wait(0.1)
+		20:
+			if npc.dead:
+				print("ordered suicide: suicided=", npc.suicided)
+				_step = 21
+			return false
+		21:
+			npc = _spawn(Vector3(-4.0, 0.05, -1.4), true)
+			Npc.ai_enabled = true
+			_wait(0.4)
+		22:
+			npc._start_fight()
+			_t0 = _now()
+			_wait(1.0)
+		23:
+			_shot("b12_npc_aiming")
+			_wait(3.0)
+		24:
+			print("fight: state=", npc.state, " (9=SHOOT) ammo=", npc._ammo, " player hp=", p.health, " dead=", p.dead)
+			Npc.ai_enabled = false
+			p._respawn()
+			p.global_position = Vector3(-4.0, 0.05, -4.5)
+			npc = _spawn(Vector3(-4.0, 0.05, -1.4), true)
+			_wait(0.5)
+		25:
+			_aim_at(npc.head.to_global(Vector3(0, -0.13, -0.03)))
+			_fire()
+			_wait(1.5)
+		26:
+			_shot("b13_choking_firing")
+			_wait(3.0)
+		27:
+			print("choking armed: phase=", npc._choke_phase, " ammo=", npc._ammo, " player hp=", p.health)
+			_shot("b14_choking_floor_firing")
+			Player.immortal = true
+			Npc.set_xray(true, self)
+			npc = _spawn(Vector3(-4.0, 0.05, -1.4))
+			_wait(0.5)
+		28:
+			_aim_at(npc.chest.global_position)
+			_fire()
+			_wait(0.2)
+		29:
+			_aim_at(npc.thigh_l.global_position)
+			_fire()
+			_wait(1.5)
+		30:
+			_shot("b15_xray")
+			print("xray: channels=", npc._channels.size(), " nodes=", npc._xray_nodes.size())
 			quit()
 	_step += 1
 	return false

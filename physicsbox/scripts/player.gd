@@ -23,6 +23,16 @@ var _step_dist := 0.0
 var _spawn: Transform3D
 var _feet := Area3D.new()
 
+## Immortality (weapon menu): NPC bullets do no harm.
+static var immortal := false
+const MAX_HEALTH := 100.0
+const RESPAWN_TIME := 3.0
+var health := MAX_HEALTH
+var dead := false
+var hurt_flash := 0.0 # 1 on a hit, fades (HUD red vignette)
+var _dead_t := 0.0
+var _regen_wait := 0.0
+
 
 func _ready() -> void:
 	add_to_group("player")
@@ -104,7 +114,51 @@ func _unhandled_input(event: InputEvent) -> void:
 		capture_mouse()
 
 
+## A bullet from an armed mannequin.
+func take_damage(amount: float, dir: Vector3) -> void:
+	if dead:
+		return
+	hurt_flash = 1.0
+	add_recoil(deg_to_rad(randf_range(1.5, 3.0)), deg_to_rad(randf_range(-2.0, 2.0)))
+	if immortal:
+		return
+	health -= amount
+	_regen_wait = 5.0
+	velocity += Vector3(dir.x, 0.0, dir.z) * 1.2
+	if health <= 0.0:
+		health = 0.0
+		dead = true
+		_dead_t = RESPAWN_TIME
+		weapon.visible = false
+
+
+func _respawn() -> void:
+	dead = false
+	health = MAX_HEALTH
+	global_transform = _spawn
+	velocity = Vector3.ZERO
+	yaw = _spawn.basis.get_euler().y
+	pitch = 0.0
+	head.position.y = EYE_HEIGHT
+	head.rotation.z = 0.0
+	weapon.visible = true
+
+
 func _physics_process(delta: float) -> void:
+	hurt_flash = maxf(hurt_flash - delta * 1.6, 0.0)
+	if dead:
+		# down on the floor; back at the start after a moment
+		_dead_t -= delta
+		head.position.y = move_toward(head.position.y, 0.3, delta * 2.5)
+		head.rotation.z = move_toward(head.rotation.z, 1.2, delta * 2.0)
+		velocity = Vector3(0, velocity.y - GRAVITY * delta, 0) if not is_on_floor() else Vector3.ZERO
+		move_and_slide()
+		if _dead_t <= 0.0:
+			_respawn()
+		return
+	_regen_wait -= delta
+	if _regen_wait <= 0.0:
+		health = minf(health + delta * 6.0, MAX_HEALTH)
 	var input := touch_move
 	if not touch_mode:
 		input += Input.get_vector("move_left", "move_right", "move_forward", "move_back")

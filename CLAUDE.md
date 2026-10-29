@@ -26,10 +26,18 @@ https://github.com/pidor95/smoothaim/releases/download/latest/PhysicsBox.apk
   (клипы `choke_stand/knees/fall/floor`, поза лёжа через `lying()` в Blender-скрипте);
   руки на горле до конца, кашляет кровью, истекает (`_choke_drain`). Сбитый с ног
   с раной шеи не встаёт — `_start_floor_choke` (общий `_freeze_from_ragdoll`).
+- Пол при шее: `_pick_floor_clip` — случайно `choke_floor` (корчится) / `choke_roll_l/r`
+  (перекат, горизонталь таза → root motion), случайный темп.
+- Стрельба NPC: State.SHOOT (`_wants_to_fight` в alert, `_shoot_process`, `_fire_at`),
+  при удушье `_wild_fire`; оверлеи руки `pistol_ready`/`pistol_aim` (+ поворот плеча
+  `_aim_yaw/_aim_pitch`), позы решает `solve_gun` в build_mannequin_anims.py.
+- Игрок: `Player.health/take_damage/dead/_respawn`, `Player.immortal`; рентген `Npc.xray`
+  (`set_xray`, шейдер XRAY_SHADER, кости/сердце/раневые каналы). Вкладки в меню оружия.
 - Паника: `panic_run` — обычный спринт, `_flee_target` выбирает точку прочь от игрока.
 - Выбор манекенов: `Npc.spawn_kind` (UNARMED/ARMED/MIXED), меню `game.toggle_npc_menu`
   (кнопка «НПС», N, пауза).
-- Приказы (`Npc.ORDERS`, State.ORDER, `game.give_order`, кнопка «ПРИКАЗ», клавиши 3–9):
+- Приказы (`Npc.ORDERS`, State.ORDER, `game.give_order`, кнопка «ПРИКАЗ», клавиши 3–9, 0;
+  «suicide» — застрелись):
   клипы `hands_up`, `kneel_hands_head`.
 - Пистолеты у NPC (`npc_pistol.glb` из `assets/m1911/m1911.fbx`, текстура общая с FP),
   `_despair_check` → `_start_suicide`

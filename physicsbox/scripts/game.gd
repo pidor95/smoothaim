@@ -24,6 +24,9 @@ var _guns_button: Button
 var _weapon_layer := CanvasLayer.new()
 var _weapon_panel: Control
 var _weapon_cards: Array = [] # [button, slot index]
+var _weapon_tabs: Array = [] # [tab button, page]
+var _immortal_button: Button
+var _xray_button: Button
 var weapon_menu_open := false
 var _npc_layer := CanvasLayer.new()
 var _npc_panel: Control
@@ -391,7 +394,27 @@ func toggle_weapon_menu() -> void:
 		player.capture_mouse()
 
 
+func _toggle_page(desc: String) -> VBoxContainer:
+	var page := VBoxContainer.new()
+	page.add_theme_constant_override("separation", 18)
+	page.custom_minimum_size = Vector2(784, 330)
+	page.alignment = BoxContainer.ALIGNMENT_CENTER
+	page.add_child(UiKit.label(desc, 24, Color(0.85, 0.85, 0.85)))
+	var b := UiKit.button("", func(): pass, 420)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	page.add_child(b)
+	return page
+
+
+func _show_weapon_tab(page: Control) -> void:
+	for t in _weapon_tabs:
+		t[1].visible = t[1] == page
+		t[0].button_pressed = t[1] == page
+
+
 func _refresh_weapon_cards() -> void:
+	_immortal_button.text = "БЕССМЕРТИЕ: " + ("ВКЛ" if Player.immortal else "ВЫКЛ")
+	_xray_button.text = "РЕНТГЕН: " + ("ВКЛ" if Npc.xray else "ВЫКЛ")
 	for c in _weapon_cards:
 		var b: Button = c[0]
 		var held: bool = player.weapon.slots[c[1]] == player.weapon.current
@@ -418,10 +441,33 @@ func _build_weapon_menu() -> void:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 16)
 	center.add_child(col)
-	col.add_child(UiKit.label("ОРУЖИЕ", 44, Color(1, 0.2, 0.2)))
+	# tabs: weapons | immortality | x-ray
+	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation", 12)
+	tabs.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.add_child(tabs)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 24)
 	col.add_child(row)
+	var immortal_page := _toggle_page("Пули манекенов не наносят вам урона.\nБез бессмертия: 100 здоровья, раны медленно\nзатягиваются, при смерти — возрождение на старте.")
+	_immortal_button = immortal_page.get_child(1)
+	_immortal_button.pressed.connect(func():
+		Player.immortal = not Player.immortal
+		_refresh_weapon_cards())
+	col.add_child(immortal_page)
+	var xray_page := _toggle_page("Манекены просвечиваются: видно скелет, сердце\nи каждый раневой канал (красные линии по ходу пули).\nЧасти тела светятся от синего к оранжевому по урону.")
+	_xray_button = xray_page.get_child(1)
+	_xray_button.pressed.connect(func():
+		Npc.set_xray(not Npc.xray, get_tree())
+		_refresh_weapon_cards())
+	col.add_child(xray_page)
+	for t in [["ОРУЖИЕ", row], ["БЕССМЕРТИЕ", immortal_page], ["РЕНТГЕН ПОВРЕЖДЕНИЙ", xray_page]]:
+		var page: Control = t[1]
+		var tb := UiKit.button(t[0], func(): _show_weapon_tab(page), 250)
+		tb.toggle_mode = true
+		tabs.add_child(tb)
+		_weapon_tabs.append([tb, page])
+	_show_weapon_tab(row)
 	for i in player.weapon.slots.size():
 		var d: Dictionary = player.weapon.slots[i].def
 		var card := PanelContainer.new()

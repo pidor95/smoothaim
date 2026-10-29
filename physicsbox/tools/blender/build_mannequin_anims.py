@@ -20,7 +20,9 @@ Clips:
   choke_stand, choke_knees, choke_fall,      - neck shot: hands on the throat, gasping,
   choke_floor                                  then down on the floor rolling about
   hands_up, kneel_hands_head                 - obeying the player's orders
-  suicide_r                                  - pistol to the temple (head + right arm)
+  pistol_ready, pistol_aim, suicide_r        - pistol in the right hand: held ready,
+                                               aiming, to the temple (arm + head only)
+  choke_roll_l/r                             - neck shot: a full roll over on the floor
   getup_back, getup_front                    - standing up from the floor
 """
 import math
@@ -374,6 +376,25 @@ def chokes(arm):
         c.pose(round(i / n * 120), rots, loc)
     c.finish()
 
+    # a full roll over along the floor, either way (the game strings these
+    # and the writhing together at random; the sideways travel is root motion)
+    for name, sgn in (("choke_roll_l", 1), ("choke_roll_r", -1)):
+        c = Clip(arm, name)
+        n = 24
+        for i in range(n + 1):
+            t = i / n
+            roll = sgn * 360 * t * t * (3 - 2 * t)
+            k = math.sin(t * 2 * math.pi)
+            rots = _add(CLUTCH_NECK, {
+                "chest": (-22 - 8 * abs(k), 0, 0), "head": (-10 + 12 * abs(k), 0, 0),
+                "thigh_l": (62 + 20 * k, 0, -8), "shin_l": (-95 - 15 * k, 0, 0),
+                "thigh_r": (62 - 20 * k, 0, 8), "shin_r": (-95 + 15 * k, 0, 0)})
+            rots["pelvis"] = lying(roll)
+            r = math.radians(roll)
+            lift = 0.075 * abs(math.sin(r)) + 0.05 * max(0.0, -math.cos(r))
+            c.pose(round(t * 54), rots, (-r * 0.17, -0.8 + lift, 0))
+        c.finish()
+
 
 def lying(roll, tilt=88):
     """Pelvis rotation of a body lying on its back (head towards +Z) and
@@ -421,7 +442,7 @@ def orders(arm):
     c.finish()
 
 
-# ---------------------------------------------------------------- suicide
+# ---------------------------------------------------------------- pistol
 
 HEADS = {b[0]: Vector(b[1]) for b in BONES}
 PARENTS = {b[0]: b[3] for b in BONES}
@@ -459,14 +480,14 @@ def fk_dir(rots, bone, d):
     return v
 
 
-def solve_gun_to_temple(head_rot):
-    """Searches the right arm angles that press the pistol's muzzle against
-    the right temple, barrel pointing into the head."""
+def solve_gun(label, head_rot, want, into, natural=0.0):
+    """Searches the right arm angles that put the pistol's muzzle at `want`
+    with the barrel along `into` (NPC frame). `natural` pulls the elbow
+    down to the side, for relaxed holds."""
     import random
     random.seed(7)
-    temple = fk({"head": head_rot}, "head", (0.122, 1.72, -0.01))
-    into = -fk_dir({"head": head_rot}, "head", (1, 0, 0.12)).normalized()
-    want = temple - into * 0.012
+    into = Vector(into).normalized()
+    want = Vector(want)
     lim = [(-40, 160), (-90, 90), (-20, 175), (0, 150), (-180, 180), (-90, 90)]
 
     def rots_of(x):
@@ -484,6 +505,7 @@ def solve_gun_to_temple(head_rot):
         c += 8.0 * max(0.0, elbow.y - 1.7) ** 2
         c += 60 * max(0.0, 0.2 - elbow.x) ** 2
         c += 60 * max(0.0, 0.17 - (hand - HEADS["head"] - Vector((0, 0.14, 0))).length) ** 2
+        c += natural * ((elbow - Vector((0.29, 1.2, 0.02))).length_squared + 0.0001 * sum(v * v for v in x))
         return c
 
     best, best_c = None, 1e9
@@ -505,20 +527,31 @@ def solve_gun_to_temple(head_rot):
         if not moved:
             step *= 0.5
     r = rots_of(best)
-    print("suicide arm", [round(v, 1) for v in best], "muzzle error %.3f m" % (fk(r, "farm_r", GUN_MUZZLE) - want).length,
+    print(label, [round(v, 1) for v in best], "muzzle error %.3f m" % (fk(r, "farm_r", GUN_MUZZLE) - want).length,
           "barrel dot %.2f" % fk_dir(r, "farm_r", GUN_BARREL).dot(into))
     return r
 
 
-def suicide(arm):
-    """Pistol to the right temple: a pose for the head and the right arm only,
-    laid over whatever the body is doing (standing, kneeling, choking)."""
-    head = (-8, 10, 12)
-    r = solve_gun_to_temple(head)
-    c = Clip(arm, "suicide_r")
-    c.pose(0, r)
-    c.pose(1, r)
+def single_pose(arm, name, rots):
+    c = Clip(arm, name)
+    c.pose(0, rots)
+    c.pose(1, rots)
     c.finish()
+
+
+def pistol_poses(arm):
+    """Right arm + head poses for the NPC's pistol, laid over whatever the
+    body is doing:
+      pistol_ready - held in front at the hip, muzzle to the floor ahead
+      pistol_aim   - arm out, aiming straight ahead at shoulder height
+      suicide_r    - muzzle pressed to the right temple"""
+    single_pose(arm, "pistol_ready", solve_gun("ready", (0, 0, 0), (0.16, 0.98, -0.38), (-0.04, -0.62, -1), 8.0))
+    aim = solve_gun("aim", (0, 0, 0), (0.08, 1.43, -0.74), (0, 0, -1))
+    single_pose(arm, "pistol_aim", aim)
+    head = (-8, 10, 12)
+    temple = fk({"head": head}, "head", (0.122, 1.72, -0.01))
+    into = -fk_dir({"head": head}, "head", (1, 0, 0.12)).normalized()
+    single_pose(arm, "suicide_r", solve_gun("suicide", head, temple - into * 0.012, into))
 
 
 # ---------------------------------------------------------------- get up
@@ -567,7 +600,7 @@ def main():
     clutches(arm)
     chokes(arm)
     orders(arm)
-    suicide(arm)
+    pistol_poses(arm)
     getups(arm)
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     bpy.ops.export_scene.gltf(filepath=OUT, export_format="GLB", export_yup=True, export_animations=True,

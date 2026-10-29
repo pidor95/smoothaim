@@ -214,7 +214,7 @@ func weapon_name() -> String:
 
 ## Trigger pull (one shot per press; the shotgun also needs its pump cycle).
 func trigger() -> void:
-	if reloading or _cooldown > 0.0:
+	if reloading or _cooldown > 0.0 or player.dead:
 		return
 	var d := current.def
 	if current.ammo <= 0:
@@ -458,7 +458,7 @@ func _process(frame_delta: float) -> void:
 			current.ammo = d.capacity if d.pellets > 1 or current.ammo > 0 else d.capacity - 1
 			ammo_changed.emit(current.ammo, d.capacity)
 
-	if not player.touch_mode and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+	if not player.touch_mode and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and not player.dead:
 		if Input.is_action_just_pressed("fire"):
 			trigger()
 		if Input.is_action_just_pressed("reload"):
