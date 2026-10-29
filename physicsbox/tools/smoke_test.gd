@@ -13,6 +13,7 @@ var _knocked_seen := false
 
 
 func _initialize() -> void:
+	root.get_node("Settings").level = "house"
 	change_scene_to_file("res://scenes/game.tscn")
 
 
@@ -55,6 +56,7 @@ func _process(_delta: float) -> bool:
 		p.touch_mode = true
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 		Npc.ai_enabled = false
+		game.auto_spawn = false
 		for n in get_nodes_in_group("npcs"):
 			n.queue_free()
 		p.global_position = Vector3(-4.0, 0.05, -4.5)

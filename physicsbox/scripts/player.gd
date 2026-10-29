@@ -33,6 +33,17 @@ var hurt_flash := 0.0 # 1 on a hit, fades (HUD red vignette)
 var _dead_t := 0.0
 var _regen_wait := 0.0
 
+## Grenades and FPV drones carried; one more comes back every so often.
+const MAX_GRENADES := 4
+const MAX_DRONES := 2
+var grenades := MAX_GRENADES
+var drones := MAX_DRONES
+var piloting: FpvDrone # flying a drone through its camera
+var signal_lost := 0.0 # HUD static after the drone is gone
+var shake := 0.0
+var _grenade_regen := 0.0
+var _drone_regen := 0.0
+
 
 func _ready() -> void:
 	add_to_group("player")
@@ -87,8 +98,11 @@ func capture_mouse() -> void:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
-## Rotate the view by a screen-space delta in pixels.
+## Rotate the view by a screen-space delta in pixels (or steer the drone).
 func look(delta_px: Vector2, scale := 1.0) -> void:
+	if piloting:
+		piloting.look_input(delta_px * scale)
+		return
 	var s := 0.13 * Settings.sensitivity * scale * lerpf(1.0, 0.55, weapon.aim_t)
 	yaw -= deg_to_rad(delta_px.x * s)
 	pitch = clampf(pitch - deg_to_rad(delta_px.y * s), deg_to_rad(-88), deg_to_rad(88))
@@ -130,6 +144,51 @@ func take_damage(amount: float, dir: Vector3) -> void:
 		dead = true
 		_dead_t = RESPAWN_TIME
 		weapon.visible = false
+		if piloting:
+			piloting.detonate()
+
+
+func add_shake(amount: float) -> void:
+	shake = maxf(shake, amount)
+
+
+## Pulls the pin and lobs a grenade where he looks.
+func throw_grenade() -> void:
+	if grenades <= 0 or dead or piloting:
+		return
+	grenades -= 1
+	var b := camera.global_basis
+	var from := camera.global_position - b.z * 0.4 + b.x * 0.15 - b.y * 0.1
+	Grenade.throw(get_tree(), from, -b.z * 13.0 + Vector3.UP * 2.5 + velocity, true)
+	Sfx.play("ui_click", -8.0)
+
+
+## Sends an FPV drone up from his position and flies it through its camera.
+func launch_drone() -> void:
+	if piloting:
+		piloting.detonate()
+		return
+	if drones <= 0 or dead:
+		return
+	drones -= 1
+	var d := FpvDrone.new()
+	d.team = 0
+	d.pilot = self
+	d.add_collision_exception_with(self)
+	get_tree().current_scene.add_child(d)
+	d.global_position = camera.global_position + Vector3.UP * 0.4 - Basis(Vector3.UP, yaw).z * 0.8
+	d.rotation.y = yaw
+	d._yaw = yaw
+	piloting = d
+	touch_move = Vector2.ZERO
+
+
+## The drone went off (or its battery died): back to his own eyes.
+func drone_lost(d: FpvDrone) -> void:
+	if piloting == d:
+		piloting = null
+		camera.current = true
+		signal_lost = 0.7
 
 
 func _respawn() -> void:
@@ -146,6 +205,21 @@ func _respawn() -> void:
 
 func _physics_process(delta: float) -> void:
 	hurt_flash = maxf(hurt_flash - delta * 1.6, 0.0)
+	signal_lost = maxf(signal_lost - delta, 0.0)
+	shake = maxf(shake - delta * 1.1, 0.0)
+	_grenade_regen += delta
+	if _grenade_regen > 20.0:
+		_grenade_regen = 0.0
+		grenades = mini(grenades + 1, MAX_GRENADES)
+	_drone_regen += delta
+	if _drone_regen > 40.0:
+		_drone_regen = 0.0
+		drones = mini(drones + 1, MAX_DRONES)
+	if not touch_mode and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		if Input.is_action_just_pressed("grenade"):
+			throw_grenade()
+		if Input.is_action_just_pressed("drone"):
+			launch_drone()
 	if dead:
 		# down on the floor; back at the start after a moment
 		_dead_t -= delta
@@ -165,6 +239,9 @@ func _physics_process(delta: float) -> void:
 		if Input.is_action_just_pressed("jump"):
 			jump_queued = true
 	input = input.limit_length(1.0)
+	if piloting:
+		input = Vector2.ZERO # the sticks fly the drone
+		jump_queued = false
 
 	rotation.y = yaw
 	var wish := (Basis(Vector3.UP, yaw) * Vector3(input.x, 0.0, input.y))
@@ -188,7 +265,8 @@ func _physics_process(delta: float) -> void:
 	camera.fov = lerpf(Settings.fov, Settings.fov * weapon.current.def.ads_fov, smoothstep(0.0, 1.0, weapon.aim_t))
 	# camera recoil recovers over time; it never changes where you aim permanently
 	_recoil = _recoil.lerp(Vector2.ZERO, clampf(delta * 9.0, 0.0, 1.0))
-	head.rotation = Vector3(pitch + _recoil.x, _recoil.y, 0.0)
+	var sh := shake * shake * 0.07
+	head.rotation = Vector3(pitch + _recoil.x + randf_range(-sh, sh), _recoil.y + randf_range(-sh, sh), randf_range(-sh, sh) * 0.5)
 
 	if global_position.y < -30.0:
 		global_transform = _spawn

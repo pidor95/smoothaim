@@ -214,6 +214,9 @@ func weapon_name() -> String:
 
 ## Trigger pull (one shot per press; the shotgun also needs its pump cycle).
 func trigger() -> void:
+	if player.piloting:
+		player.piloting.detonate()
+		return
 	if reloading or _cooldown > 0.0 or player.dead:
 		return
 	var d := current.def
@@ -312,6 +315,7 @@ func _shoot() -> void:
 					var part: String = collider.get_meta("part")
 					var fx := 1.0 if d.pellets == 1 else 0.45
 					var impulse: float = d.impulse * (1.0 if not npc.dead else 0.7) * falloff
+					npc.last_hit_by_player = true
 					var kind: int = npc.take_hit(collider, pos, normal, dir, d.damage.get(part, 10.0) * falloff, impulse, fx)
 					best_kind = maxi(best_kind, kind)
 					if not part_hits.has(npc):
@@ -320,6 +324,9 @@ func _shoot() -> void:
 					e[0] += 1
 					part_hits[npc][part] = e
 					cost = FLESH_COST.get(part, 0.8)
+			elif collider.has_meta("drone"):
+				collider.take_bullet(pos, dir, 0.0)
+				best_kind = maxi(best_kind, 0)
 			elif collider.get_meta("surface", "") == "glass" and collider.has_method("shatter"):
 				collider.shatter(pos, dir)
 				cost = 0.05
@@ -389,6 +396,8 @@ func _impact(collider: Object, pos: Vector3, normal: Vector3, dir: Vector3, surf
 		"soft":
 			snd = "wood_hit"
 			col = Color(0.8, 0.8, 0.8)
+		"dirt":
+			col = Color(0.36, 0.28, 0.2)
 		"flesh":
 			snd = ""
 			col = Color(0.5, 0.02, 0.03)

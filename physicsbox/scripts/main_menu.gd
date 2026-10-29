@@ -94,7 +94,6 @@ func _build_stage() -> void:
 func _spawn_dummy() -> void:
 	dummy = Npc.new()
 	dummy.display_only = true
-	dummy.outfit_index = 5
 	dummy.position = Vector3(1.6, 0, 0)
 	dummy.rotation.y = PI * 0.92
 	add_child(dummy)
@@ -184,7 +183,8 @@ func _build_ui() -> void:
 	_play_box.add_theme_constant_override("separation", 12)
 	col.add_child(_play_box)
 	_play_box.add_child(UiKit.label("ВЫБОР ЛОКАЦИИ", 34, Color(1, 0.25, 0.2)))
-	for loc in [["ДОМ", "house", "Пять комнат, двор и крыша. Двери, окна и мебель — на физике."],
+	for loc in [["ОКОПЫ", "trenches", "Фронт: две линии траншей и нейтральная полоса. Витязь против ополчения, гранаты, FPV-дроны."],
+			["ДОМ", "house", "Пять комнат, двор и крыша. Двери, окна и мебель — на физике."],
 			["МАГАЗИН", "shop", "Супермаркет: ряды полок с товарами, кассы, холодильники, тележки, склад."]]:
 		var b := UiKit.button(loc[0], _start_level.bind(loc[1]), 480)
 		b.custom_minimum_size.y = 74

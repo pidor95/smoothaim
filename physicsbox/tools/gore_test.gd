@@ -14,6 +14,7 @@ var c: Npc
 
 
 func _initialize() -> void:
+	root.get_node("Settings").level = "house"
 	change_scene_to_file("res://scenes/game.tscn")
 
 

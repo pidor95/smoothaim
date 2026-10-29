@@ -1,9 +1,12 @@
 extends Node3D
-## Level controller: environment, house, player, HUD, NPC spawning,
-## the player's orders, slow motion and the pause menu.
+## Level controller: environment, level, player, HUD, the war (two teams of
+## soldiers with tickets and reinforcements), the player's orders, slow
+## motion and the pause menu.
 
-const MAX_BODIES := 10
-const TARGET_ALIVE := 4
+const MAX_BODIES := 14
+## Soldiers on the field per side, and each side's tickets (lives).
+const TEAM_ALIVE := 6
+const TICKETS := 40
 
 var house: House
 var player: Player
@@ -12,33 +15,25 @@ var sun := DirectionalLight3D.new()
 var kills := 0
 var slowmo := false
 var auto_spawn := true
+var tickets := [TICKETS, TICKETS]
+var winner := -1 # side that won the round, while the banner shows
+var _round_end_t := 0.0
+var _reinforce_t := [2.0, 2.0]
+var _drone_t := randf_range(25.0, 45.0)
+var _team_points: Array = [[], []] # [team] -> reinforcement points
 
 var _bodies: Array[Npc] = []
-var _spawn_timer := 4.0
 var _pause_layer := CanvasLayer.new()
 var _pause_panel: Control
 var _slowmo_button: Button
 var _auto_button: Button
 var _ai_button: Button
-var _guns_button: Button
 var _weapon_layer := CanvasLayer.new()
 var _weapon_panel: Control
 var _weapon_cards: Array = [] # [button, slot index]
 var _weapon_tabs: Array = [] # [tab button, page]
 var _immortal_button: Button
-var _xray_button: Button
 var weapon_menu_open := false
-var _npc_layer := CanvasLayer.new()
-var _npc_panel: Control
-var _npc_cards: Array = [] # [button, kind]
-var npc_menu_open := false
-
-## NPC menu cards: [kind, title, description].
-const NPC_KINDS := [
-	[Npc.SpawnKind.UNARMED, "БЕЗ ОРУЖИЯ", "Безоружные манекены.\nБродят, в панике убегают,\nслушаются приказов."],
-	[Npc.SpawnKind.ARMED, "С ПИСТОЛЕТОМ", "У каждого Colt M1911.\nВ безвыходном положении\nможет застрелиться."],
-	[Npc.SpawnKind.MIXED, "ВПЕРЕМЕШКУ", "Примерно каждый третий\nс пистолетом,\nостальные без оружия."],
-]
 
 
 func _ready() -> void:
@@ -49,7 +44,13 @@ func _ready() -> void:
 	AudioServer.playback_speed_scale = 1.0
 	_build_environment()
 
-	house = ShopLevel.new() if Settings.level == "shop" else House.new()
+	match Settings.level:
+		"shop":
+			house = ShopLevel.new()
+		"house":
+			house = House.new()
+		_:
+			house = TrenchLevel.new()
 	add_child(house)
 
 	player = Player.new()
@@ -64,14 +65,15 @@ func _ready() -> void:
 	hud_layer.add_child(hud)
 	_build_pause_menu()
 	_build_weapon_menu()
-	_build_npc_menu()
 	player.capture_mouse()
+	_setup_teams()
 
-	# let the navigation map sync before NPCs start pathing
+	# let the navigation map sync before soldiers start pathing
 	await get_tree().physics_frame
 	await get_tree().physics_frame
-	for i in TARGET_ALIVE:
-		spawn_npc(house.npc_spawns[i])
+	for t in 2:
+		for i in TEAM_ALIVE:
+			spawn_soldier(t)
 
 
 func _build_environment() -> void:
@@ -102,13 +104,29 @@ func _build_environment() -> void:
 	env.fog_light_color = Color(0.72, 0.77, 0.83)
 	env.fog_density = 0.0018
 	env.fog_sky_affect = 0.0
+	sun.rotation_degrees = Vector3(-52, -38, 0)
+	sun.light_energy = 1.5
+	sun.light_color = Color(1.0, 0.97, 0.92)
+	if Settings.level == "trenches":
+		# overcast autumn front: low brown-grey sky, haze, weak sun
+		sm.sky_top_color = Color(0.36, 0.35, 0.34)
+		sm.sky_horizon_color = Color(0.62, 0.58, 0.53)
+		sm.ground_horizon_color = Color(0.62, 0.58, 0.53)
+		sm.ground_bottom_color = Color(0.25, 0.22, 0.2)
+		sm.sky_cover_modulate = Color(0.55, 0.53, 0.52, 1.0)
+		sm.sun_angle_max = 40.0
+		env.ambient_light_energy = 0.6
+		env.ambient_light_sky_contribution = 0.6
+		env.fog_light_color = Color(0.44, 0.42, 0.4)
+		env.fog_density = 0.016
+		env.tonemap_exposure = 0.92
+		sun.rotation_degrees = Vector3(-30, -150, 0)
+		sun.light_energy = 0.6
+		sun.light_color = Color(1.0, 0.9, 0.78)
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
 
-	sun.rotation_degrees = Vector3(-52, -38, 0)
-	sun.light_energy = 1.5
-	sun.light_color = Color(1.0, 0.97, 0.92)
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.directional_shadow_max_distance = 45.0
 	sun.shadow_blur = 1.5
@@ -122,19 +140,66 @@ func on_settings_changed() -> void:
 
 # ------------------------------------------------------------------ NPCs
 
-## `armed`: -1 = as chosen in the NPC menu, 0 / 1 = force.
-func spawn_npc(pos: Vector3, armed := -1) -> Npc:
+## Reinforcement points and firing posts per side. The trench map has its
+## own; other levels split their spawn points by distance from the player.
+func _setup_teams() -> void:
+	if house is TrenchLevel:
+		_team_points = (house as TrenchLevel).team_spawns
+		Npc.war_posts = (house as TrenchLevel).team_posts
+		return
+	var pts: Array[Vector3] = house.npc_spawns.duplicate()
+	pts.sort_custom(func(a, b): return a.distance_to(house.player_spawn.origin) < b.distance_to(house.player_spawn.origin))
+	var half := pts.size() / 2
+	_team_points = [pts.slice(0, half), pts.slice(half)]
+	Npc.war_posts = _team_points
+
+
+## A soldier of `team` at a reinforcement point: some hold their own line,
+## the rest go over the top for the enemy's.
+## `assault`: -1 = by chance, 0 / 1 = force.
+func spawn_soldier(team: int, assault_mode := -1) -> Npc:
+	var pts: Array = _team_points[team]
+	var npc := spawn_npc(pts[randi() % pts.size()] + Vector3(randf_range(-0.4, 0.4), 0, randf_range(-0.4, 0.4)), team)
+	var assault := randf() < (0.45 if team == 0 else 0.6) if assault_mode < 0 else assault_mode == 1
+	npc.role = "assault" if assault else "hold"
+	var posts: Array = Npc.war_posts[1 - team if assault else team]
+	if not posts.is_empty():
+		npc.post = posts[randi() % posts.size()]
+	return npc
+
+
+## The enemy sends an FPV drone from behind his lines after the player or
+## one of the player's side.
+func send_enemy_drone() -> FpvDrone:
+	var targets: Array[Node3D] = []
+	if not player.dead:
+		targets += [player, player]
+	for n in get_tree().get_nodes_in_group("npcs"):
+		if n.team == 0 and n.is_combatant():
+			targets.append(n)
+	if targets.is_empty() or _team_points[1].is_empty():
+		return null
+	var d := FpvDrone.new()
+	d.team = 1
+	d.target = targets[randi() % targets.size()]
+	add_child(d)
+	d.global_position = _team_points[1][randi() % _team_points[1].size()] + Vector3.UP * 12.0
+	return d
+
+
+func spawn_npc(pos: Vector3, team := 1) -> Npc:
 	var npc := Npc.new()
+	npc.team = team
 	npc.position = pos
-	npc.rotation.y = randf() * TAU
-	npc.armed = Npc.roll_armed() if armed < 0 else armed == 1
+	npc.rotation.y = 0.0 if team == 0 else PI
 	add_child(npc)
 	npc.died.connect(_on_npc_died)
 	return npc
 
 
-## Spawns a mannequin a few metres in front of the player (snapped to the navmesh).
-func spawn_in_front(armed := -1) -> void:
+## Spawns an enemy soldier a few metres in front of the player (snapped to
+## the navmesh); he holds that spot.
+func spawn_in_front() -> void:
 	var cam := player.camera
 	var fwd := -cam.global_basis.z
 	fwd.y = 0.0
@@ -150,23 +215,29 @@ func spawn_in_front(armed := -1) -> void:
 	var p := NavigationServer3D.map_get_closest_point(map, target)
 	if p == Vector3.ZERO or p.distance_to(target) > 3.0:
 		p = target
-	var npc := spawn_npc(p + Vector3.UP * 0.05, armed)
+	var npc := spawn_npc(p + Vector3.UP * 0.05, 1)
+	npc.post = npc.position
 	var to_player := player.global_position - npc.global_position
 	npc.rotation.y = atan2(-to_player.x, -to_player.z)
 	Sfx.play("ui_click")
 
 
-func _alive_count() -> int:
+func _alive(team: int) -> int:
 	var n := 0
 	for npc in get_tree().get_nodes_in_group("npcs"):
-		if not npc.dead:
+		if not npc.dead and npc.team == team:
 			n += 1
 	return n
 
 
 func _on_npc_died(npc: Npc, _headshot: bool) -> void:
-	if not npc.suicided:
+	if npc.last_hit_by_player and npc.team == 1 and not npc.suicided:
 		kills += 1
+	if winner < 0:
+		tickets[npc.team] = maxi(tickets[npc.team] - 1, 0)
+		if tickets[npc.team] == 0:
+			winner = 1 - npc.team
+			_round_end_t = 8.0
 	_bodies.append(npc)
 	while _bodies.size() > MAX_BODIES:
 		var old: Npc = _bodies.pop_front()
@@ -227,20 +298,29 @@ func _order_targets() -> Array[Npc]:
 
 
 func _physics_process(delta: float) -> void:
-	_spawn_timer -= delta
-	if auto_spawn and _spawn_timer <= 0.0:
-		_spawn_timer = 5.0
-		if _alive_count() < TARGET_ALIVE:
-			var options: Array[Vector3] = []
-			for p in house.npc_spawns:
-				if p.distance_to(player.global_position) > 9.0:
-					options.append(p)
-			if not options.is_empty():
-				spawn_npc(options[randi() % options.size()])
+	if winner >= 0:
+		_round_end_t -= delta
+		if _round_end_t <= 0.0:
+			# next round: fresh tickets, the fight goes on
+			winner = -1
+			tickets = [TICKETS, TICKETS]
+		return
+	if not auto_spawn:
+		return
+	_drone_t -= delta
+	if _drone_t <= 0.0:
+		_drone_t = randf_range(35.0, 70.0)
+		send_enemy_drone()
+	for t in 2:
+		_reinforce_t[t] -= delta
+		if _reinforce_t[t] <= 0.0:
+			_reinforce_t[t] = randf_range(2.5, 5.0)
+			if _alive(t) < TEAM_ALIVE and tickets[t] > _alive(t):
+				spawn_soldier(t)
 
 
 func _process(_delta: float) -> void:
-	hud.set_stats(kills, _alive_count(), slowmo)
+	hud.set_stats(kills, tickets, winner, slowmo)
 	if not player.touch_mode:
 		if Input.is_action_just_pressed("spawn_npc"):
 			spawn_in_front()
@@ -250,8 +330,6 @@ func _process(_delta: float) -> void:
 			toggle_ai()
 		if Input.is_action_just_pressed("weapon_menu"):
 			toggle_weapon_menu()
-		if Input.is_action_just_pressed("npc_menu"):
-			toggle_npc_menu()
 		for i in Npc.ORDERS.size():
 			if Input.is_action_just_pressed("order_%d" % (i + 1)):
 				give_order(i)
@@ -261,7 +339,7 @@ func _process(_delta: float) -> void:
 func toggle_ai() -> void:
 	Npc.ai_enabled = not Npc.ai_enabled
 	if _ai_button:
-		_ai_button.text = "ИИ манекенов: ВКЛ" if Npc.ai_enabled else "ИИ манекенов: ВЫКЛ"
+		_ai_button.text = "ИИ солдат: ВКЛ" if Npc.ai_enabled else "ИИ солдат: ВЫКЛ"
 
 
 func toggle_slowmo() -> void:
@@ -285,15 +363,10 @@ class PauseWatcher extends Node:
 		elif event.is_action_pressed("weapon_menu") and game.weapon_menu_open:
 			game.toggle_weapon_menu()
 			get_viewport().set_input_as_handled()
-		elif event.is_action_pressed("npc_menu") and game.npc_menu_open:
-			game.toggle_npc_menu()
-			get_viewport().set_input_as_handled()
 
 	func _back() -> void:
 		if game.weapon_menu_open:
 			game.toggle_weapon_menu()
-		elif game.npc_menu_open:
-			game.toggle_npc_menu()
 		else:
 			game.toggle_pause()
 
@@ -350,22 +423,19 @@ func _build_pause_menu() -> void:
 	left.add_child(UiKit.button("Оружие", func():
 		toggle_pause()
 		toggle_weapon_menu()))
-	left.add_child(UiKit.button("+1 манекен", func(): spawn_in_front()))
-	left.add_child(UiKit.button("+5 манекенов", func():
-		for i in 5:
-			spawn_npc(house.npc_spawns[randi() % house.npc_spawns.size()])))
+	left.add_child(UiKit.button("+1 враг перед собой", func(): spawn_in_front()))
+	left.add_child(UiKit.button("+3 врага в атаку", func():
+		for i in 3:
+			spawn_soldier(1, 1)))
 	left.add_child(UiKit.button("Убрать тела и кровь", clear_bodies))
 	_slowmo_button = UiKit.button("Замедление: ВЫКЛ", toggle_slowmo)
 	left.add_child(_slowmo_button)
-	_auto_button = UiKit.button("Авто-спавн: ВКЛ", func():
+	_auto_button = UiKit.button("Подкрепления: ВКЛ", func():
 		auto_spawn = not auto_spawn
-		_auto_button.text = "Авто-спавн: ВКЛ" if auto_spawn else "Авто-спавн: ВЫКЛ")
+		_auto_button.text = "Подкрепления: ВКЛ" if auto_spawn else "Подкрепления: ВЫКЛ")
 	left.add_child(_auto_button)
-	_ai_button = UiKit.button("ИИ манекенов: ВКЛ" if Npc.ai_enabled else "ИИ манекенов: ВЫКЛ", toggle_ai)
+	_ai_button = UiKit.button("ИИ солдат: ВКЛ" if Npc.ai_enabled else "ИИ солдат: ВЫКЛ", toggle_ai)
 	left.add_child(_ai_button)
-	left.add_child(UiKit.button("Выбор манекенов", func():
-		toggle_pause()
-		toggle_npc_menu()))
 	left.add_child(UiKit.button("Главное меню", _to_menu))
 	for b in left.get_children():
 		if b is Button:
@@ -414,7 +484,6 @@ func _show_weapon_tab(page: Control) -> void:
 
 func _refresh_weapon_cards() -> void:
 	_immortal_button.text = "БЕССМЕРТИЕ: " + ("ВКЛ" if Player.immortal else "ВЫКЛ")
-	_xray_button.text = "РЕНТГЕН: " + ("ВКЛ" if Npc.xray else "ВЫКЛ")
 	for c in _weapon_cards:
 		var b: Button = c[0]
 		var held: bool = player.weapon.slots[c[1]] == player.weapon.current
@@ -455,13 +524,7 @@ func _build_weapon_menu() -> void:
 		Player.immortal = not Player.immortal
 		_refresh_weapon_cards())
 	col.add_child(immortal_page)
-	var xray_page := _toggle_page("Манекены просвечиваются: видно скелет, сердце\nи каждый раневой канал (красные линии по ходу пули).\nЧасти тела светятся от синего к оранжевому по урону.")
-	_xray_button = xray_page.get_child(1)
-	_xray_button.pressed.connect(func():
-		Npc.set_xray(not Npc.xray, get_tree())
-		_refresh_weapon_cards())
-	col.add_child(xray_page)
-	for t in [["ОРУЖИЕ", row], ["БЕССМЕРТИЕ", immortal_page], ["РЕНТГЕН ПОВРЕЖДЕНИЙ", xray_page]]:
+	for t in [["ОРУЖИЕ", row], ["БЕССМЕРТИЕ", immortal_page]]:
 		var page: Control = t[1]
 		var tb := UiKit.button(t[0], func(): _show_weapon_tab(page), 250)
 		tb.toggle_mode = true
@@ -492,78 +555,6 @@ func _build_weapon_menu() -> void:
 		v.add_child(b)
 		_weapon_cards.append([b, i])
 	var close := UiKit.button("ЗАКРЫТЬ", toggle_weapon_menu, 300)
-	close.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	col.add_child(close)
-	root.visible = false
-
-
-# ------------------------------------------------------------------ NPC menu
-
-func toggle_npc_menu() -> void:
-	npc_menu_open = not npc_menu_open
-	get_tree().paused = npc_menu_open
-	_npc_panel.visible = npc_menu_open
-	hud.reset_touches()
-	if npc_menu_open:
-		_refresh_npc_cards()
-		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	else:
-		player.capture_mouse()
-
-
-func _refresh_npc_cards() -> void:
-	for c in _npc_cards:
-		var b: Button = c[0]
-		var chosen: bool = c[1] == Npc.spawn_kind
-		b.text = "ВЫБРАНО" if chosen else "ВЫБРАТЬ"
-		b.disabled = chosen
-
-
-func _build_npc_menu() -> void:
-	_npc_layer.layer = 11
-	_npc_layer.process_mode = Node.PROCESS_MODE_ALWAYS
-	add_child(_npc_layer)
-	var root := Control.new()
-	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.theme = UiKit.make_theme()
-	_npc_layer.add_child(root)
-	_npc_panel = root
-	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.6)
-	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.add_child(dim)
-	var center := CenterContainer.new()
-	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.add_child(center)
-	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 16)
-	center.add_child(col)
-	col.add_child(UiKit.label("МАНЕКЕНЫ", 44, Color(1, 0.2, 0.2)))
-	col.add_child(UiKit.label("Кто появляется: кнопка «+», авто-спавн, «+5»", 20, Color(0.75, 0.75, 0.75)))
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 20)
-	col.add_child(row)
-	for k in NPC_KINDS:
-		var kind: int = k[0]
-		var card := PanelContainer.new()
-		row.add_child(card)
-		var v := VBoxContainer.new()
-		v.add_theme_constant_override("separation", 8)
-		card.add_child(v)
-		v.add_child(UiKit.label(k[1], 32, Color(1, 1, 1)))
-		var desc := UiKit.label(k[2], 20, Color(0.75, 0.75, 0.75))
-		desc.custom_minimum_size.y = 90
-		v.add_child(desc)
-		var b := UiKit.button("ВЫБРАТЬ", func():
-			Npc.spawn_kind = kind
-			_refresh_npc_cards(), 300)
-		v.add_child(b)
-		_npc_cards.append([b, kind])
-		if kind != Npc.SpawnKind.MIXED:
-			v.add_child(UiKit.button("+1 СЕЙЧАС", func():
-				toggle_npc_menu()
-				spawn_in_front(1 if kind == Npc.SpawnKind.ARMED else 0), 300))
-	var close := UiKit.button("ЗАКРЫТЬ", toggle_npc_menu, 300)
 	close.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	col.add_child(close)
 	root.visible = false

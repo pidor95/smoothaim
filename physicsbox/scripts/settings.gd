@@ -11,7 +11,7 @@ var blood_amount := 1.0
 var volume := 0.8
 var show_fps := false
 ## Level chosen in the main menu ("house" / "shop"); not saved.
-var level := "house"
+var level := "trenches"
 
 
 func _ready() -> void:
@@ -70,7 +70,8 @@ func _setup_input() -> void:
 	_key_action("weapon_next", [KEY_F])
 	_key_action("toggle_ai", [KEY_T])
 	_key_action("weapon_menu", [KEY_B, KEY_TAB])
-	_key_action("npc_menu", [KEY_N])
+	_key_action("grenade", [KEY_G])
+	_key_action("drone", [KEY_V])
 	for i in 7: # orders on 3..9, then 0
 		_key_action("order_%d" % (i + 1), [KEY_3 + i])
 	_key_action("order_8", [KEY_0])

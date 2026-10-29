@@ -22,7 +22,9 @@ Clips:
   hands_up, kneel_hands_head                 - obeying the player's orders
   pistol_ready, pistol_aim, suicide_r        - pistol in the right hand: held ready,
                                                aiming, to the temple (arm + head only)
+  rifle_ready, rifle_aim                     - rifle in both hands (arms + head)
   choke_roll_l/r                             - neck shot: a full roll over on the floor
+  down_floor, down_roll_l/r                  - badly wounded, hands on the belly, on the floor
   getup_back, getup_front                    - standing up from the floor
 """
 import math
@@ -363,29 +365,37 @@ def chokes(arm):
     c.pose(17, dict(_add(CLUTCH_NECK, {"chest": (-12, 0, 0), "head": (14, 0, 0), "thigh_l": (62, 0, -8),
                                        "thigh_r": (55, 0, 8), "shin_l": (-95, 0, 0), "shin_r": (-90, 0, 0)}),
                     pelvis=lying(95)), (-0.1, -0.73, 0))
-    floor = _floor_pose(0.0)
+    floor = _floor_pose(0.0, CLUTCH_NECK)
     c.pose(24, floor[0], floor[1])
     c.finish()
 
     # rolling about on the floor: onto one side, over the back onto the other,
     # knees drawn up and kicking, chest heaving, still clutching the throat
-    c = Clip(arm, "choke_floor")
+    floor_clips(arm, "choke", CLUTCH_NECK)
+
+
+CLUTCH_BELLY = {"uarm_l": (0, -30, 10), "farm_l": (80, 0, 0), "uarm_r": (0, 30, -10), "farm_r": (80, 0, 0)}
+
+
+def floor_clips(arm, prefix, hands):
+    """<prefix>_floor: writhing side to side; <prefix>_roll_l/r: a full roll
+    over along the floor, either way (the game strings them together at
+    random; the sideways travel is root motion). `hands`: where the hands
+    press (the throat for a neck wound, the belly for the badly wounded)."""
+    c = Clip(arm, prefix + "_floor")
     n = 16
     for i in range(n + 1):
-        rots, loc = _floor_pose(i / n * 2 * math.pi)
+        rots, loc = _floor_pose(i / n * 2 * math.pi, hands)
         c.pose(round(i / n * 120), rots, loc)
     c.finish()
-
-    # a full roll over along the floor, either way (the game strings these
-    # and the writhing together at random; the sideways travel is root motion)
-    for name, sgn in (("choke_roll_l", 1), ("choke_roll_r", -1)):
+    for name, sgn in ((prefix + "_roll_l", 1), (prefix + "_roll_r", -1)):
         c = Clip(arm, name)
         n = 24
         for i in range(n + 1):
             t = i / n
             roll = sgn * 360 * t * t * (3 - 2 * t)
             k = math.sin(t * 2 * math.pi)
-            rots = _add(CLUTCH_NECK, {
+            rots = _add(hands, {
                 "chest": (-22 - 8 * abs(k), 0, 0), "head": (-10 + 12 * abs(k), 0, 0),
                 "thigh_l": (62 + 20 * k, 0, -8), "shin_l": (-95 - 15 * k, 0, 0),
                 "thigh_r": (62 - 20 * k, 0, 8), "shin_r": (-95 + 15 * k, 0, 0)})
@@ -402,11 +412,11 @@ def lying(roll, tilt=88):
     return Matrix.Rotation(math.radians(roll), 3, "Z") @ grot((tilt, 0, 0))
 
 
-def _floor_pose(ph):
+def _floor_pose(ph, hands):
     roll = 92 * math.cos(ph) + 14 * math.sin(2 * ph)
     gasp = max(0.0, math.sin(ph * 3)) ** 3
     k = math.sin(2 * ph)
-    rots = _add(CLUTCH_NECK, {
+    rots = _add(hands, {
         "chest": (-18 - 12 * gasp + 6 * math.sin(ph * 4), 10 * math.sin(ph), 0),
         "head": (-6 + 22 * gasp, 14 * math.sin(ph + 0.5), 0),
         "thigh_l": (58 + 28 * k, 0, -8), "shin_l": (-88 - 26 * math.sin(2 * ph + 0.8), 0, 0),
@@ -480,24 +490,28 @@ def fk_dir(rots, bone, d):
     return v
 
 
-def solve_gun(label, head_rot, want, into, natural=0.0):
-    """Searches the right arm angles that put the pistol's muzzle at `want`
-    with the barrel along `into` (NPC frame). `natural` pulls the elbow
-    down to the side, for relaxed holds."""
+def solve_gun(label, head_rot, want, into, natural=0.0, point=None, barrel=None, top=None):
+    """Searches the right arm angles that put a point of the gun (farm_r
+    rest space; the pistol's muzzle by default) at `want` with the barrel
+    along `into` (NPC frame). `natural` pulls the elbow down to the side,
+    for relaxed holds."""
+    point = GUN_MUZZLE if point is None else point
+    barrel = GUN_BARREL if barrel is None else barrel
+    top = GUN_TOP if top is None else top
     import random
     random.seed(7)
     into = Vector(into).normalized()
     want = Vector(want)
-    lim = [(-40, 160), (-90, 90), (-20, 175), (0, 150), (-180, 180), (-90, 90)]
+    lim = [(-40, 170), (-90, 90), (-60, 175), (0, 150), (-180, 180), (-180, 180)]
 
     def rots_of(x):
         return {"head": head_rot, "uarm_r": (x[0], x[1], x[2]), "farm_r": (x[3], x[4], x[5])}
 
     def cost(x):
         r = rots_of(x)
-        m = fk(r, "farm_r", GUN_MUZZLE)
-        bd = fk_dir(r, "farm_r", GUN_BARREL)
-        up = fk_dir(r, "farm_r", GUN_TOP)
+        m = fk(r, "farm_r", point)
+        bd = fk_dir(r, "farm_r", barrel)
+        up = fk_dir(r, "farm_r", top)
         elbow = fk(r, "uarm_r", (0.265, 1.19, 0))
         hand = fk(r, "farm_r", HAND_R)
         c = 400 * (m - want).length_squared + 6 * (1 - bd.dot(into))
@@ -509,7 +523,7 @@ def solve_gun(label, head_rot, want, into, natural=0.0):
         return c
 
     best, best_c = None, 1e9
-    for _ in range(12000):
+    for _ in range(30000):
         x = [random.uniform(a, b) for a, b in lim]
         cc = cost(x)
         if cc < best_c:
@@ -527,8 +541,8 @@ def solve_gun(label, head_rot, want, into, natural=0.0):
         if not moved:
             step *= 0.5
     r = rots_of(best)
-    print(label, [round(v, 1) for v in best], "muzzle error %.3f m" % (fk(r, "farm_r", GUN_MUZZLE) - want).length,
-          "barrel dot %.2f" % fk_dir(r, "farm_r", GUN_BARREL).dot(into))
+    print(label, [round(v, 1) for v in best], "point error %.3f m" % (fk(r, "farm_r", point) - want).length,
+          "barrel dot %.2f" % fk_dir(r, "farm_r", barrel).dot(into))
     return r
 
 
@@ -537,6 +551,83 @@ def single_pose(arm, name, rots):
     c.pose(0, rots)
     c.pose(1, rots)
     c.finish()
+
+
+# The rifle's grip sits in the right hand, the wrist cocked so the forearm
+# runs from the grip down, back and out to the elbow (RIFLE_U, in the
+# rifle's frame). RIFLE_ATTACH turns rifle-frame vectors into farm_r rest
+# space; npc.gd uses the same basis (Npc.RIFLE_BASIS). Points in the rifle's
+# own frame (build_soldier_kit.py); the support hand holds the magazine well.
+RIFLE_U = Vector((0.45, -0.6, 0.62)).normalized()
+RIFLE_ATTACH = RIFLE_U.rotation_difference(Vector((0, 1, 0))).to_matrix()
+RIFLE_BUTT = Vector((0, 0.03, 0.31))
+RIFLE_SUPPORT = Vector((-0.03, 0.02, -0.13))
+SHOULDER_R = Vector((0.265, 1.47, 0))
+SHOULDER_L = Vector((-0.265, 1.47, 0))
+UPPER, FORE = 0.28, 0.34  # shoulder->elbow, elbow->hand centre
+
+
+def euler_deg(m):
+    e = m.to_euler("ZXY")  # Ry @ Rx @ Rz, as godot_rot builds it
+    return (math.degrees(e.x), math.degrees(e.y), math.degrees(e.z))
+
+
+def arm_from(shoulder, elbow, farm_world):
+    """Pose angles for an arm whose elbow sits at `elbow` and whose forearm
+    has the world rotation `farm_world`."""
+    u = Vector((0, -1, 0)).rotation_difference(elbow - shoulder).to_matrix()
+    return euler_deg(u), euler_deg(u.transposed() @ farm_world)
+
+
+def two_bone(shoulder, target, pole):
+    d = target - shoulder
+    dist = min(d.length, UPPER + FORE - 1e-4)
+    n = d.normalized()
+    cos_a = (UPPER * UPPER + dist * dist - FORE * FORE) / (2 * UPPER * dist)
+    sin_a = math.sqrt(max(0.0, 1 - cos_a * cos_a))
+    p = (pole - n * pole.dot(n)).normalized()
+    return shoulder + n * UPPER * cos_a + p * UPPER * sin_a
+
+
+def rifle_pose(name, head, orient, anchor, target):
+    """Right hand on the grip with the rifle turned to `orient` and its
+    `anchor` point on `target`; the rifle is canted / slid along the barrel
+    until the elbow lands at upper-arm length, then the left hand goes to
+    the magazine well by two-bone IK."""
+    best = None
+    for psi in range(-40, 41, 2):
+        for t in range(-12, 13):
+            rw = orient @ Matrix.Rotation(math.radians(psi), 3, "Z")
+            g = target - rw @ anchor + rw @ Vector((0, 0, -t / 100))
+            f = rw @ RIFLE_ATTACH.transposed()
+            e = g + f @ Vector((0, FORE, 0))
+            score = abs((e - SHOULDER_R).length - UPPER) * 10 + max(0.0, e.y - 1.38) + max(0.0, 0.2 - e.x) \
+                + abs(psi) / 400 + abs(t) / 400
+            if best is None or score < best[0]:
+                best = (score, rw, g, f, e)
+    _, rw, g, f, e = best
+    e = SHOULDER_R + (e - SHOULDER_R).normalized() * UPPER
+    ur, fr = arm_from(SHOULDER_R, e, f)
+    hand = e + f @ Vector((0, -FORE, 0))
+    support = hand + rw @ RIFLE_SUPPORT
+    el = two_bone(SHOULDER_L, support, Vector((-0.5, -1.0, 0.4)))
+    fl = Vector((0, -1, 0)).rotation_difference(support - el).to_matrix()
+    ul, fll = arm_from(SHOULDER_L, el, fl)
+    print(name, "grip error %.3f" % (hand - g).length, "support reach %.3f" % ((support - SHOULDER_L).length - UPPER - FORE))
+    return {"head": head, "uarm_r": ur, "farm_r": fr, "uarm_l": ul, "farm_l": fll}
+
+
+def rifle_poses(arm):
+    """Both arms (+ head) for the soldiers' rifle:
+      rifle_ready - low ready, muzzle down and across the body
+      rifle_aim   - butt in the right shoulder, aiming straight ahead"""
+    ready = Matrix.Rotation(math.radians(-30), 3, "X") @ Matrix.Rotation(math.radians(25), 3, "Y")
+    single_pose(arm, "rifle_ready", rifle_pose("rifle_ready", (0, 0, 0), ready, Vector((0, 0, 0)),
+                                               Vector((0.1, 1.12, -0.24))))
+    single_pose(arm, "rifle_aim", rifle_pose("rifle_aim", (-12, 0, 0), Matrix.Identity(3), RIFLE_BUTT,
+                                             Vector((0.1, 1.44, -0.12))))
+    b = RIFLE_ATTACH
+    print("RIFLE_BASIS columns (x, y, z):", [tuple(round(v, 4) for v in b.col[i]) for i in range(3)])
 
 
 def pistol_poses(arm):
@@ -599,8 +690,10 @@ def main():
     staggers(arm)
     clutches(arm)
     chokes(arm)
+    floor_clips(arm, "down", CLUTCH_BELLY)
     orders(arm)
     pistol_poses(arm)
+    rifle_poses(arm)
     getups(arm)
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     bpy.ops.export_scene.gltf(filepath=OUT, export_format="GLB", export_yup=True, export_animations=True,

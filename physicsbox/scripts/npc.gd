@@ -7,9 +7,13 @@ extends CharacterBody3D
 ## runs out the body goes limp as a jointed ragdoll and later gets back up.
 ## Death leaves the ragdoll for good.
 ## A neck shot opens the carotid: he clamps his throat with both hands and
-## fights for air until he bleeds out. NPCs obey the player's orders. An armed
-## one may stand and shoot back, fires wildly while choking, and with no way
-## out may put the pistol to his own head. X-ray mode shows bones and wounds.
+## fights for air until he bleeds out. A lethal body hit may leave him down
+## but alive, writhing on the floor, to be finished off.
+## Soldiers: two teams (the player's side 0, the enemy 1) in camouflage,
+## helmet and plate carrier, with an AK; they hold posts or assault the
+## enemy line, spot enemies and fire bursts at them. They obey the player's
+## orders (the enemy only when he has had enough), fire wildly while choking
+## and with no way out may draw a pistol and shoot themselves.
 
 signal died(npc: Npc, headshot: bool)
 
@@ -17,10 +21,16 @@ enum State { IDLE, WANDER, PANIC, STAGGER, KNOCKED, GETUP, DEAD, CHOKE, ORDER, S
 
 ## Global AI switch (pause menu / HUD). When off NPCs just stand and take hits.
 static var ai_enabled := true
-## Which mannequins spawn (NPC menu): unarmed, with a pistol, or mixed.
-enum SpawnKind { UNARMED, ARMED, MIXED }
-static var spawn_kind := SpawnKind.MIXED
-const ARMED_CHANCE := 0.35 # share of armed ones in MIXED
+## Teams: 0 = the player's side, 1 = the enemy.
+const TEAM_NAMES := ["ВИТЯЗЬ", "ОПОЛЧЕНИЕ"]
+const TEAM_CAMO := ["res://assets/textures/camo_green.png", "res://assets/textures/camo_tan.png"]
+const TEAM_TAPE := [Color(0.2, 0.4, 1.0), Color(1.0, 0.82, 0.1)]
+const SKINS := [Color(0.93, 0.8, 0.7), Color(0.85, 0.68, 0.55), Color(0.66, 0.48, 0.34), Color(0.95, 0.85, 0.76)]
+const GEAR_SCENE := "res://assets/npc/soldier_gear.glb"
+## A lethal body hit leaves him down but alive this often (to be finished off).
+const SURVIVE_CHANCE := 0.4
+## Firing positions (front trench) of each team, set by the level.
+static var war_posts: Array = [[], []]
 
 # The pistol in the right hand, farm_r space. Must match HAND_R / GUN_BARREL /
 # GUN_TOP in tools/blender/build_mannequin_anims.py (the suicide pose is
@@ -31,6 +41,13 @@ const GUN_BARREL := Vector3(0, -0.9397, -0.342)
 const GUN_TOP := Vector3(0, 0.342, -0.9397)
 const GUN_MUZZLE := Vector3(0, 0.056, -0.195) # in the gun model
 const GUN_TEXTURE := "res://assets/m1911/m1911_albedo.jpg"
+# The AK sits in the right hand with the wrist cocked; must match RIFLE_U /
+# RIFLE_ATTACH in tools/blender/build_mannequin_anims.py (printed there).
+const RIFLE_SCENE := "res://assets/npc/npc_rifle.glb"
+const RIFLE_BASIS := Basis(Vector3(0.4422, 0.4624, -0.7685), Vector3(-0.4624, -0.6166, -0.6371),
+		Vector3(-0.7685, 0.6371, -0.0588))
+const RIFLE_MUZZLE := Vector3(0, 0.085, -0.69)
+const RIFLE_MAG := 30
 const MAX_DROPPED_GUNS := 8
 const MAGAZINE := 8
 const BULLET_DAMAGE_PLAYER := 16.0
@@ -81,16 +98,9 @@ const BALANCE_COST := {"pelvis": 0.034, "chest": 0.022, "head": 0.03, "uarm_l": 
 # Spring "mass" per bone: lighter bones get kicked further by a bullet.
 const SPRING_MASS := [9.0, 7.0, 2.2, 1.6, 1.0, 1.6, 1.0, 4.0, 2.4, 4.0, 2.4]
 
-const OUTFITS := [
-	{"shirt": Color(0.05, 0.05, 0.06), "pants": Color(0.05, 0.05, 0.06), "skin": Color(0.93, 0.89, 0.85)},
-	{"shirt": Color(0.92, 0.92, 0.92), "pants": Color(0.06, 0.06, 0.07), "skin": Color(0.07, 0.065, 0.065)},
-	{"shirt": Color(0.07, 0.07, 0.08), "pants": Color(0.78, 0.6, 0.42), "skin": Color(0.95, 0.78, 0.66)},
-	{"shirt": Color(0.94, 0.94, 0.94), "pants": Color(0.06, 0.06, 0.07), "skin": Color(0.86, 0.66, 0.24)},
-	{"shirt": Color(0.36, 0.22, 0.16), "pants": Color(0.12, 0.13, 0.16), "skin": Color(0.42, 0.27, 0.18)},
-	{"shirt": Color(0.85, 0.32, 0.08), "pants": Color(0.85, 0.32, 0.08), "skin": Color(0.85, 0.32, 0.08)},
-]
-
 static var _mesh_cache := {}
+static var _gear := {} # mesh name -> Mesh (soldier_gear.glb)
+static var _camo_mats := {}
 static var _ragdoll_material: PhysicsMaterial
 static var _mat_cache := {}
 
@@ -98,10 +108,14 @@ var state := State.IDLE
 var health := 100.0
 var balance := 1.0
 var display_only := false # menu mannequin: stands still, no AI
-var outfit_index := -1 # -1 = random
 var dead := false
-var armed := false # set before adding to the tree
+var armed := true # set before adding to the tree
+var weapon := "rifle" # rifle | pistol
+var team := 0
+var role := "hold" # hold (his post in the line) | assault (the enemy's line)
+var post := Vector3.ZERO
 var suicided := false
+var last_hit_by_player := false
 
 var pelvis: RigidBody3D
 var chest: RigidBody3D
@@ -166,8 +180,18 @@ var _severed := {}
 var _arteries: Array = [] # [{part, pos, dir, strength, age}]
 var _time := 0.0
 var _hit_frame := -1
-var _outfit: Dictionary
 var _blend_time := 0.25
+var _downed := false # left for dead: writhing on the floor, bleeding out
+var _c_down_floor: MannequinAnims.Clip
+var _c_down_roll_l: MannequinAnims.Clip
+var _c_down_roll_r: MannequinAnims.Clip
+var _muzzle := GUN_MUZZLE
+var _target: Node3D # enemy he is fighting
+var _scan_cd := 0.0
+var _lost_t := 0.0
+var _alerted_t := 0.0
+var _burst_left := 0
+var _nade_cd := randf_range(6.0, 20.0)
 # neck wound
 var _neck_wound := false
 var _choke_drain := 0.0 # hp per second lost through the throat
@@ -248,6 +272,9 @@ func _ready() -> void:
 	_c_choke_floor = _lib.clip("choke_floor")
 	_c_choke_roll_l = _lib.clip("choke_roll_l")
 	_c_choke_roll_r = _lib.clip("choke_roll_r")
+	_c_down_floor = _lib.clip("down_floor")
+	_c_down_roll_l = _lib.clip("down_roll_l")
+	_c_down_roll_r = _lib.clip("down_roll_r")
 	_floor_clip = _c_choke_floor
 	_c_ready = _lib.clip("pistol_ready")
 	_c_aim = _lib.clip("pistol_aim")
@@ -255,12 +282,9 @@ func _ready() -> void:
 	_spring.resize(CENTERS.size())
 	_spring_vel.resize(CENTERS.size())
 
-	_outfit = OUTFITS[outfit_index if outfit_index >= 0 else randi() % OUTFITS.size()]
 	_build_body()
-	if armed and not display_only:
+	if armed:
 		_attach_gun()
-	if xray:
-		apply_xray()
 	_state_time = randf_range(0.5, 2.5)
 	_last_pos = global_position
 	_apply_pose(_compute_pose())
@@ -360,12 +384,35 @@ func _limb(part_name: String, mass: float, radius: float, length: float, mat: Ma
 	return b
 
 
+## Uniform: the team's camouflage, laid on in the parts' own space.
+static func _camo(t: int, shade := 1.0) -> StandardMaterial3D:
+	var key := "%d_%s" % [t, shade]
+	if not _camo_mats.has(key):
+		var m := StandardMaterial3D.new()
+		m.albedo_texture = load(TEAM_CAMO[t])
+		m.albedo_color = Color(shade, shade, shade)
+		m.uv1_triplanar = true
+		m.uv1_scale = Vector3.ONE * 2.5
+		m.roughness = 0.95
+		_camo_mats[key] = m
+	return _camo_mats[key]
+
+
+static func _gear_mesh(mesh_name: String) -> Mesh:
+	if _gear.is_empty():
+		var scene: Node = load(GEAR_SCENE).instantiate()
+		for mi in scene.find_children("*", "MeshInstance3D", true, false):
+			_gear[String(mi.name)] = mi.mesh
+		scene.free()
+	return _gear.get(mesh_name)
+
+
 func _build_body() -> void:
-	var shirt := _mat(_outfit.shirt)
-	var pants := _mat(_outfit.pants)
-	var skin := _mat(_outfit.skin, 0.6)
+	var shirt := _camo(team)
+	var pants := _camo(team, 0.92)
+	var skin := _mat(SKINS[randi() % SKINS.size()], 0.6)
 	_skin_mat = skin
-	var shoes := _mat(Color(0.04, 0.04, 0.04), 0.5)
+	var shoes := _mat(Color(0.06, 0.055, 0.05), 0.7)
 	var eyes := _mat(Color(1, 1, 1), 0.5, true)
 
 	pelvis = _part("pelvis", 10.0)
@@ -413,7 +460,24 @@ func _build_body() -> void:
 		var fsh := BoxShape3D.new()
 		fsh.size = Vector3(0.11, 0.08, 0.26)
 		_shape(s, fsh, Vector3(0, -0.24, -0.06))
+		_visual(s, _capsule_mesh(0.07, 0.2), shoes, Vector3(0, -0.15, 0)) # boot tops
 	parts = [pelvis, chest, head, uarm_l, farm_l, uarm_r, farm_r, thigh_l, shin_l, thigh_r, shin_r]
+	# kit from Blender: helmet (goes with the head when it is blown off),
+	# plate carrier; team-coloured tape round the arms and the right thigh
+	_visual(head, _gear_mesh("Helmet"), _camo(team, 0.85))
+	_visual(head, _gear_mesh("ChinStrap"), shoes)
+	_head_visuals.append(head.get_child(head.get_child_count() - 2))
+	_head_visuals.append(head.get_child(head.get_child_count() - 1))
+	_visual(chest, _gear_mesh("Vest"), _camo(team, 0.7))
+	var tape := _mat(TEAM_TAPE[team], 0.6)
+	var ring := CylinderMesh.new()
+	ring.top_radius = 0.064
+	ring.bottom_radius = 0.064
+	ring.height = 0.05
+	ring.radial_segments = 12
+	for p in [uarm_l, uarm_r]:
+		_visual(p, ring, tape, Vector3(0, 0.05, 0))
+	_visual(thigh_r, ring, tape, Vector3(0, 0.08, 0), Vector3.ZERO, Vector3(1.3, 1, 1.3))
 
 
 # ------------------------------------------------------------------ animation
@@ -467,17 +531,23 @@ func _compute_pose() -> Array[Transform3D]:
 			q = q.slerp(L.rot(_clutch, i, 0.0), cw)
 			if i == 0:
 				p.y += (L.pelvis_pos(_clutch, 0.0).y - L.rest_local[0].origin.y) * cw
-		# pistol in the right hand: held ready, aimed (turned towards the
-		# target about the shoulder) or pressed to the temple
-		if i == 5 or i == 6:
-			if _ready_w > 0.001:
+		# weapon in hand: held ready or aimed (a pistol turns at the shoulder,
+		# a rifle in both hands turns the whole upper body), or a pistol
+		# pressed to the temple
+		var rifle := weapon == "rifle" and _gun != null
+		if i == 5 or i == 6 or (rifle and (i == 3 or i == 4 or (i == 2 and _aim_w > 0.001))):
+			if _ready_w > 0.001 and i != 2:
 				q = q.slerp(L.rot(_c_ready, i, 0.0), _ready_w)
 			if _aim_w > 0.001:
 				q = q.slerp(L.rot(_c_aim, i, 0.0), _aim_w)
-				if i == 5:
+				if i == 5 and not rifle:
 					var gc := L.rest_global[1].basis
 					var turn := Basis(Vector3.UP, _aim_yaw * _aim_w) * Basis(Vector3.RIGHT, _aim_pitch * _aim_w)
 					q = Quaternion(gc.inverse() * turn * gc) * q
+		if i == 1 and rifle and _aim_w > 0.001:
+			var gp := L.rest_global[0].basis
+			var turn := Basis(Vector3.UP, _aim_yaw * _aim_w) * Basis(Vector3.RIGHT, _aim_pitch * _aim_w)
+			q = Quaternion(gp.inverse() * turn * gp) * q
 		if _suicide_w > 0.001 and (i == 2 or i == 5 or i == 6):
 			q = q.slerp(L.rot(_c_suicide, i, 0.0), _suicide_w)
 		# hit reactions, additive relative to the rest pose
@@ -513,7 +583,7 @@ func _update_layers(delta: float, hspeed: float) -> void:
 	if _order_clip != null:
 		_t_order = fposmod(_t_order + delta, _order_clip.length)
 	_order_w = 1.0 if state == State.ORDER and _order_clip != null else 0.0
-	var panic := state == State.PANIC
+	var panic := state == State.PANIC or (state == State.WANDER and _speed > 3.0) # running, not walking
 	_t_walk = fposmod(_t_walk + delta * maxf(hspeed, 0.4) / 1.3, _c_walk.length)
 	_t_panic = fposmod(_t_panic + delta * maxf(hspeed, 1.0) / 4.3, _c_panic.length)
 	var moving := clampf(hspeed / 1.2, 0.0, 1.0)
@@ -541,7 +611,7 @@ func _physics_process(delta: float) -> void:
 	_time += delta
 	_head_damage = maxf(_head_damage - delta * 35.0, 0.0)
 	_update_arteries(delta)
-	if _neck_wound and not dead:
+	if (_neck_wound or _downed) and not dead:
 		health -= _choke_drain * delta
 	if not dead and health <= 0.0:
 		_bleed_out()
@@ -581,14 +651,14 @@ func _physics_process(delta: float) -> void:
 		if global_position.distance_to(player.global_position) < 1.8:
 			_set_order("stand")
 	if ai:
+		_war_think(delta)
 		match state:
 			State.IDLE:
 				if _state_time <= 0.0:
-					_start_wander()
+					_war_move()
 			State.WANDER:
 				if _agent.is_navigation_finished():
-					state = State.IDLE
-					_state_time = randf_range(1.0, 4.0)
+					_arrived()
 			State.PANIC:
 				if _state_time <= 0.0 and player and global_position.distance_to(player.global_position) < 12.0:
 					_state_time = 1.5 # the shooter is still close: keep running
@@ -598,7 +668,7 @@ func _physics_process(delta: float) -> void:
 				elif _agent.is_navigation_finished():
 					_flee_target()
 			State.SHOOT:
-				_shoot_process(delta, player)
+				_shoot_process(delta)
 	if state != State.SHOOT:
 		_aiming = false
 
@@ -613,7 +683,7 @@ func _physics_process(delta: float) -> void:
 	# reacting to a hit slows him down while he catches his balance
 	desired *= clampf(0.35 + balance * 0.65, 0.0, 1.0)
 
-	var accel := 10.0 if state == State.PANIC else 6.0
+	var accel := 10.0 if state == State.PANIC or _speed > 3.0 else 6.0
 	velocity.x = move_toward(velocity.x, desired.x, accel * delta)
 	velocity.z = move_toward(velocity.z, desired.z, accel * delta)
 	if is_on_floor():
@@ -626,10 +696,18 @@ func _physics_process(delta: float) -> void:
 	var hspeed := Vector2(velocity.x, velocity.z).length()
 	if hspeed > 0.3 and desired != Vector3.ZERO:
 		rotation.y = lerp_angle(rotation.y, atan2(-velocity.x, -velocity.z), 7.0 * delta)
-	elif (state == State.ORDER or state == State.SHOOT) and player:
-		# keeps his eyes on whoever gives the orders / squares up to shoot
+	elif state == State.SHOOT and is_instance_valid(_target):
+		# squares up to his target
+		var tp := _target.global_position - global_position
+		rotation.y = lerp_angle(rotation.y, atan2(-tp.x, -tp.z), 6.0 * delta)
+	elif state == State.ORDER and player:
+		# keeps his eyes on whoever gives the orders
 		var tp := player.global_position - global_position
-		rotation.y = lerp_angle(rotation.y, atan2(-tp.x, -tp.z), (6.0 if state == State.SHOOT else 2.5) * delta)
+		rotation.y = lerp_angle(rotation.y, atan2(-tp.x, -tp.z), 2.5 * delta)
+	elif state == State.IDLE and ai:
+		# at his post: watches the enemy's side
+		var ahead := -1.0 if team == 0 else 1.0
+		rotation.y = lerp_angle(rotation.y, atan2(0.0, -ahead), 1.5 * delta)
 
 	if desired != Vector3.ZERO:
 		_stuck_time += delta
@@ -639,7 +717,7 @@ func _physics_process(delta: float) -> void:
 					_stuck_count += 1 # cornered
 					_flee_target()
 				elif state == State.WANDER:
-					_start_wander()
+					_war_move(true)
 			else:
 				_stuck_count = 0
 			_stuck_time = 0.0
@@ -649,10 +727,10 @@ func _physics_process(delta: float) -> void:
 		return
 
 	var target_yaw := 0.0
-	if (state == State.IDLE and ai) or state == State.ORDER or state == State.SHOOT:
-		if player:
-			var local := to_local(player.global_position)
-			target_yaw = clampf(atan2(-local.x, -local.z), -1.0, 1.0)
+	var look_at: Node3D = player if state == State.ORDER else (_target if is_instance_valid(_target) else null)
+	if look_at and state != State.SHOOT:
+		var local := to_local(look_at.global_position)
+		target_yaw = clampf(atan2(-local.x, -local.z), -1.0, 1.0)
 	_head_yaw = lerp_angle(_head_yaw, target_yaw, 3.0 * delta)
 
 	_update_layers(delta, hspeed)
@@ -663,21 +741,6 @@ func _physics_process(delta: float) -> void:
 
 func _random_nav_point() -> Vector3:
 	return NavigationServer3D.map_get_random_point(get_world_3d().navigation_map, 1, false)
-
-
-func _start_wander() -> void:
-	state = State.WANDER
-	_speed = randf_range(1.1, 1.6)
-	var best := global_position
-	for i in 4:
-		var p := _random_nav_point()
-		var d := p.distance_to(global_position)
-		if d > 3.0 and d < 18.0:
-			best = p
-			break
-	_agent.target_position = best
-	_stuck_time = 0.0
-	_last_pos = global_position
 
 
 ## Somewhere far from the shooter, in the direction away from him (never
@@ -706,21 +769,12 @@ func _flee_target() -> void:
 	_last_pos = global_position
 
 
-## Gunshot heard nearby.
+## Gunshot or blast nearby: a soldier looks round at once, even behind him.
 func alert(_from: Vector3) -> void:
-	if dead or display_only or not ai_enabled or _order != "" or _suicide_t >= 0.0:
+	if dead or display_only or not ai_enabled:
 		return
-	if state == State.SHOOT:
-		_state_time = maxf(_state_time, 4.0)
-		return
-	if state == State.IDLE or state == State.WANDER:
-		if _gun != null and _wants_to_fight():
-			_start_fight()
-			return
-		state = State.PANIC
-		_flee_target()
-	if state == State.PANIC:
-		_state_time = randf_range(6.0, 10.0)
+	_alerted_t = 3.0
+	_scan_cd = minf(_scan_cd, 0.1)
 
 
 # ------------------------------------------------------------------ damage
@@ -731,7 +785,6 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 		impulse: float, fx := 1.0) -> int:
 	var part_name: String = part.get_meta("part")
 	var is_head := part == head
-	_xray_hit(part, pos, dir, damage)
 	Blood.wound(part, pos, normal)
 	Blood.mist(pos, normal * 0.6 - dir * 0.4, 0.8 * fx)
 	Blood.spray(pos + dir * 0.12, dir + Vector3.UP * 0.1, int(10 * fx), 2.5, 6.5, 0.3)
@@ -775,6 +828,14 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 
 	health -= damage
 	var killed := health <= 0.0
+	if killed and _survives(is_head, damage):
+		# not dead yet: down, writhing, to be finished off
+		_go_down()
+		if state == State.KNOCKED:
+			part.apply_impulse(dir * impulse, pos - part.global_position)
+		else:
+			_knockdown(part, pos, dir, impulse * 1.2)
+		return 0
 	if state == State.KNOCKED:
 		part.apply_impulse(dir * impulse, pos - part.global_position)
 		if killed:
@@ -823,6 +884,24 @@ func take_hit(part: RigidBody3D, pos: Vector3, normal: Vector3, dir: Vector3, da
 	if not display_only:
 		alert(pos - dir)
 	return 0
+
+
+## A lethal body hit (not the head, not the heart, not torn apart) leaves
+## him alive now and then.
+func _survives(is_head: bool, damage: float) -> bool:
+	return not _downed and not _neck_wound and not is_head and damage < 500.0 and health > -45.0 \
+			and randf() < SURVIVE_CHANCE
+
+
+func _go_down() -> void:
+	_downed = true
+	health = randf_range(15.0, 28.0)
+	_choke_drain = randf_range(0.6, 1.1)
+	_bleed_left = 9999.0
+	_target = null
+	_aiming = false
+	_order = ""
+	_order_clip = null
 
 
 func _clutch_for(part_name: String, local: Vector3) -> String:
@@ -1105,8 +1184,8 @@ func _knocked_process(delta: float) -> void:
 		queue_free()
 		return
 	var settled := chest.linear_velocity.length() < 0.5 and pelvis.linear_velocity.length() < 0.5
-	if _neck_wound:
-		# throat open: he does not get up, he rolls about on the floor
+	if _neck_wound or _downed:
+		# throat open / left for dead: he does not get up, he rolls about on the floor
 		if (_knock_time > 1.0 and settled) or _knock_time > 4.0:
 			_start_floor_choke()
 		return
@@ -1403,6 +1482,8 @@ func _start_choke() -> void:
 ## about on the floor.
 func _start_floor_choke() -> void:
 	_freeze_from_ragdoll(Vector3(0, 0, 1))
+	collision_layer = 0
+	collision_mask = LAYER_WORLD # lies on the floor, the player walks over him
 	_blend_time = 0.5
 	state = State.CHOKE
 	_choke_phase = 3
@@ -1435,7 +1516,7 @@ func _choke_process(delta: float) -> void:
 			# writhing and rolling over, strung together at random
 			_choke_t += delta * (_floor_speed - 1.0)
 			_floor_left -= delta
-			var rolling := _floor_clip != _c_choke_floor
+			var rolling := not _is_writhe(_floor_clip)
 			if (rolling and _choke_t >= _floor_clip.length) or (not rolling and _floor_left <= 0.0):
 				_pick_floor_clip(false)
 	var drift := Vector3.ZERO
@@ -1458,7 +1539,7 @@ func _choke_process(delta: float) -> void:
 		velocity.y -= 9.8 * delta
 	move_and_slide()
 	_cough_cd -= delta
-	if _cough_cd <= 0.0:
+	if _neck_wound and _cough_cd <= 0.0:
 		_cough_cd = randf_range(1.0, 2.6) * (0.75 if _choke_phase > 0 else 1.0)
 		_cough()
 	_update_layers(delta, 0.0)
@@ -1471,24 +1552,32 @@ func _choke_clip() -> MannequinAnims.Clip:
 
 
 func _choke_clip_t(cc: MannequinAnims.Clip) -> float:
-	if cc == _c_choke_fall or cc == _c_choke_roll_l or cc == _c_choke_roll_r:
+	if cc == _c_choke_fall or (_choke_phase == 3 and not _is_writhe(cc)):
 		return minf(_choke_t, cc.length)
 	return fposmod(_choke_t, cc.length)
+
+
+func _is_writhe(c: MannequinAnims.Clip) -> bool:
+	return c == _c_choke_floor or c == _c_down_floor
 
 
 ## Next bit of floor thrashing: writhing side to side for a while or a full
 ## roll over either way, at a random pace.
 func _pick_floor_clip(from_fall: bool) -> void:
-	var c := _c_choke_floor
+	var belly := _downed and not _neck_wound
+	var c := _c_down_floor if belly else _c_choke_floor
 	if not from_fall and randf() < 0.6:
-		c = _c_choke_roll_l if randf() < 0.5 else _c_choke_roll_r
+		if belly:
+			c = _c_down_roll_l if randf() < 0.5 else _c_down_roll_r
+		else:
+			c = _c_choke_roll_l if randf() < 0.5 else _c_choke_roll_r
 	if not from_fall:
 		_capture_blend()
 		_blend_time = 0.3
 	_floor_clip = c
 	_floor_speed = randf_range(0.8, 1.3)
 	_floor_left = randf_range(1.5, 3.5)
-	_choke_t = 0.0 if from_fall or c != _c_choke_floor else randf() * c.length
+	_choke_t = 0.0 if from_fall or not _is_writhe(c) else randf() * c.length
 	_floor_prev = _lib.pelvis_pos(c, _choke_t)
 
 
@@ -1524,8 +1613,10 @@ func order(cmd: String) -> bool:
 			return false
 		_start_suicide(true)
 		return true
-	if _neck_wound:
+	if _neck_wound or _downed:
 		return false
+	if team == 1 and not _gives_up():
+		return false # the enemy only listens once he has had enough
 	match cmd:
 		"free":
 			_set_order("")
@@ -1549,10 +1640,18 @@ func order(cmd: String) -> bool:
 	return true
 
 
+func _gives_up() -> bool:
+	return health < 65.0 or _knee_hits > 0 or _gun == null or randf() < 0.3
+
+
 func _set_order(cmd: String) -> void:
 	var clip_name: String = ORDER_CLIPS.get(cmd, "")
 	var c: MannequinAnims.Clip = _lib.clip(clip_name) if clip_name != "" else null
-	var posed := state == State.IDLE or state == State.WANDER or state == State.PANIC or state == State.ORDER
+	var posed := state == State.IDLE or state == State.WANDER or state == State.PANIC or state == State.ORDER \
+			or state == State.SHOOT
+	if posed:
+		_aiming = false
+		_target = null
 	if posed and c != _order_clip:
 		_capture_blend()
 		_blend_time = 0.9 # going down on the knees / raising the hands takes a moment
@@ -1571,9 +1670,25 @@ func _set_order(cmd: String) -> void:
 # ------------------------------------------------------------------ pistol
 
 func _attach_gun() -> void:
+	armed = true
+	if weapon == "rifle":
+		_gun = (load(RIFLE_SCENE) as PackedScene).instantiate()
+		_gun.transform = Transform3D(RIFLE_BASIS, GUN_HAND)
+		_muzzle = RIFLE_MUZZLE
+		_ammo = RIFLE_MAG
+		_c_ready = _lib.clip("rifle_ready")
+		_c_aim = _lib.clip("rifle_aim")
+		for mi in _gun.find_children("*", "MeshInstance3D", true, false):
+			(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		farm_r.add_child(_gun)
+		return
 	_gun = (load(GUN_SCENE) as PackedScene).instantiate()
 	var z := -GUN_BARREL
 	_gun.transform = Transform3D(Basis(GUN_TOP.cross(z), GUN_TOP, z), GUN_HAND)
+	_muzzle = GUN_MUZZLE
+	_ammo = MAGAZINE
+	_c_ready = _lib.clip("pistol_ready")
+	_c_aim = _lib.clip("pistol_aim")
 	if _gun_material == null:
 		_gun_material = StandardMaterial3D.new()
 		_gun_material.albedo_texture = load(GUN_TEXTURE)
@@ -1584,17 +1699,7 @@ func _attach_gun() -> void:
 	farm_r.add_child(_gun)
 
 
-## Whether a new mannequin gets a pistol, per the NPC menu choice.
-static func roll_armed() -> bool:
-	match spawn_kind:
-		SpawnKind.ARMED:
-			return true
-		SpawnKind.UNARMED:
-			return false
-	return randf() < ARMED_CHANCE
-
-
-## Lets go of the pistol: it falls as a loose physics prop.
+## Lets go of his weapon: it falls as a loose physics prop.
 func drop_gun(vel: Vector3) -> void:
 	if _gun == null:
 		return
@@ -1606,9 +1711,14 @@ func drop_gun(vel: Vector3) -> void:
 	rb.set_meta("surface", "metal")
 	var cs := CollisionShape3D.new()
 	var box := BoxShape3D.new()
-	box.size = Vector3(0.032, 0.13, 0.2)
+	if weapon == "rifle":
+		rb.mass = 3.4
+		box.size = Vector3(0.05, 0.2, 1.0)
+		cs.position = Vector3(0, 0.03, -0.19)
+	else:
+		box.size = Vector3(0.032, 0.13, 0.2)
+		cs.position = Vector3(0, -0.005, -0.025)
 	cs.shape = box
-	cs.position = Vector3(0, -0.005, -0.025)
 	rb.add_child(cs)
 	rb.add_to_group("dropped_guns")
 	get_tree().current_scene.add_child(rb)
@@ -1660,6 +1770,11 @@ func _despair_check(delta: float) -> void:
 func _start_suicide(ordered := false) -> void:
 	if _gun == null or _suicide_t >= 0.0 or dead:
 		return
+	if weapon == "rifle":
+		# a rifle won't do: he lets it fall and draws his pistol
+		drop_gun(-global_transform.basis.z * 0.3 + Vector3.UP * 0.2)
+		weapon = "pistol"
+		_attach_gun()
 	_suicide_t = 0.0
 	_suicide_fire = randf_range(1.3, 2.2) if ordered else randf_range(1.7, 3.4)
 	_aiming = false
@@ -1681,7 +1796,7 @@ func _update_suicide(delta: float) -> void:
 
 
 func _suicide_shot() -> void:
-	var muzzle := _gun.global_transform * GUN_MUZZLE
+	var muzzle := _gun.global_transform * _muzzle
 	var c := head.global_position
 	var into := (c - muzzle).normalized()
 	var entry := c - into * 0.115
@@ -1725,16 +1840,22 @@ func _update_gun_arm(delta: float) -> void:
 	_aim_w = move_toward(_aim_w, aim_t, delta * 4.5)
 
 
-## Turns the aimed arm towards a point (NPC-relative yaw / pitch about the shoulder).
+## Turns the aim towards a point: yaw / pitch about the right shoulder for a
+## pistol, about the rifle's butt (the upper body turns) for a rifle.
 func _aim_towards(target: Vector3) -> void:
-	var local := to_local(target) - P_SHOULDER_R
+	var pivot := P_SHOULDER_R if weapon != "rifle" else Vector3(0.1, 1.44, 0.0)
+	var local := to_local(target) - pivot
 	_aim_yaw = clampf(atan2(-local.x, -local.z), -0.7, 0.7)
 	_aim_pitch = clampf(atan2(local.y, Vector2(local.x, local.z).length()), -1.0, 1.0)
 
 
-func _player_target() -> Vector3:
-	var player := get_tree().get_first_node_in_group("player") as Node3D
-	return player.global_position + Vector3.UP * 1.25 if player else global_position - global_transform.basis.z * 10.0
+## Where to shoot someone: an NPC's chest, the player's upper body.
+func _aim_point(t: Node3D) -> Vector3:
+	if t is Npc:
+		return (t as Npc).center()
+	if t is FpvDrone:
+		return t.global_position
+	return t.global_position + Vector3.UP * 1.3
 
 
 ## Clear line of fire from his eyes to a point.
@@ -1744,79 +1865,177 @@ func _sees(target: Vector3) -> bool:
 	return get_world_3d().direct_space_state.intersect_ray(q).is_empty()
 
 
-## Armed and shot at: stand and fight back if the shooter is close and in sight.
-func _wants_to_fight() -> bool:
-	var player := get_tree().get_first_node_in_group("player") as Node3D
-	if player == null or global_position.distance_to(player.global_position) > 22.0:
-		return false
-	return _sees(_player_target()) and randf() < 0.65
+# ------------------------------------------------------------------ war AI
+
+## Still a threat: alive, on his feet and not surrendering.
+func is_combatant() -> bool:
+	return not dead and not _downed and not _neck_wound and _order != "hands_up" and _order != "kneel" \
+			and state != State.KNOCKED and state != State.GETUP
+
+
+func _enemies() -> Array[Node3D]:
+	var out: Array[Node3D] = []
+	for n in get_tree().get_nodes_in_group("npcs"):
+		if n.team != team and n.is_combatant():
+			out.append(n)
+	if team == 1:
+		var player := get_tree().get_first_node_in_group("player") as Player
+		if player and not player.dead:
+			out.append(player)
+	for d in get_tree().get_nodes_in_group("drones"):
+		if d.team != team and not d.dead:
+			out.append(d)
+	return out
+
+
+## A few times a second: the nearest enemy he can see (in front of him, or
+## anywhere right after shots) becomes his target.
+func _war_think(delta: float) -> void:
+	_alerted_t -= delta
+	_scan_cd -= delta
+	if _scan_cd > 0.0 or _gun == null:
+		return
+	_scan_cd = randf_range(0.3, 0.5)
+	var surrendered := state == State.ORDER and _order != "stand" and _order != "come"
+	if surrendered or not (state == State.IDLE or state == State.WANDER or state == State.SHOOT or state == State.ORDER):
+		return
+	var eye := head.global_position
+	var fwd := -global_transform.basis.z
+	var best: Node3D = null
+	var best_d := 75.0
+	for e in _enemies():
+		var tp := _aim_point(e)
+		var d := eye.distance_to(tp)
+		if d >= best_d:
+			continue
+		if e != _target and _alerted_t <= 0.0 and d > 10.0 and fwd.dot((tp - eye) / d) < -0.1:
+			continue
+		if _sees(tp):
+			best = e
+			best_d = d
+	if best:
+		_target = best
+		_lost_t = 0.0
+		if state != State.SHOOT:
+			_start_fight()
+	elif state == State.SHOOT:
+		_lost_t += 0.4
+		if _lost_t > 2.5:
+			_end_fight()
 
 
 func _start_fight() -> void:
 	state = State.SHOOT
-	_state_time = randf_range(6.0, 12.0)
 	_aiming = true
-	_shoot_cd = randf_range(0.5, 0.9)
+	_shoot_cd = randf_range(0.3, 0.7)
+	_burst_left = 0
 	velocity.x = 0.0
 	velocity.z = 0.0
 
 
-func _shoot_process(delta: float, player: Node3D) -> void:
-	if _gun == null or player == null or global_position.distance_to(player.global_position) > 28.0 or _state_time <= 0.0:
-		# gives up the fight and runs
-		_aiming = false
-		state = State.PANIC
-		_state_time = randf_range(5.0, 8.0)
-		_flee_target()
+func _end_fight() -> void:
+	_target = null
+	_aiming = false
+	state = State.IDLE
+	_state_time = randf_range(0.5, 1.5)
+
+
+func _shoot_process(delta: float) -> void:
+	if _gun == null or not is_instance_valid(_target) or (_target is Npc and not (_target as Npc).is_combatant()) \
+			or (_target is Player and (_target as Player).dead) or (_target is FpvDrone and (_target as FpvDrone).dead):
+		_end_fight()
 		return
-	var target := _player_target()
+	var target := _aim_point(_target)
 	_aim_towards(target)
 	if _reload_t > 0.0:
 		_reload_t -= delta
 		if _reload_t <= 0.0:
-			_ammo = MAGAZINE
+			_ammo = RIFLE_MAG if weapon == "rifle" else MAGAZINE
 		return
+	_nade_cd -= delta
+	if _nade_cd <= 0.0:
+		_nade_cd = randf_range(10.0, 25.0)
+		if not (_target is FpvDrone) and randf() < 0.45:
+			_throw_grenade(target)
 	_shoot_cd -= delta
-	if _shoot_cd <= 0.0 and _aim_w > 0.85:
+	if _shoot_cd > 0.0 or _aim_w < 0.85:
+		return
+	# farther, hurt men shoot worse; a rifle fires short bursts
+	var dist := head.global_position.distance_to(target)
+	_fire_at(target, 0.5 + dist * 0.028 + (100.0 - health) * 0.04)
+	if _ammo <= 0:
+		_reload_t = 2.6
+		_burst_left = 0
+		_shoot_cd = 0.3
+	elif weapon == "rifle":
+		if _burst_left <= 0:
+			_burst_left = randi_range(2, 5)
+		_burst_left -= 1
+		_shoot_cd = 0.1 if _burst_left > 0 else randf_range(0.5, 1.2)
+	else:
 		_shoot_cd = randf_range(0.45, 1.2)
-		if _sees(target):
-			# hurt men shoot worse
-			_fire_at(target, 3.0 + (100.0 - health) * 0.05)
-			if _ammo <= 0:
-				_reload_t = 2.3
 
 
-## Throat open and a gun in his hand: he lets off shots in the shooter's
-## direction as he chokes, reels and rolls about, barely aiming.
+## Sends him to his post (holding) or the enemy's line (assault).
+func _war_move(retry := false) -> void:
+	if post == Vector3.ZERO or (not retry and global_position.distance_to(post) < 1.5):
+		# at his post: watch the enemy's side a while, sometimes shift along the line
+		_state_time = randf_range(4.0, 10.0)
+		state = State.IDLE
+		if role == "hold" and randf() < 0.25 and not war_posts[team].is_empty():
+			post = war_posts[team][randi() % war_posts[team].size()]
+		return
+	if retry:
+		post = NavigationServer3D.map_get_closest_point(get_world_3d().navigation_map, post + Vector3(randf_range(-2, 2), 0, randf_range(-2, 2)))
+	state = State.WANDER
+	_speed = randf_range(3.3, 3.8) if role == "assault" else randf_range(1.6, 2.4)
+	_agent.target_position = post
+	_stuck_time = 0.0
+	_last_pos = global_position
+
+
+func _arrived() -> void:
+	state = State.IDLE
+	_state_time = randf_range(2.0, 5.0)
+	if role == "assault":
+		role = "hold" # took the enemy's trench: holds it
+
+
+## Throat open and a gun in his hand: he lets off shots towards the enemy
+## as he chokes, reels and rolls about, barely aiming.
 func _wild_fire(delta: float) -> void:
 	if _gun == null or _suicide_t >= 0.0 or _ammo <= 0:
 		_aiming = false
 		return
-	var player := get_tree().get_first_node_in_group("player") as Node3D
-	if player == null or global_position.distance_to(player.global_position) > 25.0:
+	var foe: Node3D = _target if is_instance_valid(_target) else null
+	if foe == null:
+		for e in _enemies():
+			if foe == null or e.global_position.distance_to(global_position) < foe.global_position.distance_to(global_position):
+				foe = e
+	if foe == null or global_position.distance_to(foe.global_position) > 30.0:
 		_aiming = false
 		return
 	_aiming = true
 	if _choke_phase == 0:
-		var tp := player.global_position - global_position
+		var tp := foe.global_position - global_position
 		rotation.y = lerp_angle(rotation.y, atan2(-tp.x, -tp.z), 2.0 * delta)
-	# the arm wanders about while he tries to point it
-	_aim_towards(_player_target())
+	# the gun wanders about while he tries to point it
+	_aim_towards(_aim_point(foe))
 	_aim_yaw += sin(_time * 2.3) * 0.45 + sin(_time * 5.7) * 0.15
 	_aim_pitch += sin(_time * 1.7) * 0.3
 	_wild_cd -= delta
 	if _wild_cd <= 0.0 and _aim_w > 0.6:
-		_wild_cd = randf_range(0.35, 1.3)
-		_fire_at(_player_target(), 9.0, 0.45)
+		_wild_cd = randf_range(0.12, 0.5) if weapon == "rifle" else randf_range(0.35, 1.3)
+		_fire_at(_aim_point(foe), 9.0, 0.45)
 
 
-## One pistol round from his gun towards `target`; `wild` mixes in where the
+## One round from his gun towards `target`; `wild` mixes in where the
 ## barrel actually points.
 func _fire_at(target: Vector3, spread_deg: float, wild := 0.0) -> void:
 	if _gun == null:
 		return
 	_ammo -= 1
-	var muzzle := _gun.global_transform * GUN_MUZZLE
+	var muzzle := _gun.global_transform * _muzzle
 	var barrel := (_gun.global_basis * Vector3(0, 0, -1)).normalized()
 	var dir := (target - muzzle).normalized()
 	if wild > 0.0:
@@ -1840,12 +2059,24 @@ func _fire_at(target: Vector3, spread_deg: float, wild := 0.0) -> void:
 		var pos: Vector3 = hit.position
 		var normal: Vector3 = hit.normal
 		if c is Player:
-			(c as Player).take_damage(BULLET_DAMAGE_PLAYER, dir)
+			if team == 0: # his own side's rounds don't count against the player
+				ex.append(c.get_rid())
+				q.exclude = ex
+				q.from = pos + dir * 0.01
+				continue
+			(c as Player).take_damage(BULLET_DAMAGE_PLAYER * (1.15 if weapon == "rifle" else 1.0), dir)
 			break
 		if c.has_meta("npc"):
 			var other = c.get_meta("npc")
+			if is_instance_valid(other) and other.team == team and not other.dead:
+				# his own side: soldiers don't fire through their mates
+				ex.append(c.get_rid())
+				q.exclude = ex
+				q.from = pos + dir * 0.01
+				continue
 			if is_instance_valid(other):
-				other.take_hit(c, pos, normal, dir, BULLET_DAMAGE_NPC, 9.0)
+				other.last_hit_by_player = false
+				other.take_hit(c, pos, normal, dir, BULLET_DAMAGE_NPC * (1.2 if weapon == "rifle" else 1.0), 9.0)
 			break
 		if c.get_meta("surface", "") == "glass" and c.has_method("shatter"):
 			c.shatter(pos, dir)
@@ -1853,6 +2084,9 @@ func _fire_at(target: Vector3, spread_deg: float, wild := 0.0) -> void:
 			q.exclude = ex
 			q.from = pos + dir * 0.01
 			continue
+		if c.has_meta("drone"):
+			c.take_bullet(pos, dir, 30.0)
+			break
 		if c.has_method("take_bullet"):
 			c.take_bullet(pos, dir, 30.0)
 		if c is RigidBody3D:
@@ -1867,8 +2101,47 @@ func _fire_at(target: Vector3, spread_deg: float, wild := 0.0) -> void:
 			n.alert(muzzle)
 
 
+## Lobs a grenade at `at` (8..32 m away): a 40 degree arc, a little off.
+func _throw_grenade(at: Vector3) -> void:
+	var from := head.global_position + Vector3.UP * 0.15 - global_transform.basis.z * 0.3
+	var flat := Vector3(at.x - from.x, 0.0, at.z - from.z)
+	var d := flat.length()
+	if d < 8.0 or d > 32.0:
+		return
+	var h := at.y - 1.0 - from.y
+	var th := deg_to_rad(40.0)
+	var den := 2.0 * cos(th) * cos(th) * (d * tan(th) - h)
+	if den <= 0.0:
+		return
+	var v := sqrt(9.8 * d * d / den) * randf_range(0.9, 1.08)
+	var dir := flat / d
+	_spring_vel[5] += Vector3(-9.0, 0.0, 0.0) # the arm swings over
+	Grenade.throw(get_tree(), from, dir * v * cos(th) + Vector3.UP * v * sin(th), false, randf_range(2.6, 3.4))
+
+
+## Caught in a blast (f: 0 at its edge .. 1 on top of it). Close up it tears
+## him apart; it throws him down and hurts him through his whole body.
+func blast(center: Vector3, f: float, power: float) -> void:
+	var c := chest.global_position
+	var dir := (c - center).normalized()
+	if f > 0.72 and not display_only:
+		for p in [uarm_l, uarm_r, farm_l, farm_r, thigh_l, thigh_r, shin_l, shin_r]:
+			if randf() < 0.3 * power:
+				sever(p, (p.global_position - center).normalized())
+		if randf() < 0.5:
+			spill_organs(pelvis if randf() < 0.5 else chest, c - dir * 0.12, -dir, dir)
+	if dead:
+		for p in parts:
+			if not p.freeze:
+				p.apply_central_impulse((p.global_position - center).normalized() * p.mass * 7.0 * f * power + Vector3.UP * p.mass * 2.0 * f)
+		return
+	take_hit(chest, c - dir * 0.12, -dir, (dir + Vector3.UP * 0.6).normalized(), 170.0 * f * f * power, 30.0 * f + 6.0)
+	if not dead and state != State.KNOCKED and f > 0.25:
+		_knockdown(chest, c, (dir + Vector3.UP * 0.5).normalized(), 25.0 * f)
+
+
 func _muzzle_flash(muzzle: Vector3, dir: Vector3) -> void:
-	Sfx.play_3d("gunshot", muzzle)
+	Sfx.play_3d("rifle" if weapon == "rifle" else "gunshot", muzzle)
 	var root := get_tree().current_scene
 	var light := OmniLight3D.new()
 	light.light_color = Color(1.0, 0.72, 0.38)
@@ -1887,171 +2160,6 @@ func _muzzle_flash(muzzle: Vector3, dir: Vector3) -> void:
 	s.global_position = muzzle + dir * 0.06
 	get_tree().create_timer(0.05).timeout.connect(light.queue_free)
 	get_tree().create_timer(0.05).timeout.connect(s.queue_free)
-
-
-# ------------------------------------------------------------------ x-ray
-
-## X-ray view (weapon menu): bodies turn into a faint glow showing the
-## skeleton, the heart, every wound channel, and parts that took damage
-## glowing orange.
-static var xray := false
-static var _xray_shader: Shader
-static var _xray_bone_mat: StandardMaterial3D
-static var _xray_wound_mat: StandardMaterial3D
-static var _xray_heart_mat: StandardMaterial3D
-static var _torus: TorusMesh
-static var _channel_mesh: CylinderMesh
-const XRAY_SHADER := """
-shader_type spatial;
-render_mode unshaded, blend_add, depth_draw_never, cull_back, shadows_disabled;
-uniform float damage = 0.0;
-void fragment() {
-	float rim = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 2.2);
-	vec3 col = mix(vec3(0.2, 0.55, 1.0), vec3(1.0, 0.3, 0.05), clamp(damage / 60.0, 0.0, 1.0));
-	ALBEDO = col * (0.07 + 0.85 * rim);
-}
-"""
-## How deep a bullet goes through each part (wound channel length).
-const PART_DEPTH := {"head": 0.22, "chest": 0.25, "pelvis": 0.24, "uarm_l": 0.11, "uarm_r": 0.11,
-		"farm_l": 0.1, "farm_r": 0.1, "thigh_l": 0.15, "thigh_r": 0.15, "shin_l": 0.12, "shin_r": 0.12}
-
-var _xray_built := false
-var _xray_nodes: Array[Node3D] = []
-var _xray_mats := {} # part -> ShaderMaterial
-var _orig_mats := {} # MeshInstance3D -> Material
-var _part_damage := {} # part -> damage taken
-var _channels: Array = [] # [part, local pos, local dir, length]
-
-
-static func set_xray(on: bool, tree: SceneTree) -> void:
-	xray = on
-	for n in tree.get_nodes_in_group("npcs"):
-		n.apply_xray()
-
-
-func apply_xray() -> void:
-	if display_only:
-		return
-	if xray and not _xray_built:
-		_build_xray()
-	for n in _xray_nodes:
-		if is_instance_valid(n):
-			n.visible = xray
-	for p in parts:
-		for c in p.get_children():
-			if not (c is MeshInstance3D) or c.has_meta("xray"):
-				continue
-			if xray:
-				if not _orig_mats.has(c):
-					_orig_mats[c] = c.material_override
-				c.material_override = _xray_mat(p)
-			elif _orig_mats.has(c):
-				c.material_override = _orig_mats[c]
-
-
-func _xray_mat(p: RigidBody3D) -> ShaderMaterial:
-	if not _xray_mats.has(p):
-		if _xray_shader == null:
-			_xray_shader = Shader.new()
-			_xray_shader.code = XRAY_SHADER
-		var m := ShaderMaterial.new()
-		m.shader = _xray_shader
-		m.set_shader_parameter("damage", _part_damage.get(p, 0.0))
-		_xray_mats[p] = m
-	return _xray_mats[p]
-
-
-static func _glow_mat(color: Color) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	m.albedo_color = color
-	return m
-
-
-func _xray_mesh(parent: Node3D, mesh: Mesh, mat: Material, pos := Vector3.ZERO, rot := Vector3.ZERO,
-		scl := Vector3.ONE) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.material_override = mat
-	mi.position = pos
-	mi.rotation = rot
-	mi.scale = scl
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	mi.set_meta("xray", true)
-	parent.add_child(mi)
-	_xray_nodes.append(mi)
-	return mi
-
-
-func _build_xray() -> void:
-	_xray_built = true
-	if _xray_bone_mat == null:
-		_xray_bone_mat = _glow_mat(Color(0.55, 0.6, 0.65))
-		_xray_wound_mat = _glow_mat(Color(1.0, 0.15, 0.05))
-		_xray_heart_mat = _glow_mat(Color(0.8, 0.08, 0.12))
-		_torus = TorusMesh.new()
-		_torus.inner_radius = 0.095
-		_torus.outer_radius = 0.108
-		_torus.rings = 24
-		_torus.ring_segments = 6
-		_channel_mesh = CylinderMesh.new()
-		_channel_mesh.top_radius = 0.008
-		_channel_mesh.bottom_radius = 0.008
-		_channel_mesh.height = 1.0
-		_channel_mesh.radial_segments = 6
-		_channel_mesh.rings = 1
-	var b := _xray_bone_mat
-	# skeleton
-	_xray_mesh(pelvis, _capsule_mesh(0.035, 0.26), b, Vector3(0, 0.02, 0.02), Vector3(0, 0, PI / 2))
-	_xray_mesh(chest, _capsule_mesh(0.02, 0.5), b, Vector3(0, 0, 0.07))
-	_xray_mesh(chest, _capsule_mesh(0.012, 0.28), b, Vector3(0, 0.2, -0.02), Vector3(0, 0, PI / 2))
-	for y in [0.1, 0.03, -0.04, -0.11]:
-		var w := 1.3 if y > -0.1 else 1.15
-		_xray_mesh(chest, _torus, b, Vector3(0, y, 0.0), Vector3.ZERO, Vector3(w, 1, 0.85))
-	_xray_mesh(chest, _sphere_mesh(0.04, 0.08), _xray_heart_mat, Vector3(-0.05, 0.07, -0.03))
-	_xray_mesh(head, _sphere_mesh(0.098, 0.21), b, Vector3(0, 0.01, 0.0))
-	_xray_mesh(head, _capsule_mesh(0.016, 0.14), b, Vector3(0, -0.14, 0.012))
-	for p in [uarm_l, uarm_r]:
-		_xray_mesh(p, _capsule_mesh(0.02, 0.3), b)
-	for p in [farm_l, farm_r]:
-		_xray_mesh(p, _capsule_mesh(0.012, 0.27), b, Vector3(-0.012, 0, 0))
-		_xray_mesh(p, _capsule_mesh(0.012, 0.27), b, Vector3(0.012, 0, 0))
-	for p in [thigh_l, thigh_r]:
-		_xray_mesh(p, _capsule_mesh(0.025, 0.44), b)
-	for p in [shin_l, shin_r]:
-		_xray_mesh(p, _capsule_mesh(0.018, 0.4), b, Vector3(-0.012, 0, 0))
-		_xray_mesh(p, _capsule_mesh(0.012, 0.38), b, Vector3(0.02, 0, 0))
-	for ch in _channels:
-		_add_channel(ch)
-
-
-## Records a bullet's path through a part (and the damage) for the x-ray.
-func _xray_hit(part: RigidBody3D, pos: Vector3, dir: Vector3, damage: float) -> void:
-	_part_damage[part] = _part_damage.get(part, 0.0) + damage
-	if _xray_mats.has(part):
-		_xray_mats[part].set_shader_parameter("damage", _part_damage[part])
-	if _channels.size() >= 40:
-		return
-	var ch := [part, part.to_local(pos), (part.global_basis.inverse() * dir).normalized(),
-			PART_DEPTH.get(part.get_meta("part"), 0.15)]
-	_channels.append(ch)
-	if _xray_built:
-		_add_channel(ch)
-
-
-func _add_channel(ch: Array) -> void:
-	var part: RigidBody3D = ch[0]
-	if not is_instance_valid(part):
-		return
-	var d: Vector3 = ch[2]
-	var length: float = ch[3]
-	var x := d.cross(Vector3.UP if absf(d.y) < 0.9 else Vector3.RIGHT).normalized()
-	var basis := Basis(x, d * length, x.cross(d)) # unit cylinder stretched along the path
-	var mi := _xray_mesh(part, _channel_mesh, _xray_wound_mat)
-	mi.transform = Transform3D(basis, ch[1] + d * length * 0.5)
-	_xray_mesh(part, _sphere_mesh(0.016, 0.032), _xray_wound_mat, ch[1]).visible = xray
-	mi.visible = xray
 
 
 ## Body hit position estimate for camera / spawn logic.

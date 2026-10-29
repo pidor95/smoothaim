@@ -4,7 +4,9 @@ it, fades the tail out and levels it like the synthesised sounds.
 
 Run:  blender -b --python tools/blender/build_recorded_sounds.py
 
-Writes assets/sounds/gunshot_<n>.wav (pistol) and glass_break_<n>.wav.
+Writes assets/sounds/gunshot_<n>.wav (pistol), rifle_<n>.wav (AK),
+explosion_<n>.wav (grenades), blast_big.wav (FPV warhead), drone_loop.wav
+(seamless loop of a quadcopter's buzz) and glass_break_<n>.wav.
 """
 import os
 
@@ -81,6 +83,29 @@ def main():
         n += 1
     shop = load("glass_shop_window.mp3")
     save("glass_break_%d" % n, cut(shop, onsets(shop)[0], len(shop)), 0.8)
+    # AK: single shots further into the recording (the start is a burst)
+    rifle = load("rifle_shots.mp3")
+    k = 0
+    for s in onsets(rifle, 0.35):
+        if s < 3.0 * SR:
+            continue
+        save("rifle_%d" % k, cut(rifle, s, s + int(0.55 * SR), fade=0.25), 0.95, 1.5)
+        k += 1
+        if k == 4:
+            break
+    # grenade: three separate blasts with their rumble
+    for i, seg in enumerate(events(load("grenade_blasts.mp3"), 2.6, 1.0)):
+        save("explosion_%d" % i, seg, 0.98, 1.6)
+    big = load("big_blast.mp3")
+    save("blast_big", cut(big, onsets(big)[0], onsets(big)[0] + int(3.2 * SR), fade=1.2), 0.98, 1.6)
+    # drone: a steady stretch, its end cross-faded into its start so it loops
+    dr = load("drone_flight.mp3")
+    a, n_loop, xf = int(5.0 * SR), int(3.0 * SR), int(0.25 * SR)
+    loop = dr[a:a + n_loop].copy()
+    tail = dr[a + n_loop:a + n_loop + xf]
+    ramp = np.linspace(0, 1, xf)
+    loop[:xf] = loop[:xf] * ramp + tail * (1 - ramp)
+    save("drone_loop", loop, 0.8, 1.0)
 
 
 main()

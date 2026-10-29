@@ -1,6 +1,7 @@
 extends SceneTree
-## Dev test for the NPC behaviours: holding ground after a hit, choking on a
-## neck wound (knees, then rolling on the floor) until bleeding out, the player's orders and the armed NPC's
+## Dev test for the NPC behaviours (house level): holding ground after a hit,
+## choking on a neck wound (knees, then rolling on the floor) until bleeding
+## out, a soldier left for dead and finished off, the player's orders and the armed NPC's
 ## suicide. Run: godot -s res://tools/npc_behaviour_test.gd (env SHOTS=<dir>)
 
 var frame := 0
@@ -15,6 +16,7 @@ var _max_off := 0.0
 
 
 func _initialize() -> void:
+	root.get_node("Settings").level = "house"
 	change_scene_to_file("res://scenes/game.tscn")
 
 
@@ -40,11 +42,12 @@ func _fire() -> void:
 	w.trigger()
 
 
-func _spawn(pos: Vector3, armed := false) -> Npc:
+func _spawn(pos: Vector3, armed := false, team := 0) -> Npc:
 	for n in get_nodes_in_group("npcs"):
 		n.queue_free()
 	var n := Npc.new()
 	n.armed = armed
+	n.team = team
 	n.position = pos
 	game.add_child(n)
 	n.died.connect(game._on_npc_died)
@@ -153,7 +156,7 @@ func _process(_delta: float) -> bool:
 			_wait(1.2)
 		14:
 			_shot("b08_gun_to_temple")
-			var muzzle: Vector3 = npc._gun.global_transform * Npc.GUN_MUZZLE
+			var muzzle: Vector3 = npc._gun.global_transform * npc._muzzle
 			print("muzzle to head centre %.3f m" % muzzle.distance_to(npc.head.global_position))
 			_wait(0.1)
 		15:
@@ -187,10 +190,12 @@ func _process(_delta: float) -> bool:
 				_step = 21
 			return false
 		21:
-			npc = _spawn(Vector3(-4.0, 0.05, -1.4), true)
+			npc = _spawn(Vector3(-4.0, 0.05, -1.4), true, 1)
+			npc.post = npc.position
 			Npc.ai_enabled = true
 			_wait(0.4)
 		22:
+			npc._target = p
 			npc._start_fight()
 			_t0 = _now()
 			_wait(1.0)
@@ -202,7 +207,7 @@ func _process(_delta: float) -> bool:
 			Npc.ai_enabled = false
 			p._respawn()
 			p.global_position = Vector3(-4.0, 0.05, -4.5)
-			npc = _spawn(Vector3(-4.0, 0.05, -1.4), true)
+			npc = _spawn(Vector3(-4.0, 0.05, -1.4), true, 1)
 			_wait(0.5)
 		25:
 			_aim_at(npc.head.to_global(Vector3(0, -0.13, -0.03)))
@@ -215,20 +220,27 @@ func _process(_delta: float) -> bool:
 			print("choking armed: phase=", npc._choke_phase, " ammo=", npc._ammo, " player hp=", p.health)
 			_shot("b14_choking_floor_firing")
 			Player.immortal = true
-			Npc.set_xray(true, self)
-			npc = _spawn(Vector3(-4.0, 0.05, -1.4))
+			p._respawn()
+			p.global_position = Vector3(-4.0, 0.05, -4.5)
+			npc = _spawn(Vector3(-4.0, 0.05, -1.4), false, 1)
 			_wait(0.5)
 		28:
+			# a lethal hit he survives: down, writhing, bleeding out slowly
+			npc._go_down()
+			npc._knockdown(npc.chest, npc.chest.global_position, Vector3(0, 0, 1), 6.0)
+			_wait(3.0)
+		29:
+			print("downed: state=", npc.state, " (7=CHOKE) phase=", npc._choke_phase, " health=%.0f dead=" % npc.health, npc.dead)
+			_shot("b15_downed")
 			_aim_at(npc.chest.global_position)
 			_fire()
-			_wait(0.2)
-		29:
-			_aim_at(npc.thigh_l.global_position)
-			_fire()
-			_wait(1.5)
+			_wait(0.3)
 		30:
-			_shot("b15_xray")
-			print("xray: channels=", npc._channels.size(), " nodes=", npc._xray_nodes.size())
+			_aim_at(npc.chest.global_position)
+			_fire()
+			_wait(0.6)
+		31:
+			print("finished off: dead=", npc.dead, " kills=", game.kills)
 			quit()
 	_step += 1
 	return false
