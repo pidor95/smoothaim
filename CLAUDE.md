@@ -12,7 +12,8 @@ https://github.com/pidor95/smoothaim/releases/download/latest/PhysicsBox.apk
 - Blender 4.2.3 headless (`/opt/blender/blender-4.2.3-linux-x64/blender -b -P script.py`).
 - Android: arm64, `physicsbox/android/debug.keystore` (androiddebugkey / android),
   экспорт `build/PhysicsBox.apk`. CI: `.github/workflows/physicsbox-android.yml`
-  (пуш в `physicsbox/**` → релиз `latest`).
+  (пуш в `physicsbox/**` → релиз `latest`). `target_commitish` из шага релиза убран: action-gh-release
+  падал на «Updating commit» (HttpError), хотя APK собирался — тег `latest` больше не двигается.
 - Тесты: `tools/war_test.gd`, `tools/mechanics_test.gd`, `tools/explosives_test.gd`;
   в `-s` скриптах автолоады только через `root.get_node("Settings")`;
   скриншоты через `xvfb-run ... --rendering-driver vulkan --rendering-method mobile --fixed-fps 60`
