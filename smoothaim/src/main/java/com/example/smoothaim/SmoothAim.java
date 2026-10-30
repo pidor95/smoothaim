@@ -21,7 +21,7 @@ import java.util.Properties;
 
 public class SmoothAim implements ClientModInitializer {
     static final List<Module> MODULES = List.of(
-            new AimBot(), new TriggerBot(), new InvMove(), new Watermark());
+            new AimBot(), new TriggerBot(), new InvMove(), new NoRender(), new Watermark());
 
     static final KeyBinding.Category CATEGORY = KeyBinding.Category.create(Identifier.of("smoothaim", "main"));
 

@@ -76,6 +76,21 @@ public class SmoothAimClientGameTest implements FabricClientGameTest {
             System.out.printf("[smoothaim-test] InvMove: прошёл %.2f блока в инвентаре%n", moved);
             ctx.setScreen(() -> null);
 
+            // NoRender: все пункты, гроза и огонь — игра не должна упасть, небо без дождя.
+            ctx.runOnClient(mc -> {
+                NoRender.INSTANCE.setEnabled(true);
+                for (Setting st : NoRender.INSTANCE.settings) ((Setting.Bool) st).value = true;
+            });
+            srv.runCommand("weather thunder");
+            srv.runCommand("gamemode creative @a");
+            srv.runCommand("execute at @a run setblock ~ ~ ~ minecraft:fire");
+            ctx.waitTicks(40);
+            float rain = ctx.computeOnClient(mc -> mc.world.getRainGradient(1f));
+            if (rain != 0f) throw new AssertionError("NoRender: погода не убрана, rain=" + rain);
+            ctx.takeScreenshot("smoothaim-norender");
+            System.out.println("[smoothaim-test] NoRender: гроза и огонь скрыты, rain=" + rain);
+            srv.runCommand("execute at @a run setblock ~ ~ ~ minecraft:air");
+
             // Меню: открыть, раскрыть AimBot кликом, сделать скриншоты.
             ctx.setScreen(ClickGui::new);
             ctx.waitTicks(10);

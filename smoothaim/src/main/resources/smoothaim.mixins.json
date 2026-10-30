@@ -5,7 +5,13 @@
   "client": [
     "GameRendererMixin",
     "KeyboardMixin",
-    "MouseMixin"
+    "MouseMixin",
+    "NoRenderOverlayMixin",
+    "NoRenderHudMixin",
+    "NoRenderGameRendererMixin",
+    "NoRenderMiscMixin",
+    "NoRenderWorldMixin",
+    "NoRenderParticlesMixin"
   ],
   "injectors": {
     "defaultRequire": 1
