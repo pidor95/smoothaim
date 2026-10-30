@@ -62,6 +62,5 @@ jobs:
           tag_name: latest
           name: Physics Box (последняя сборка)
           body: "Скачать: https://github.com/${{ github.repository }}/releases/download/latest/PhysicsBox.apk"
-          target_commitish: ${{ github.sha }}
           make_latest: true
           files: physicsbox/build/PhysicsBox.apk
