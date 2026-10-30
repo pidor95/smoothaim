@@ -3,15 +3,20 @@
   "id": "smoothaim",
   "version": "${version}",
   "name": "SmoothAim",
-  "description": "AimBot, TriggerBot and a settings menu (Right Shift).",
+  "description": "AimBot, TriggerBot, InvMove, binds and a settings menu (Right Shift).",
   "environment": "client",
   "entrypoints": {
-    "client": ["com.example.smoothaim.SmoothAim"]
+    "client": [
+      "com.example.smoothaim.SmoothAim"
+    ]
   },
   "depends": {
     "fabricloader": ">=0.17.0",
     "minecraft": "~1.21.11",
     "java": ">=21",
     "fabric-api": "*"
-  }
+  },
+  "mixins": [
+    "smoothaim.mixins.json"
+  ]
 }

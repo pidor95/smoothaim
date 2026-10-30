@@ -31,3 +31,13 @@ java {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
 }
+
+// Клиентский автотест: gradle runClientGameTest (запускает игру, проверяет модули, делает скриншоты).
+fabricApi {
+    configureTests {
+        createSourceSet = true
+        modId = "smoothaim-test"
+        enableGameTests = false
+        eula = true
+    }
+}

@@ -12,12 +12,19 @@ public abstract class Module {
     public final Category category;
     public final List<Setting> settings = new ArrayList<>();
     private boolean enabled;
+    /** Код клавиши GLFW, кнопка мыши как Binds.mouse(n), или Binds.NONE. */
+    public int bind = Binds.NONE;
 
     protected Module(String name, String description, Category category, boolean enabled) {
+        this(name, description, category, enabled, Binds.NONE);
+    }
+
+    protected Module(String name, String description, Category category, boolean enabled, int bind) {
         this.name = name;
         this.description = description;
         this.category = category;
         this.enabled = enabled;
+        this.bind = bind;
     }
 
     protected <T extends Setting> T add(T setting) {
@@ -44,6 +51,10 @@ public abstract class Module {
     }
 
     protected void onDisable() {
+    }
+
+    /** Вызывается в начале каждого тика, пока модуль включён. */
+    public void onTick(MinecraftClient mc) {
     }
 
     /** Вызывается каждый кадр, пока модуль включён. dt в секундах. */

@@ -16,7 +16,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.IntConsumer;
 
-/** Квадратное меню: шапка, категории слева, карточки модулей справа. */
+/** Квадратное меню: шапка, категории слева, карточки модулей справа. Перетаскивается за шапку. */
 public class ClickGui extends Screen {
     static final int PANEL = 0xE6141420;
     static final int SIDEBAR = 0x40000000;
@@ -29,6 +29,10 @@ public class ClickGui extends Screen {
     static final int OFF = 0xFF34344A;
 
     private static final int HEADER = 28, SIDE = 92, CARD_HEAD = 30, GAP = 6;
+    static final int CENTER = Integer.MIN_VALUE;
+
+    /** Позиция окна; CENTER — по центру экрана. Сохраняется в конфиг. */
+    static int posX = CENTER, posY = CENTER;
 
     private static Category current = Category.COMBAT;
     private static final Set<Module> expanded = new HashSet<>();
@@ -45,6 +49,9 @@ public class ClickGui extends Screen {
     private double scroll, scrollTarget, mouseX;
     private Setting.Num dragging;
     private int dragX, dragW;
+    private boolean moving;
+    private double moveOffX, moveOffY;
+    private Module listening;
     private float open;
     private long lastFrame = System.nanoTime();
     private float dt;
@@ -56,8 +63,12 @@ public class ClickGui extends Screen {
     @Override
     protected void init() {
         size = Math.min(320, Math.min(width, height) - 24);
-        px = (width - size) / 2;
-        py = (height - size) / 2;
+        place(posX == CENTER ? (width - size) / 2 : posX, posY == CENTER ? (height - size) / 2 : posY);
+    }
+
+    private void place(int x, int y) {
+        px = MathHelper.clamp(x, 0, Math.max(0, width - size));
+        py = MathHelper.clamp(y, 0, Math.max(0, height - size));
         cx = px + SIDE + 8;
         cy = py + HEADER + 8;
         cw = size - SIDE - 16;
@@ -80,26 +91,37 @@ public class ClickGui extends Screen {
         open += (1 - open) * Math.min(1f, dt * 14);
         hits.clear();
 
+        if (moving) {
+            place((int) (mx - moveOffX), (int) (my - moveOffY));
+            posX = px;
+            posY = py;
+        }
         if (dragging != null) dragging.set(dragging.min
                 + MathHelper.clamp((mx - dragX) / (double) dragW, 0, 1) * (dragging.max - dragging.min));
 
         var m = ctx.getMatrices();
         m.pushMatrix();
-        float s = 0.92f + 0.08f * open;
-        m.translate(width / 2f, height / 2f);
+        float s = scale();
+        float ox = px + size / 2f, oy = py + size / 2f;
+        m.translate(ox, oy);
         m.scale(s, s);
-        m.translate(-width / 2f, -height / 2f);
+        m.translate(-ox, -oy);
 
         Render2D.round(ctx, px - 1, py - 1, size + 2, size + 2, 9, LINE);
         Render2D.round(ctx, px, py, size, size, 8, PANEL);
 
-        // Шапка
+        // Шапка — за неё окно перетаскивается
         Render2D.round(ctx, px + 10, py + 8, 12, 12, 3, ACCENT);
         ctx.drawText(textRenderer, "S", px + 14, py + 10, TEXT, false);
         ctx.drawText(textRenderer, "SmoothAim", px + 28, py + 10, TEXT, false);
         String user = client.getSession().getUsername();
         ctx.drawText(textRenderer, user, px + size - 10 - textRenderer.getWidth(user), py + 10, DIM, false);
         ctx.fill(px, py + HEADER, px + size, py + HEADER + 1, LINE);
+        hits.add(new Hit(px, py, size, HEADER, false, b -> {
+            moving = true;
+            moveOffX = mouseX - px;
+            moveOffY = lastMouseY - py;
+        }));
 
         // Категории
         ctx.fill(px, py + HEADER + 1, px + SIDE, py + size - 8, SIDEBAR);
@@ -124,10 +146,15 @@ public class ClickGui extends Screen {
                 }
             }));
         }
-        ctx.drawText(textRenderer, "RShift", px + 10, py + size - 20, DIM, false);
+        String hint = listening != null ? "Жми клавишу" : "СКМ — бинд";
+        ctx.drawText(textRenderer, hint, px + 10, py + size - 20, listening != null ? ACCENT : DIM, false);
 
         renderModules(ctx, mx, my);
         m.popMatrix();
+    }
+
+    private float scale() {
+        return 0.92f + 0.08f * open;
     }
 
     private void renderModules(DrawContext ctx, int mx, int my) {
@@ -143,18 +170,27 @@ public class ClickGui extends Screen {
             float ex = animate("expand:" + mod.name, expanded.contains(mod) ? 1 : 0, 14);
             int h = CARD_HEAD + Math.round(full * ex);
 
-            boolean hover = inside && mx >= cx && mx < cx + cw && my >= y && my < y + CARD_HEAD;
+            boolean hover = inside && my >= y && my < y + CARD_HEAD;
             Render2D.round(ctx, cx, y, cw, h, 6, hover ? CARD_HOVER : CARD);
             ctx.drawText(textRenderer, mod.name, cx + 8, y + 6, TEXT, false);
             ctx.drawText(textRenderer, mod.description, cx + 8, y + 17, DIM, false);
 
+            // Бинд
+            String bind = listening == mod ? "..." : Binds.name(mod.bind);
+            int bw = textRenderer.getWidth(bind) + 8, bx = cx + cw - 36 - bw, by = y + 9;
+            Render2D.round(ctx, bx, by, bw, 12, 3, listening == mod ? ACCENT : OFF);
+            ctx.drawText(textRenderer, bind, bx + 4, by + 2, TEXT, false);
+            hits.add(new Hit(bx, by, bw, 12, true, b -> listening = listening == mod ? null : mod));
+
+            // Переключатель
             float on = animate(mod, mod.isEnabled() ? 1 : 0, 14);
             int sx = cx + cw - 30, sy = y + 9;
             Render2D.round(ctx, sx, sy, 22, 12, 6, Render2D.mix(OFF, ACCENT, on));
             Render2D.round(ctx, sx + 2 + Math.round(10 * on), sy + 2, 8, 8, 4, TEXT);
+            hits.add(new Hit(sx - 4, y, 34, CARD_HEAD, true, b -> mod.toggle()));
 
             hits.add(new Hit(cx, y, cw, CARD_HEAD, true, b -> {
-                if (b == 0 && mouseX >= cx + cw - 36) mod.toggle();
+                if (b == 2) listening = mod;
                 else if (!mod.settings.isEmpty() && !expanded.remove(mod)) expanded.add(mod);
             }));
 
@@ -225,18 +261,23 @@ public class ClickGui extends Screen {
         return rh;
     }
 
-    /** Переводит координаты мыши с учётом анимации масштаба. */
-    private double unscale(double v, double center) {
-        float s = 0.92f + 0.08f * open;
-        return center + (v - center) / s;
-    }
+    private double lastMouseY;
 
     @Override
     public boolean mouseClicked(Click click, boolean doubled) {
-        double mx = unscale(click.x(), width / 2.0);
-        double my = unscale(click.y(), height / 2.0);
+        // Переводим координаты мыши с учётом анимации масштаба.
+        float s = scale();
+        double ox = px + size / 2.0, oy = py + size / 2.0;
+        double mx = ox + (click.x() - ox) / s, my = oy + (click.y() - oy) / s;
         int button = click.button();
         mouseX = mx;
+        lastMouseY = my;
+
+        if (listening != null && button > 2) {
+            listening.bind = Binds.mouse(button);
+            listening = null;
+            return true;
+        }
         boolean inContent = mx >= cx && mx < cx + cw && my >= cy && my < cy + ch;
         for (int i = hits.size() - 1; i >= 0; i--) {
             Hit h = hits.get(i);
@@ -245,12 +286,14 @@ public class ClickGui extends Screen {
                 return true;
             }
         }
+        listening = null;
         return super.mouseClicked(click, doubled);
     }
 
     @Override
     public boolean mouseReleased(Click click) {
         dragging = null;
+        moving = false;
         return super.mouseReleased(click);
     }
 
@@ -262,7 +305,14 @@ public class ClickGui extends Screen {
 
     @Override
     public boolean keyPressed(KeyInput input) {
-        if (input.key() == GLFW.GLFW_KEY_RIGHT_SHIFT) {
+        int key = input.key();
+        if (listening != null) {
+            boolean clear = key == GLFW.GLFW_KEY_ESCAPE || key == GLFW.GLFW_KEY_BACKSPACE || key == GLFW.GLFW_KEY_DELETE;
+            listening.bind = clear ? Binds.NONE : key;
+            listening = null;
+            return true;
+        }
+        if (key == GLFW.GLFW_KEY_RIGHT_SHIFT) {
             close();
             return true;
         }

@@ -3,7 +3,7 @@ package com.example.smoothaim;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
@@ -20,57 +20,49 @@ import java.util.List;
 import java.util.Properties;
 
 public class SmoothAim implements ClientModInitializer {
-    static final AimBot AIM_BOT = new AimBot();
-    static final TriggerBot TRIGGER_BOT = new TriggerBot();
-    static final List<Module> MODULES = List.of(AIM_BOT, TRIGGER_BOT, new Watermark());
+    static final List<Module> MODULES = List.of(
+            new AimBot(), new TriggerBot(), new InvMove(), new Watermark());
 
     static final KeyBinding.Category CATEGORY = KeyBinding.Category.create(Identifier.of("smoothaim", "main"));
 
-    static KeyBinding toggleAim;
-    static KeyBinding toggleTrigger;
     static KeyBinding openGui;
-    static long last = System.nanoTime();
+    private static long last = System.nanoTime();
 
     @Override
     public void onInitializeClient() {
-        toggleAim = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.smoothaim.toggle", InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_R, CATEGORY));
-        toggleTrigger = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.smoothaim.trigger", InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_UNKNOWN, CATEGORY));
         openGui = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.smoothaim.gui", InputUtil.Type.KEYSYM,
                 GLFW.GLFW_KEY_RIGHT_SHIFT, CATEGORY));
         loadConfig();
 
+        ClientTickEvents.START_CLIENT_TICK.register(c -> {
+            for (Module m : MODULES) {
+                if (m.isEnabled()) m.onTick(c);
+            }
+        });
         ClientTickEvents.END_CLIENT_TICK.register(c -> {
-            boolean changed = false;
-            while (toggleAim.wasPressed()) {
-                AIM_BOT.toggle();
-                changed = true;
-            }
-            while (toggleTrigger.wasPressed()) {
-                TRIGGER_BOT.toggle();
-                changed = true;
-            }
-            if (changed) saveConfig();
             while (openGui.wasPressed()) {
                 if (c.currentScreen == null) c.setScreen(new ClickGui());
             }
         });
 
-        HudRenderCallback.EVENT.register((ctx, tickCounter) -> {
-            long now = System.nanoTime();
-            double dt = Math.min((now - last) / 1e9, 0.05);
-            last = now;
+        HudElementRegistry.addLast(Identifier.of("smoothaim", "hud"), (ctx, tickCounter) -> {
             MinecraftClient mc = MinecraftClient.getInstance();
             for (Module m : MODULES) {
-                if (!m.isEnabled()) continue;
-                m.onFrame(mc, dt);
-                m.onHud(ctx, mc);
+                if (m.isEnabled()) m.onHud(ctx, mc);
             }
         });
+    }
+
+    /** Вызывается из GameRendererMixin в начале каждого кадра. */
+    public static void onFrame() {
+        long now = System.nanoTime();
+        double dt = Math.min((now - last) / 1e9, 0.05);
+        last = now;
+        MinecraftClient mc = MinecraftClient.getInstance();
+        for (Module m : MODULES) {
+            if (m.isEnabled()) m.onFrame(mc, dt);
+        }
     }
 
     private static Path configPath() {
@@ -89,22 +81,36 @@ public class SmoothAim implements ClientModInitializer {
         for (Module m : MODULES) {
             String on = p.getProperty(m.name + ".enabled");
             if (on != null) m.setEnabled(Boolean.parseBoolean(on));
+            m.bind = parseInt(p.getProperty(m.name + ".bind"), m.bind);
             for (Setting s : m.settings) {
                 String v = p.getProperty(m.name + "." + s.name);
                 if (v != null) s.load(v);
             }
         }
+        ClickGui.posX = parseInt(p.getProperty("gui.x"), ClickGui.posX);
+        ClickGui.posY = parseInt(p.getProperty("gui.y"), ClickGui.posY);
     }
 
     static void saveConfig() {
         Properties p = new Properties();
         for (Module m : MODULES) {
             p.setProperty(m.name + ".enabled", Boolean.toString(m.isEnabled()));
+            p.setProperty(m.name + ".bind", Integer.toString(m.bind));
             for (Setting s : m.settings) p.setProperty(m.name + "." + s.name, s.save());
         }
+        p.setProperty("gui.x", Integer.toString(ClickGui.posX));
+        p.setProperty("gui.y", Integer.toString(ClickGui.posY));
         try (Writer w = Files.newBufferedWriter(configPath(), StandardCharsets.UTF_8)) {
             p.store(w, "SmoothAim");
         } catch (Exception ignored) {
+        }
+    }
+
+    private static int parseInt(String s, int def) {
+        try {
+            return s == null ? def : Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            return def;
         }
     }
 }

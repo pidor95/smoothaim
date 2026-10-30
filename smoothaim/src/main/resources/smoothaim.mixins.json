@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "com.example.smoothaim.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "GameRendererMixin",
+    "KeyboardMixin",
+    "MouseMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
