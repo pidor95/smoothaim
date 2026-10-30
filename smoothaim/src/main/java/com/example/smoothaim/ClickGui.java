@@ -1,7 +1,9 @@
 package com.example.smoothaim;
 
+import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.input.KeyInput;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.MathHelper;
 import org.lwjgl.glfw.GLFW;
@@ -82,11 +84,11 @@ public class ClickGui extends Screen {
                 + MathHelper.clamp((mx - dragX) / (double) dragW, 0, 1) * (dragging.max - dragging.min));
 
         var m = ctx.getMatrices();
-        m.push();
+        m.pushMatrix();
         float s = 0.92f + 0.08f * open;
-        m.translate(width / 2f, height / 2f, 0);
-        m.scale(s, s, 1);
-        m.translate(-width / 2f, -height / 2f, 0);
+        m.translate(width / 2f, height / 2f);
+        m.scale(s, s);
+        m.translate(-width / 2f, -height / 2f);
 
         Render2D.round(ctx, px - 1, py - 1, size + 2, size + 2, 9, LINE);
         Render2D.round(ctx, px, py, size, size, 8, PANEL);
@@ -125,7 +127,7 @@ public class ClickGui extends Screen {
         ctx.drawText(textRenderer, "RShift", px + 10, py + size - 20, DIM, false);
 
         renderModules(ctx, mx, my);
-        m.pop();
+        m.popMatrix();
     }
 
     private void renderModules(DrawContext ctx, int mx, int my) {
@@ -230,9 +232,10 @@ public class ClickGui extends Screen {
     }
 
     @Override
-    public boolean mouseClicked(double mx, double my, int button) {
-        mx = unscale(mx, width / 2.0);
-        my = unscale(my, height / 2.0);
+    public boolean mouseClicked(Click click, boolean doubled) {
+        double mx = unscale(click.x(), width / 2.0);
+        double my = unscale(click.y(), height / 2.0);
+        int button = click.button();
         mouseX = mx;
         boolean inContent = mx >= cx && mx < cx + cw && my >= cy && my < cy + ch;
         for (int i = hits.size() - 1; i >= 0; i--) {
@@ -242,13 +245,13 @@ public class ClickGui extends Screen {
                 return true;
             }
         }
-        return super.mouseClicked(mx, my, button);
+        return super.mouseClicked(click, doubled);
     }
 
     @Override
-    public boolean mouseReleased(double mx, double my, int button) {
+    public boolean mouseReleased(Click click) {
         dragging = null;
-        return super.mouseReleased(mx, my, button);
+        return super.mouseReleased(click);
     }
 
     @Override
@@ -258,12 +261,12 @@ public class ClickGui extends Screen {
     }
 
     @Override
-    public boolean keyPressed(int key, int scan, int mods) {
-        if (key == GLFW.GLFW_KEY_RIGHT_SHIFT) {
+    public boolean keyPressed(KeyInput input) {
+        if (input.key() == GLFW.GLFW_KEY_RIGHT_SHIFT) {
             close();
             return true;
         }
-        return super.keyPressed(key, scan, mods);
+        return super.keyPressed(input);
     }
 
     @Override

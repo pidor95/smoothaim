@@ -2,5 +2,5 @@
   "key.smoothaim.toggle": "Toggle AimBot",
   "key.smoothaim.trigger": "Toggle TriggerBot",
   "key.smoothaim.gui": "Open SmoothAim menu",
-  "category.smoothaim": "SmoothAim"
+  "key.category.smoothaim.main": "SmoothAim"
 }

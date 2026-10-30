@@ -5,7 +5,7 @@ BUILD:
    OR just open this folder in IntelliJ IDEA and let it import the Gradle project.
 3) Run:  gradlew build        (Windows: gradlew.bat build)
 4) Jar: build/libs/smoothaim-1.0.0.jar  -> put into .minecraft/mods
-   (needs Fabric Loader + Fabric API for 1.21.4)
+   (needs Fabric Loader + Fabric API for 1.21.11)
 
 Right Shift = menu, R = toggle AimBot. TriggerBot key can be bound in Controls.
 Settings are saved to .minecraft/config/smoothaim.properties.

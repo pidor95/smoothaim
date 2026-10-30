@@ -8,6 +8,7 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
+import net.minecraft.util.Identifier;
 import org.lwjgl.glfw.GLFW;
 
 import java.io.Reader;
@@ -23,6 +24,8 @@ public class SmoothAim implements ClientModInitializer {
     static final TriggerBot TRIGGER_BOT = new TriggerBot();
     static final List<Module> MODULES = List.of(AIM_BOT, TRIGGER_BOT, new Watermark());
 
+    static final KeyBinding.Category CATEGORY = KeyBinding.Category.create(Identifier.of("smoothaim", "main"));
+
     static KeyBinding toggleAim;
     static KeyBinding toggleTrigger;
     static KeyBinding openGui;
@@ -32,13 +35,13 @@ public class SmoothAim implements ClientModInitializer {
     public void onInitializeClient() {
         toggleAim = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.smoothaim.toggle", InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_R, "category.smoothaim"));
+                GLFW.GLFW_KEY_R, CATEGORY));
         toggleTrigger = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.smoothaim.trigger", InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_UNKNOWN, "category.smoothaim"));
+                GLFW.GLFW_KEY_UNKNOWN, CATEGORY));
         openGui = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.smoothaim.gui", InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_RIGHT_SHIFT, "category.smoothaim"));
+                GLFW.GLFW_KEY_RIGHT_SHIFT, CATEGORY));
         loadConfig();
 
         ClientTickEvents.END_CLIENT_TICK.register(c -> {
