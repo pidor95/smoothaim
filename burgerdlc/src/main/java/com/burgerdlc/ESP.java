@@ -36,7 +36,9 @@ public class ESP extends Module {
     }
 
     boolean matches(MinecraftClient mc, Entity e) {
-        if (e == mc.player || mc.player == null || !e.isAlive() || e instanceof ArmorStandEntity) return false;
+        // Игроков с HP, спрятанным античитом, всё равно показываем: мёртв — только если убран из мира.
+        if (e == mc.player || mc.player == null || e.isRemoved() || e instanceof ArmorStandEntity) return false;
+        if (!(e instanceof PlayerEntity) && !e.isAlive()) return false;
         if (mc.player.squaredDistanceTo(e) > range.value * range.value) return false;
         if (e instanceof PlayerEntity p) return players.value && !p.isSpectator();
         if (e instanceof Monster) return mobs.value;

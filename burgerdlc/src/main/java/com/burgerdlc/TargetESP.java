@@ -4,6 +4,7 @@ import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.math.Vec3d;
 
 public class TargetESP extends Module {
@@ -29,7 +30,7 @@ public class TargetESP extends Module {
 
     @Override
     public void onWorld(WorldRenderContext ctx, MinecraftClient mc, float td) {
-        if (target == null || !target.isAlive() || target.isRemoved()
+        if (target == null || target.isRemoved() || !(target instanceof PlayerEntity) && !target.isAlive()
                 || System.currentTimeMillis() - lastHit > hold.value * 1000) {
             target = null;
             return;

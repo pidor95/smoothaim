@@ -20,18 +20,33 @@ final class TargetFilter {
         mobs = m.add(new Setting.Bool("Мобы", false));
         animals = m.add(new Setting.Bool("Животные", false));
         invisibles = m.add(new Setting.Bool("Невидимые", true));
-        teams = m.add(new Setting.Bool("Не бить своих", true));
+        // По умолчанию выкл.: на серверах плагины таба кладут всех игроков в скорборд-команды,
+        // и ванильная проверка «в одной команде» отсеивает вообще всех.
+        teams = m.add(new Setting.Bool("Не бить свою команду", false));
     }
 
     boolean test(PlayerEntity self, Entity e) {
-        if (e == self || !(e instanceof LivingEntity living)) return false;
-        if (!living.isAlive() || living.getHealth() <= 0 || e instanceof ArmorStandEntity) return false;
-        if (e.isInvisible() && !invisibles.value) return false;
-        if (teams.value && self.isTeammate(e)) return false;
-        if (e instanceof PlayerEntity pl) return players.value && !pl.isSpectator() && !pl.isCreative();
-        if (e instanceof Monster) return mobs.value;
-        if (e instanceof AnimalEntity) return animals.value;
-        return false;
+        return reject(self, e) == null;
+    }
+
+    /** Почему сущность не подходит, или null, если подходит. Для отладки показывается на экране. */
+    String reject(PlayerEntity self, Entity e) {
+        if (e == self || !(e instanceof LivingEntity living) || e instanceof ArmorStandEntity) return "не цель";
+        // Античиты часто прячут HP чужих игроков (присылают 0), и клиент тогда сам считает их мёртвыми
+        // (isAlive, deathTime). Поэтому игрок мёртв, только когда сервер убрал его из мира.
+        if (living.isRemoved()) return "мёртв";
+        if (!(e instanceof PlayerEntity) && !living.isAlive()) return "мёртв";
+        if (e.isInvisible() && !invisibles.value) return "невидимый";
+        if (teams.value && self.isTeammate(e)) return "твоя команда";
+        if (e instanceof PlayerEntity pl) {
+            if (!players.value) return "игроки выключены";
+            if (pl.isSpectator()) return "наблюдатель";
+            if (pl.isCreative()) return "креатив";
+            return null;
+        }
+        if (e instanceof Monster) return mobs.value ? null : "мобы выключены";
+        if (e instanceof AnimalEntity) return animals.value ? null : "животные выключены";
+        return "не цель";
     }
 
     static boolean holdingWeapon(PlayerEntity p) {

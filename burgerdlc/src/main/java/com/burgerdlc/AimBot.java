@@ -1,7 +1,9 @@
 package com.burgerdlc;
 
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.util.math.Box;
@@ -25,6 +27,7 @@ public class AimBot extends Module {
     final Setting.Bool lock = add(new Setting.Bool("Держать цель", true));
     final Setting.Bool weaponOnly = add(new Setting.Bool("Только с оружием", false));
     final Setting.Bool gcd = add(new Setting.Bool("Под сенсу мыши", true));
+    final Setting.Bool debug = add(new Setting.Bool("Отладка (почему не наводит)", false));
     final TargetFilter filter = new TargetFilter(this);
 
     Entity target;
@@ -201,10 +204,39 @@ public class AimBot extends Module {
     }
 
     private boolean valid(ClientPlayerEntity p, Entity e, double maxAngle) {
-        return filter.test(p, e)
-                && p.distanceTo(e) <= range.value
-                && (walls.value || p.canSee(e))
-                && angleTo(p, e) <= maxAngle / 2;
+        return reject(p, e, maxAngle) == null;
+    }
+
+    private String reject(ClientPlayerEntity p, Entity e, double maxAngle) {
+        String r = filter.reject(p, e);
+        if (r != null) return r;
+        if (p.distanceTo(e) > range.value) return String.format("далеко (%.1f > %.1f)", p.distanceTo(e), range.value);
+        if (!walls.value && !p.canSee(e)) return "за стеной";
+        if (angleTo(p, e) > maxAngle / 2) return String.format("вне FOV (%.0f° > %.0f°)", angleTo(p, e), maxAngle / 2);
+        return null;
+    }
+
+    @Override
+    public void onHud(DrawContext ctx, MinecraftClient mc) {
+        if (!debug.value || mc.player == null || mc.world == null) return;
+        String text;
+        if (activation.is("Зажат ЛКМ") && !mc.options.attackKey.isPressed()) {
+            text = "AimBot: ждёт зажатый ЛКМ";
+        } else if (weaponOnly.value && !TargetFilter.holdingWeapon(mc.player)) {
+            text = "AimBot: нет оружия в руке";
+        } else if (target != null) {
+            text = "AimBot: цель " + target.getName().getString();
+        } else {
+            PlayerEntity near = null;
+            for (PlayerEntity pl : mc.world.getPlayers()) {
+                if (pl != mc.player && (near == null || mc.player.distanceTo(pl) < mc.player.distanceTo(near))) near = pl;
+            }
+            text = near == null ? "AimBot: рядом нет игроков"
+                    : "AimBot: " + near.getName().getString() + " — " + reject(mc.player, near, fov.value);
+        }
+        int w = UI.width(text) + 10, x = (ctx.getScaledWindowWidth() - w) / 2, y = ctx.getScaledWindowHeight() / 2 + 14;
+        Render2D.round(ctx, x, y, w, 13, 4, ClickGui.PANEL);
+        UI.draw(ctx, text, x + 5, y + 3, ClickGui.TEXT);
     }
 
     private static double angleTo(ClientPlayerEntity p, Entity e) {

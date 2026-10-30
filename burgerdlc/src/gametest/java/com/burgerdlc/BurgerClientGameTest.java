@@ -51,6 +51,47 @@ public class BurgerClientGameTest implements FabricClientGameTest {
             ctx.takeScreenshot("burger-aim");
             System.out.printf("[burgerdlc-test] AimBot: угол до зомби %.1f° -> %.1f°%n", before, after);
 
+            // AimBot по игроку как на сервере: оба в одной скорборд-команде (плагин таба), HP спрятано.
+            srv.runCommand("kill @e[type=minecraft:zombie]");
+            srv.runCommand("execute as @a at @s run tp @s ~ ~ ~ 0 0");
+            ctx.waitTicks(5);
+            ctx.runOnClient(mc -> {
+                aim.filter.mobs.value = false;
+                var enemy = new net.minecraft.client.network.OtherClientPlayerEntity(mc.world,
+                        new com.mojang.authlib.GameProfile(java.util.UUID.randomUUID(), "Enemy"));
+                enemy.setId(424242);
+                Vec3d pos = mc.player.getEntityPos().add(-1.6, 0, 2.6);
+                enemy.refreshPositionAndAngles(pos.x, pos.y, pos.z, 180, 0);
+                enemy.setHealth(0); // античит прячет HP
+                mc.world.addEntity(enemy);
+                var sb = mc.world.getScoreboard();
+                var team = sb.addTeam("tab_prefix");
+                sb.addScoreHolderToTeam(mc.player.getNameForScoreboard(), team);
+                sb.addScoreHolderToTeam("Enemy", team);
+                aim.debug.value = true;
+            });
+            ctx.waitTicks(20);
+            ctx.takeScreenshot("burger-aim-player-debug");
+            System.out.println("[burger-test] player debug: " + ctx.computeOnClient(mc -> {
+                var e = mc.world.getEntityById(424242);
+                return "entity=" + e + " target=" + aim.target + " crosshair=" + mc.crosshairTarget.getType()
+                        + (e == null ? "" : " reject=" + aim.filter.reject(mc.player, e) + " canSee=" + mc.player.canSee(e)
+                        + " dist=" + mc.player.distanceTo(e));
+            }));
+            ctx.waitFor(mc -> mc.crosshairTarget instanceof EntityHitResult h
+                    && h.getEntity() instanceof net.minecraft.entity.player.PlayerEntity, 60);
+            ctx.takeScreenshot("burger-aim-player");
+            System.out.println("[burger-test] AimBot по игроку (одна команда, HP скрыто): навёлся");
+            ctx.runOnClient(mc -> {
+                mc.world.removeEntity(424242, net.minecraft.entity.Entity.RemovalReason.DISCARDED);
+                aim.filter.mobs.value = true;
+                aim.debug.value = false;
+            });
+            srv.runCommand("execute at @a run summon minecraft:zombie ~1.2 ~ ~2.8 {NoAI:1b,PersistenceRequired:1b,Silent:1b}");
+            ctx.waitFor(mc -> zombie(mc) != null);
+            srv.runCommand("execute as @a at @s run tp @s ~ ~ ~ 0 0");
+            ctx.waitFor(mc -> mc.crosshairTarget instanceof EntityHitResult h && h.getEntity() instanceof ZombieEntity, 60);
+
             // TriggerBot: прицел на зомби — должен ударить сам.
             ctx.runOnClient(mc -> trigger.setEnabled(true));
             ctx.waitFor(mc -> zombie(mc) == null || zombie(mc).getHealth() < zombie(mc).getMaxHealth(), 60);
