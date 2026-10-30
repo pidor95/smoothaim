@@ -114,6 +114,37 @@ public class BurgerClientGameTest implements FabricClientGameTest {
             ctx.takeScreenshot("burger-visuals");
             System.out.println("[burger-test] Визуалы: отрисованы без ошибок");
 
+            // ESP: зомби впереди — 2D коробка, HP, ник, свечение, трейсер. Плюс вся оптимизация.
+            ctx.runOnClient(mc -> {
+                for (Module m : BurgerDLC.MODULES) {
+                    if (m.category == Category.VISUALS && !(m instanceof ESP)) m.setEnabled(false);
+                    if (m.category == Category.OPTIMIZATION) m.setEnabled(true);
+                }
+                ESP esp = module(ESP.class);
+                esp.setEnabled(true);
+                esp.mobs.value = true;
+                esp.glow.value = true;
+                esp.tracers.value = true;
+                mc.options.setPerspective(net.minecraft.client.option.Perspective.FIRST_PERSON);
+            });
+            srv.runCommand("execute as @a at @s run tp @s ~ ~ ~ 0 0");
+            srv.runCommand("tp @e[type=minecraft:zombie] @p");
+            srv.runCommand("execute as @e[type=minecraft:zombie] at @s run tp @s ~1.5 ~ ~6");
+            srv.runCommand("execute at @a run summon minecraft:zombie ~-2 ~ ~9 {NoAI:1b,PersistenceRequired:1b,Silent:1b}");
+            ctx.waitTicks(20);
+            ctx.takeScreenshot("burger-esp-2d");
+            ctx.runOnClient(mc -> module(ESP.class).box.index = 1);
+            ctx.waitTicks(5);
+            ctx.takeScreenshot("burger-esp-3d");
+            boolean cloudsOff = ctx.computeOnClient(mc -> mc.options.getCloudRenderMode().getValue() == net.minecraft.client.option.CloudRenderMode.OFF);
+            if (!cloudsOff) throw new AssertionError("Fast Settings не выключил облака");
+            System.out.println("[burger-test] ESP и оптимизация: без ошибок, облака выключены");
+            ctx.runOnClient(mc -> {
+                for (Module m : BurgerDLC.MODULES) {
+                    if (m.category == Category.OPTIMIZATION || m instanceof ESP) m.setEnabled(false);
+                }
+            });
+
             // FullBright + Time Changer «Ночь».
             ctx.runOnClient(mc -> {
                 TimeChanger.INSTANCE.setEnabled(true);
@@ -154,6 +185,18 @@ public class BurgerClientGameTest implements FabricClientGameTest {
             ctx.getInput().pressMouse(GLFW.GLFW_MOUSE_BUTTON_LEFT);
             ctx.waitTicks(10);
             ctx.takeScreenshot("burger-gui-visuals");
+            // Тема: открыть пипетку «Цвет 1».
+            ctx.runOnClient(mc -> {
+                Theme.INSTANCE.first.open = true;
+            });
+            ctx.setScreen(() -> null);
+            ctx.runOnClient(mc -> {
+                ClickGui.current = Category.DISPLAY;
+                ClickGui.expanded.add(Theme.INSTANCE);
+                mc.setScreen(new ClickGui());
+            });
+            ctx.waitTicks(10);
+            ctx.takeScreenshot("burger-gui-theme");
             ctx.setScreen(() -> null);
         }
     }

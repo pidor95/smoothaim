@@ -4,7 +4,7 @@ import net.minecraft.util.math.MathHelper;
 
 /** Палитры визуалов. phase — 0..1, сдвиг по градиенту (по кругу, по длине следа и т.п.). */
 final class Colors {
-    static final String[] MODES = {"Бургер", "Радуга", "Неон", "Лёд", "Белый"};
+    static final String[] MODES = {"Тема", "Радуга", "Белый"};
 
     private Colors() {
     }
@@ -13,15 +13,25 @@ final class Colors {
         return m.add(new Setting.Mode("Цвет", MODES));
     }
 
+    /** Цвет темы (перелив между «Цвет 1» и «Цвет 2»). */
+    static int theme(double phase, int alpha) {
+        double t = time() * Theme.speed() + phase;
+        return argb(alpha, lerp(Theme.color1(), Theme.color2(), wave(t)));
+    }
+
     static int get(Setting.Mode mode, double phase, int alpha) {
-        double t = (System.currentTimeMillis() % 4000) / 4000.0 + phase;
-        int rgb = switch (mode.get()) {
-            case "Радуга" -> java.awt.Color.HSBtoRGB((float) (t % 1.0), 0.65f, 1f);
-            case "Неон" -> lerp(0xB44CFF, 0x3CE6FF, wave(t));
-            case "Лёд" -> lerp(0x7FD7FF, 0xFFFFFF, wave(t));
-            case "Белый" -> 0xFFFFFF;
-            default -> lerp(0xFF9A1F, 0xFFD65A, wave(t));
+        return switch (mode.get()) {
+            case "Радуга" -> argb(alpha, java.awt.Color.HSBtoRGB((float) ((time() + phase) % 1.0), 0.65f, 1f));
+            case "Белый" -> argb(alpha, 0xFFFFFF);
+            default -> theme(phase, alpha);
         };
+    }
+
+    private static double time() {
+        return (System.currentTimeMillis() % 400000) / 4000.0;
+    }
+
+    private static int argb(int alpha, int rgb) {
         return (MathHelper.clamp(alpha, 0, 255) << 24) | (rgb & 0xFFFFFF);
     }
 
@@ -29,7 +39,7 @@ final class Colors {
         return 0.5 + 0.5 * Math.sin(t * Math.PI * 2);
     }
 
-    private static int lerp(int a, int b, double t) {
+    static int lerp(int a, int b, double t) {
         int r = (int) (((a >> 16) & 255) + (((b >> 16) & 255) - ((a >> 16) & 255)) * t);
         int g = (int) (((a >> 8) & 255) + (((b >> 8) & 255) - ((a >> 8) & 255)) * t);
         int bl = (int) ((a & 255) + ((b & 255) - (a & 255)) * t);

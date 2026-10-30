@@ -16,7 +16,10 @@
     "CrosshairMixin",
     "FullBrightMixin",
     "TimeChangerMixin",
-    "ViewModelMixin"
+    "ViewModelMixin",
+    "GameRendererAccessor",
+    "EntityMixin",
+    "EntityCullingMixin"
   ],
   "injectors": {
     "defaultRequire": 1

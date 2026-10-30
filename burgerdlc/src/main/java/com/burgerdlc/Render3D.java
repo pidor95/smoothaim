@@ -58,4 +58,37 @@ final class Render3D {
     static int alpha(int argb) {
         return argb >>> 24;
     }
+
+    /** Толстая линия — лента, развёрнутая к камере. */
+    void line(Vec3d a, Vec3d b, int argb, double width) {
+        Vec3d dir = b.subtract(a);
+        Vec3d mid = a.add(b).multiply(0.5).subtract(cam);
+        Vec3d side = dir.crossProduct(mid);
+        if (side.lengthSquared() < 1e-8) side = dir.crossProduct(new Vec3d(0, 1, 0));
+        if (side.lengthSquared() < 1e-8) side = new Vec3d(1, 0, 0);
+        side = side.normalize().multiply(width / 2);
+        quad(false, a.add(side), argb, b.add(side), argb, b.subtract(side), argb, a.subtract(side), argb);
+    }
+
+    /** Полупрозрачные грани коробки. */
+    void box(net.minecraft.util.math.Box b, int argb) {
+        Vec3d[] c = corners(b);
+        int[][] faces = {{0, 1, 3, 2}, {4, 5, 7, 6}, {0, 1, 5, 4}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 3, 7, 5}};
+        for (int[] f : faces) quad(false, c[f[0]], argb, c[f[1]], argb, c[f[2]], argb, c[f[3]], argb);
+    }
+
+    /** Рёбра коробки. */
+    void boxEdges(net.minecraft.util.math.Box b, int argb, double width) {
+        Vec3d[] c = corners(b);
+        int[][] edges = {{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3}, {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+        for (int[] e : edges) line(c[e[0]], c[e[1]], argb, width);
+    }
+
+    private static Vec3d[] corners(net.minecraft.util.math.Box b) {
+        Vec3d[] c = new Vec3d[8];
+        for (int i = 0; i < 8; i++) {
+            c[i] = new Vec3d((i & 1) == 0 ? b.minX : b.maxX, (i & 2) == 0 ? b.minY : b.maxY, (i & 4) == 0 ? b.minZ : b.maxZ);
+        }
+        return c;
+    }
 }

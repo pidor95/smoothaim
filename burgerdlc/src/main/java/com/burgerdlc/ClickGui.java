@@ -23,7 +23,8 @@ public class ClickGui extends Screen {
     static final int CARD = 0xFF1C1C2A;
     static final int CARD_HOVER = 0xFF222234;
     static final int LINE = 0xFF2A2A3C;
-    static final int ACCENT = 0xFFFF9A1F;
+    /** Цвет акцента, обновляется из темы каждый кадр. */
+    static int ACCENT = 0xFFFF9A1F;
     static final int TEXT = 0xFFE6E6F0;
     static final int DIM = 0xFF8A8AA0;
     static final int OFF = 0xFF34344A;
@@ -34,8 +35,8 @@ public class ClickGui extends Screen {
     /** Позиция окна; CENTER — по центру экрана. Сохраняется в конфиг. */
     static int posX = CENTER, posY = CENTER;
 
-    private static Category current = Category.COMBAT;
-    private static final Set<Module> expanded = new HashSet<>();
+    static Category current = Category.COMBAT;
+    static final Set<Module> expanded = new HashSet<>();
     private static final Map<Object, Float> anim = new HashMap<>();
 
     private record Hit(int x, int y, int w, int h, boolean clipped, IntConsumer action) {
@@ -91,6 +92,8 @@ public class ClickGui extends Screen {
         open += (1 - open) * Math.min(1f, dt * 14);
         hits.clear();
 
+        lastMx = mx;
+        lastMy = my;
         if (moving) {
             place((int) (mx - moveOffX), (int) (my - moveOffY));
             posX = px;
@@ -135,9 +138,9 @@ public class ClickGui extends Screen {
             float sel = animate(c, c == current ? 1 : 0, 12);
             if (sel > 0.01f || hover) {
                 Render2D.round(ctx, px + 6, y, SIDE - 12, 16, 4,
-                        Render2D.mix(0x14FFFFFF, 0x30FF9A1F, sel));
+                        Render2D.mix(0x14FFFFFF, (ACCENT & 0xFFFFFF) | 0x30000000, sel));
             }
-            if (sel > 0.01f) ctx.fill(px + 6, y + 4, px + 8, y + 12, Render2D.mix(0x00FF9A1F, ACCENT, sel));
+            if (sel > 0.01f) ctx.fill(px + 6, y + 4, px + 8, y + 12, Render2D.mix(ACCENT & 0xFFFFFF, ACCENT, sel));
             ctx.drawText(textRenderer, c.title, px + 14, y + 4, Render2D.mix(DIM, TEXT, Math.max(sel, hover ? 0.6f : 0)), false);
             hits.add(new Hit(px + 6, y, SIDE - 12, 16, false, b -> {
                 if (current != c) {
@@ -216,7 +219,10 @@ public class ClickGui extends Screen {
         }
     }
 
+    private static final int PICKER = 58;
+
     private static int rowHeight(Setting s) {
+        if (s instanceof Setting.Color c) return c.open ? 18 + PICKER : 18;
         return s instanceof Setting.Num ? 24 : 18;
     }
 
@@ -230,10 +236,15 @@ public class ClickGui extends Screen {
         int rh = rowHeight(s);
         String value = s instanceof Setting.Mode md ? "‹ " + md.get() + " ›"
                 : s instanceof Setting.Num n ? n.format() : "";
-        int valueW = s instanceof Setting.Bool ? 18 : textRenderer.getWidth(value);
+        int valueW = s instanceof Setting.Bool ? 18 : s instanceof Setting.Color ? 24 : textRenderer.getWidth(value);
         ctx.drawText(textRenderer, trim(s.name, w - valueW - 6), x, y + 5, TEXT, false);
 
-        if (s instanceof Setting.Bool b) {
+        if (s instanceof Setting.Color c) {
+            Render2D.round(ctx, x + w - 24, y + 4, 24, 10, 3, LINE);
+            Render2D.round(ctx, x + w - 23, y + 5, 22, 8, 3, 0xFF000000 | c.rgb());
+            if (visible) hits.add(new Hit(x, y, w, 18, true, btn -> c.open = !c.open));
+            if (c.open) renderPicker(ctx, c, x, y + 18, w, visible);
+        } else if (s instanceof Setting.Bool b) {
             float on = animate(b, b.value ? 1 : 0, 14);
             int sx = x + w - 18, sy = y + 4;
             Render2D.round(ctx, sx, sy, 18, 10, 5, Render2D.mix(OFF, ACCENT, on));
@@ -260,6 +271,45 @@ public class ClickGui extends Screen {
         }
         return rh;
     }
+
+    /** Пипетка: квадрат насыщенность/яркость и полоса оттенка. */
+    private void renderPicker(DrawContext ctx, Setting.Color c, int x, int y, int w, boolean visible) {
+        int boxH = PICKER - 16;
+        if (pickColor == c) {
+            float fx = (float) MathHelper.clamp((lastMx - x) / (double) w, 0, 1);
+            if (pickHue) c.hue = fx;
+            else {
+                c.sat = fx;
+                c.bri = 1 - (float) MathHelper.clamp((lastMy - y) / (double) boxH, 0, 1);
+            }
+        }
+        for (int i = 0; i < w; i += 2) {
+            int top = 0xFF000000 | java.awt.Color.HSBtoRGB(c.hue, i / (float) w, 1f);
+            ctx.fillGradient(x + i, y, x + Math.min(w, i + 2), y + boxH, top, 0xFF000000);
+        }
+        int kx = x + Math.round(c.sat * (w - 1)), ky = y + Math.round((1 - c.bri) * (boxH - 1));
+        ctx.drawStrokedRectangle(kx - 2, ky - 2, 5, 5, 0xFFFFFFFF);
+        int hy = y + boxH + 5;
+        for (int i = 0; i < w; i += 2) {
+            ctx.fill(x + i, hy, x + Math.min(w, i + 2), hy + 6, 0xFF000000 | java.awt.Color.HSBtoRGB(i / (float) w, 1f, 1f));
+        }
+        int hx = x + Math.round(c.hue * (w - 1));
+        ctx.fill(hx - 1, hy - 1, hx + 2, hy + 7, 0xFFFFFFFF);
+        if (visible) {
+            hits.add(new Hit(x, y, w, boxH, true, btn -> {
+                pickColor = c;
+                pickHue = false;
+            }));
+            hits.add(new Hit(x, hy - 2, w, 10, true, btn -> {
+                pickColor = c;
+                pickHue = true;
+            }));
+        }
+    }
+
+    private Setting.Color pickColor;
+    private boolean pickHue;
+    private double lastMx, lastMy;
 
     private String trim(String text, int maxWidth) {
         if (textRenderer.getWidth(text) <= maxWidth) return text;
@@ -298,6 +348,7 @@ public class ClickGui extends Screen {
     @Override
     public boolean mouseReleased(Click click) {
         dragging = null;
+        pickColor = null;
         moving = false;
         return super.mouseReleased(click);
     }

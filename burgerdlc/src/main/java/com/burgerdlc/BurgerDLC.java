@@ -26,8 +26,9 @@ public class BurgerDLC implements ClientModInitializer {
             new AimBot(), new TriggerBot(),
             new InvMove(),
             new ChinaHat(), new JumpCircles(), new TargetESP(), new Trails(), new HitParticles(),
-            new Crosshair(), new FullBright(), new TimeChanger(), new ViewModel(),
-            new NoRender(), new Watermark());
+            new ESP(), new Crosshair(), new FullBright(), new TimeChanger(), new ViewModel(),
+            new EntityCulling(), new ParticleLimit(), new FastSettings(),
+            new Theme(), new NoRender(), new Watermark());
 
     static final KeyBinding.Category CATEGORY = KeyBinding.Category.create(Identifier.of("burgerdlc", "main"));
 
@@ -83,6 +84,8 @@ public class BurgerDLC implements ClientModInitializer {
         double dt = Math.min((now - last) / 1e9, 0.05);
         last = now;
         MinecraftClient mc = MinecraftClient.getInstance();
+        Theme.INSTANCE.sync();
+        ClickGui.ACCENT = Colors.theme(0, 255);
         for (Module m : MODULES) {
             if (m.isEnabled()) m.onFrame(mc, dt);
         }

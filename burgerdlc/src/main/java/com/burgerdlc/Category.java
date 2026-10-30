@@ -4,6 +4,7 @@ public enum Category {
     COMBAT("Combat"),
     MOVEMENT("Movement"),
     VISUALS("Visuals"),
+    OPTIMIZATION("Optimization"),
     DISPLAY("Display");
 
     public final String title;

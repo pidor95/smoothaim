@@ -103,4 +103,39 @@ public abstract class Setting {
             }
         }
     }
+
+    /** Цвет в HSV, чтобы удобно выбирать в пипетке. */
+    public static final class Color extends Setting {
+        public float hue, sat, bri;
+        public boolean open;
+
+        public Color(String name, int rgb) {
+            super(name);
+            set(rgb);
+        }
+
+        public void set(int rgb) {
+            float[] hsb = java.awt.Color.RGBtoHSB((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255, null);
+            hue = hsb[0];
+            sat = hsb[1];
+            bri = hsb[2];
+        }
+
+        public int rgb() {
+            return java.awt.Color.HSBtoRGB(hue, sat, bri) & 0xFFFFFF;
+        }
+
+        @Override
+        String save() {
+            return String.format("%06X", rgb());
+        }
+
+        @Override
+        void load(String s) {
+            try {
+                set(Integer.parseInt(s, 16));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+    }
 }
