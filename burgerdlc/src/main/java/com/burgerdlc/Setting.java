@@ -138,4 +138,20 @@ public abstract class Setting {
             }
         }
     }
+
+    /** Заголовок группы в списке настроек; ничего не хранит. */
+    public static final class Header extends Setting {
+        public Header(String name) {
+            super(name);
+        }
+
+        @Override
+        String save() {
+            return "";
+        }
+
+        @Override
+        void load(String s) {
+        }
+    }
 }

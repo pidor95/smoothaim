@@ -1,7 +1,10 @@
 package com.burgerdlc.mixin;
 
 import com.burgerdlc.NoRender;
-import com.burgerdlc.ParticleLimit;
+import com.burgerdlc.Optimizer;
+import net.minecraft.client.particle.Particle;
+import net.minecraft.particle.ParticleEffect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import net.minecraft.client.particle.ParticleManager;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -23,9 +26,11 @@ public class NoRenderParticlesMixin {
         if (NoRender.on(NoRender.INSTANCE.particles)) ci.cancel();
     }
 
-    /** Particle Limit: часть новых частиц просто не добавляем. */
-    @Inject(method = "addParticle(Lnet/minecraft/client/particle/Particle;)V", at = @At("HEAD"), cancellable = true)
-    private void burger$limit(CallbackInfo ci) {
-        if (ParticleLimit.drop()) ci.cancel();
+    /** Оптимизатор: часть частиц и все дальние не создаём вовсе. */
+    @Inject(method = "addParticle(Lnet/minecraft/particle/ParticleEffect;DDDDDD)Lnet/minecraft/client/particle/Particle;",
+            at = @At("HEAD"), cancellable = true)
+    private void burger$limit(ParticleEffect effect, double x, double y, double z, double vx, double vy, double vz,
+                              CallbackInfoReturnable<Particle> cir) {
+        if (Optimizer.dropParticle(x, y, z)) cir.setReturnValue(null);
     }
 }

@@ -197,6 +197,13 @@ public class BurgerClientGameTest implements FabricClientGameTest {
             });
             ctx.waitTicks(10);
             ctx.takeScreenshot("burger-gui-theme");
+            ctx.runOnClient(mc -> {
+                ClickGui.current = Category.OPTIMIZATION;
+                ClickGui.expanded.add(Optimizer.INSTANCE);
+                mc.setScreen(new ClickGui());
+            });
+            ctx.waitTicks(10);
+            ctx.takeScreenshot("burger-gui-optimizer");
             ctx.setScreen(() -> null);
         }
     }

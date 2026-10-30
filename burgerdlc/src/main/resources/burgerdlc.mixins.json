@@ -19,7 +19,10 @@
     "ViewModelMixin",
     "GameRendererAccessor",
     "EntityMixin",
-    "EntityCullingMixin"
+    "OptimizerEntityMixin",
+    "OptimizerBlockEntityMixin",
+    "OptimizerFpsMixin",
+    "OptimizerToastMixin"
   ],
   "injectors": {
     "defaultRequire": 1

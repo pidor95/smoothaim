@@ -27,7 +27,7 @@ public class BurgerDLC implements ClientModInitializer {
             new InvMove(),
             new ChinaHat(), new JumpCircles(), new TargetESP(), new Trails(), new HitParticles(),
             new ESP(), new Crosshair(), new FullBright(), new TimeChanger(), new ViewModel(),
-            new EntityCulling(), new ParticleLimit(), new FastSettings(),
+            new Optimizer(),
             new Theme(), new NoRender(), new Watermark());
 
     static final KeyBinding.Category CATEGORY = KeyBinding.Category.create(Identifier.of("burgerdlc", "main"));

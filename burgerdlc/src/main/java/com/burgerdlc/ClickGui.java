@@ -175,10 +175,10 @@ public class ClickGui extends Screen {
 
             boolean hover = inside && my >= y && my < y + CARD_HEAD;
             Render2D.round(ctx, cx, y, cw, h, 6, hover ? CARD_HOVER : CARD);
-            ctx.drawText(textRenderer, mod.name, cx + 8, y + 6, TEXT, false);
             // Бинд
             String bind = listening == mod ? "..." : Binds.name(mod.bind);
             int bw = textRenderer.getWidth(bind) + 8, bx = cx + cw - 36 - bw, by = y + 9;
+            ctx.drawText(textRenderer, trim(mod.name, bx - cx - 12), cx + 8, y + 6, TEXT, false);
             ctx.drawText(textRenderer, trim(mod.description, bx - cx - 12), cx + 8, y + 17, DIM, false);
             Render2D.round(ctx, bx, by, bw, 12, 3, listening == mod ? ACCENT : OFF);
             ctx.drawText(textRenderer, bind, bx + 4, by + 2, TEXT, false);
@@ -223,6 +223,7 @@ public class ClickGui extends Screen {
 
     private static int rowHeight(Setting s) {
         if (s instanceof Setting.Color c) return c.open ? 18 + PICKER : 18;
+        if (s instanceof Setting.Header) return 16;
         return s instanceof Setting.Num ? 24 : 18;
     }
 
@@ -234,6 +235,12 @@ public class ClickGui extends Screen {
 
     private int renderSetting(DrawContext ctx, Setting s, int x, int y, int w, int mx, int my, boolean visible) {
         int rh = rowHeight(s);
+        if (s instanceof Setting.Header) {
+            ctx.drawText(textRenderer, s.name.toUpperCase(), x, y + 6, ACCENT, false);
+            int tw = textRenderer.getWidth(s.name.toUpperCase());
+            ctx.fill(x + tw + 6, y + 10, x + w, y + 11, LINE);
+            return rh;
+        }
         String value = s instanceof Setting.Mode md ? "‹ " + md.get() + " ›"
                 : s instanceof Setting.Num n ? n.format() : "";
         int valueW = s instanceof Setting.Bool ? 18 : s instanceof Setting.Color ? 24 : textRenderer.getWidth(value);
