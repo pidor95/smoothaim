@@ -28,7 +28,7 @@ public class ClickGui extends Screen {
     static final int DIM = 0xFF8A8AA0;
     static final int OFF = 0xFF34344A;
 
-    private static final int HEADER = 28, SIDE = 92, CARD_HEAD = 30, GAP = 6;
+    private static final int HEADER = 28, SIDE = 84, CARD_HEAD = 30, GAP = 6;
     static final int CENTER = Integer.MIN_VALUE;
 
     /** Позиция окна; CENTER — по центру экрана. Сохраняется в конфиг. */
@@ -62,7 +62,7 @@ public class ClickGui extends Screen {
 
     @Override
     protected void init() {
-        size = Math.min(320, Math.min(width, height) - 24);
+        size = Math.min(360, Math.min(width, height) - 16);
         place(posX == CENTER ? (width - size) / 2 : posX, posY == CENTER ? (height - size) / 2 : posY);
     }
 
@@ -173,11 +173,10 @@ public class ClickGui extends Screen {
             boolean hover = inside && my >= y && my < y + CARD_HEAD;
             Render2D.round(ctx, cx, y, cw, h, 6, hover ? CARD_HOVER : CARD);
             ctx.drawText(textRenderer, mod.name, cx + 8, y + 6, TEXT, false);
-            ctx.drawText(textRenderer, mod.description, cx + 8, y + 17, DIM, false);
-
             // Бинд
             String bind = listening == mod ? "..." : Binds.name(mod.bind);
             int bw = textRenderer.getWidth(bind) + 8, bx = cx + cw - 36 - bw, by = y + 9;
+            ctx.drawText(textRenderer, trim(mod.description, bx - cx - 12), cx + 8, y + 17, DIM, false);
             Render2D.round(ctx, bx, by, bw, 12, 3, listening == mod ? ACCENT : OFF);
             ctx.drawText(textRenderer, bind, bx + 4, by + 2, TEXT, false);
             hits.add(new Hit(bx, by, bw, 12, true, b -> listening = listening == mod ? null : mod));
@@ -229,7 +228,10 @@ public class ClickGui extends Screen {
 
     private int renderSetting(DrawContext ctx, Setting s, int x, int y, int w, int mx, int my, boolean visible) {
         int rh = rowHeight(s);
-        ctx.drawText(textRenderer, s.name, x, y + 5, TEXT, false);
+        String value = s instanceof Setting.Mode md ? "‹ " + md.get() + " ›"
+                : s instanceof Setting.Num n ? n.format() : "";
+        int valueW = s instanceof Setting.Bool ? 18 : textRenderer.getWidth(value);
+        ctx.drawText(textRenderer, trim(s.name, w - valueW - 6), x, y + 5, TEXT, false);
 
         if (s instanceof Setting.Bool b) {
             float on = animate(b, b.value ? 1 : 0, 14);
@@ -238,12 +240,10 @@ public class ClickGui extends Screen {
             Render2D.round(ctx, sx + 2 + Math.round(8 * on), sy + 2, 6, 6, 3, TEXT);
             if (visible) hits.add(new Hit(x, y, w, rh, true, btn -> b.value = !b.value));
         } else if (s instanceof Setting.Mode md) {
-            String v = "‹ " + md.get() + " ›";
-            ctx.drawText(textRenderer, v, x + w - textRenderer.getWidth(v), y + 5, ACCENT, false);
+            ctx.drawText(textRenderer, value, x + w - valueW, y + 5, ACCENT, false);
             if (visible) hits.add(new Hit(x, y, w, rh, true, btn -> md.cycle(btn == 1 ? -1 : 1)));
         } else if (s instanceof Setting.Num n) {
-            String v = n.format();
-            ctx.drawText(textRenderer, v, x + w - textRenderer.getWidth(v), y + 5, DIM, false);
+            ctx.drawText(textRenderer, value, x + w - valueW, y + 5, DIM, false);
             int by = y + 17;
             float f = animate(n, (float) n.fraction(), 20);
             Render2D.round(ctx, x, by, w, 3, 1, OFF);
@@ -259,6 +259,11 @@ public class ClickGui extends Screen {
             }));
         }
         return rh;
+    }
+
+    private String trim(String text, int maxWidth) {
+        if (textRenderer.getWidth(text) <= maxWidth) return text;
+        return textRenderer.trimToWidth(text, Math.max(0, maxWidth - textRenderer.getWidth("…"))) + "…";
     }
 
     private double lastMouseY;

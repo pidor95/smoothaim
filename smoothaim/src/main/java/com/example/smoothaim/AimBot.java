@@ -27,7 +27,7 @@ public class AimBot extends Module {
     final Setting.Bool gcd = add(new Setting.Bool("Под сенсу мыши", true));
     final TargetFilter filter = new TargetFilter(this);
 
-    private Entity target;
+    Entity target;
     private double velYaw, velPitch, restYaw, restPitch;
     private Vec3d offset = Vec3d.ZERO;
     private long offsetUntil;

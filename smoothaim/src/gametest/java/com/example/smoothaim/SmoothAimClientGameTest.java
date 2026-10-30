@@ -35,10 +35,17 @@ public class SmoothAimClientGameTest implements FabricClientGameTest {
             });
 
             // AimBot: зомби сбоку, прицел должен довестись на него.
-            srv.runCommand("execute at @a run summon minecraft:zombie ~2.5 ~ ~1.5 "
+            srv.runCommand("execute at @a run summon minecraft:zombie ~1.2 ~ ~2.8 "
                     + "{NoAI:1b,PersistenceRequired:1b,Silent:1b}");
             ctx.waitFor(mc -> zombie(mc) != null);
             double before = ctx.computeOnClient(SmoothAimClientGameTest::angleToZombie);
+            for (int i = 0; i < 6; i++) {
+                ctx.waitTicks(5);
+                System.out.println("[smoothaim-test] " + ctx.computeOnClient(mc -> String.format(
+                        "угол=%.1f target=%s screen=%s yaw=%.1f pitch=%.1f",
+                        angleToZombie(mc), aim.target, mc.currentScreen, mc.player.getYaw(), mc.player.getPitch())));
+            }
+            ctx.takeScreenshot("smoothaim-aim-debug");
             ctx.waitFor(mc -> mc.crosshairTarget instanceof EntityHitResult h && h.getEntity() instanceof ZombieEntity, 60);
             double after = ctx.computeOnClient(SmoothAimClientGameTest::angleToZombie);
             ctx.takeScreenshot("smoothaim-aim");
@@ -57,7 +64,8 @@ public class SmoothAimClientGameTest implements FabricClientGameTest {
             boolean now = ctx.computeOnClient(mc -> aim.isEnabled());
             if (was == now) throw new AssertionError("Бинд R не переключил AimBot");
             System.out.println("[smoothaim-test] Бинд R: AimBot " + was + " -> " + now);
-            ctx.runOnClient(mc -> aim.setEnabled(false));
+            ctx.getInput().pressKey(GLFW.GLFW_KEY_R);
+            ctx.waitTick();
 
             // InvMove: в открытом инвентаре W двигает игрока.
             Vec3d start = ctx.computeOnClient(mc -> mc.player.getEntityPos());
@@ -74,10 +82,10 @@ public class SmoothAimClientGameTest implements FabricClientGameTest {
             ctx.takeScreenshot("smoothaim-gui");
             double[] card = ctx.computeOnClient(mc -> {
                 int w = mc.getWindow().getScaledWidth(), h = mc.getWindow().getScaledHeight();
-                int size = Math.min(320, Math.min(w, h) - 24);
+                int size = Math.min(360, Math.min(w, h) - 16);
                 int px = (w - size) / 2, py = (h - size) / 2;
                 double scale = mc.getWindow().getScaleFactor();
-                return new double[]{(px + 92 + 8 + 40) * scale, (py + 28 + 8 + 15) * scale};
+                return new double[]{(px + 84 + 8 + 40) * scale, (py + 28 + 8 + 15) * scale};
             });
             ctx.getInput().setCursorPos(card[0], card[1]);
             ctx.getInput().pressMouse(GLFW.GLFW_MOUSE_BUTTON_LEFT);
