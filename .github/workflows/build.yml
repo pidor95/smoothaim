@@ -12,7 +12,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.12
-      - run: unzip -q smoothaim-src.zip
       - run: cd smoothaim && gradle build
       - uses: actions/upload-artifact@v4
         with:
