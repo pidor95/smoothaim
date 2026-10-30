@@ -16,7 +16,7 @@ public class AimBot extends Module {
     final Setting.Mode rotation = add(new Setting.Mode("Ротация",
             "SpaceTime", "Плавная", "Человеческая", "Линейная", "Резкая"));
     final Setting.Num speed = add(new Setting.Num("Резкость", 7, 1, 20, 0.5));
-    final Setting.Num maxSpeed = add(new Setting.Num("Макс. град/сек", 420, 60, 1080, 10));
+    final Setting.Num maxSpeed = add(new Setting.Num("Макс. град/сек", 300, 60, 1080, 10));
     final Setting.Num jitter = add(new Setting.Num("Рандом точки", 0.2, 0, 1, 0.05));
     final Setting.Mode point = add(new Setting.Mode("Точка", "Ближайшая", "Голова", "Тело", "Центр"));
     final Setting.Mode priority = add(new Setting.Mode("Приоритет", "Угол", "Дистанция", "Здоровье"));
@@ -27,13 +27,31 @@ public class AimBot extends Module {
     final Setting.Bool lock = add(new Setting.Bool("Держать цель", true));
     final Setting.Bool weaponOnly = add(new Setting.Bool("Только с оружием", false));
     final Setting.Bool gcd = add(new Setting.Bool("Под сенсу мыши", true));
+
+    final Setting.Header humanHeader = add(new Setting.Header("Естественность"));
+    final Setting.Bool mouseOnly = add(new Setting.Bool("Только пока двигаешь мышью", true));
+    final Setting.Num reactionMin = add(new Setting.Num("Реакция от, мс", 90, 0, 400, 10));
+    final Setting.Num reactionMax = add(new Setting.Num("Реакция до, мс", 180, 0, 500, 10));
+    final Setting.Num verticalPower = add(new Setting.Num("Сила по вертикали, %", 45, 0, 100, 5));
+    final Setting.Num lag = add(new Setting.Num("Отставание от цели, сек", 0.08, 0, 0.3, 0.01));
+    final Setting.Num speedVariance = add(new Setting.Num("Разброс скорости, %", 25, 0, 60, 5));
     final Setting.Bool debug = add(new Setting.Bool("Отладка (почему не наводит)", false));
     final TargetFilter filter = new TargetFilter(this);
 
     Entity target;
     private double velYaw, velPitch, restYaw, restPitch;
-    private Vec3d offset = Vec3d.ZERO;
-    private long offsetUntil;
+    private Vec3d offsetFrom = Vec3d.ZERO, offsetTo = Vec3d.ZERO;
+    private long offsetStart, offsetUntil;
+
+    // Естественность: реакция, движение мыши игрока, скорость цели.
+    private long targetSince, reaction;
+    private double expectedYaw = Double.NaN, expectedPitch = Double.NaN;
+    private long lastUserMove;
+    private double userSpeed;
+    private Vec3d lastTargetPos;
+    private Vec3d targetVel = Vec3d.ZERO;
+    private final double noiseSeed = Math.random() * 1000;
+    private double springOmegaMul = 1, springZeta = 0.9;
 
     public AimBot() {
         super("AimBot", "Наводка на цель, разные ротации", Category.COMBAT, true, GLFW.GLFW_KEY_R);
@@ -49,9 +67,36 @@ public class AimBot extends Module {
         velYaw = velPitch = 0;
     }
 
+    /** Двигал ли игрок мышь сам: камера ушла не туда, куда мы её поставили в прошлом кадре. */
+    private void trackUserMouse(ClientPlayerEntity p, double dt) {
+        if (!Double.isNaN(expectedYaw)) {
+            double moved = Math.abs(MathHelper.wrapDegrees(p.getYaw() - expectedYaw)) + Math.abs(p.getPitch() - expectedPitch);
+            if (moved > 0.01) {
+                lastUserMove = System.currentTimeMillis();
+                userSpeed = userSpeed * 0.7 + moved / Math.max(dt, 1e-3) * 0.3;
+            }
+        }
+        expectedYaw = p.getYaw();
+        expectedPitch = p.getPitch();
+    }
+
+    /** Сила наводки 0..1: без движения мыши — ноль, при быстром движении — полная. */
+    private double mouseFactor() {
+        if (!mouseOnly.value) return 1;
+        if (System.currentTimeMillis() - lastUserMove > 150) return 0;
+        return MathHelper.clamp(userSpeed / 40.0, 0.35, 1.0);
+    }
+
+    /** Плавный шум -1..1 из нескольких синусов: скорость «гуляет», а не дёргается. */
+    private double noise(double t) {
+        t += noiseSeed;
+        return (Math.sin(t * 1.3) + Math.sin(t * 2.9 + 1.7) * 0.6 + Math.sin(t * 5.3 + 4.1) * 0.3) / 1.9;
+    }
+
     @Override
     public void onFrame(MinecraftClient mc, double dt) {
         ClientPlayerEntity p = mc.player;
+        if (p != null) trackUserMouse(p, dt);
         if (p == null || mc.world == null || mc.currentScreen != null
                 || activation.is("Зажат ЛКМ") && !mc.options.attackKey.isPressed()
                 || weaponOnly.value && !TargetFilter.holdingWeapon(p)) {
@@ -60,15 +105,41 @@ public class AimBot extends Module {
         }
 
         Entity t = pickTarget(mc, p);
-        if (t != target) offsetUntil = 0;
+        if (t != target) {
+            offsetUntil = 0;
+            lastTargetPos = null;
+            targetVel = Vec3d.ZERO;
+            targetSince = System.currentTimeMillis();
+            double lo = Math.min(reactionMin.value, reactionMax.value), hi = Math.max(reactionMin.value, reactionMax.value);
+            reaction = Math.round(lo + Math.random() * (hi - lo));
+            // Для SpaceTime: у каждой цели своя «рука» — скорость ±20%, демпфирование 0.72–0.98.
+            springOmegaMul = 0.8 + Math.random() * 0.4;
+            springZeta = 0.72 + Math.random() * 0.26;
+        }
         target = t;
         if (t == null) {
             velYaw = velPitch = 0;
             return;
         }
 
+        // Скорость цели (сглаженная) — чтобы целиться чуть «позади», как человек.
+        Vec3d tp = t.getEntityPos();
+        if (lastTargetPos != null && dt > 0) {
+            targetVel = targetVel.multiply(0.8).add(tp.subtract(lastTargetPos).multiply(0.2 / dt));
+        }
+        lastTargetPos = tp;
+
+        // Реакция: первые миллисекунды после появления цели ничего не делаем.
+        if (System.currentTimeMillis() - targetSince < reaction) return;
+        double strength = mouseFactor();
+        if (strength <= 0) {
+            velYaw = velPitch = 0;
+            return;
+        }
+
         Vec3d eye = p.getEyePos();
         Vec3d aim = aimPoint(p, t, eye);
+        if (aim != null) aim = aim.subtract(targetVel.multiply(lag.value));
         if (aim == null) {
             // Прицел уже на хитбоксе — гасим скорость и не двигаем камеру.
             velYaw = velPitch = 0;
@@ -82,7 +153,9 @@ public class AimBot extends Module {
         double ep = vertical.value ? pitch - p.getPitch() : 0;
 
         double[] step = step(ey, ep, dt);
-        double sy = step[0], sp = step[1];
+        double variance = 1 + speedVariance.value / 100.0 * noise(System.nanoTime() / 1e9);
+        double sy = step[0] * strength * variance;
+        double sp = step[1] * strength * variance * verticalPower.value / 100.0;
         double limit = maxSpeed.value * dt, len = Math.hypot(sy, sp);
         if (len > limit) {
             sy *= limit / len;
@@ -104,6 +177,8 @@ public class AimBot extends Module {
 
         // Как движение мыши: changeLookDirection сам обновит prevYaw и ограничит pitch.
         p.changeLookDirection(sy / 0.15, sp / 0.15);
+        expectedYaw = p.getYaw();
+        expectedPitch = p.getPitch();
     }
 
     /** Сколько градусов повернуть за этот кадр при ошибке (ey, ep). */
@@ -138,20 +213,29 @@ public class AimBot extends Module {
         }
     }
 
-    /** Точное решение критически задемпфированной пружины за dt — устойчиво при любом FPS. */
+    /**
+     * Пружина SpaceTime. Жёсткость и демпфирование немного свои для каждой цели (как у руки:
+     * то чуть резче, то мягче), при демпфировании меньше 1 — небольшой перелёт и докоррекция.
+     * Считается мелкими подшагами, поэтому устойчива при любом FPS.
+     */
     private double spring(double error, boolean yawAxis, double omega, double dt) {
-        double x0 = -error, v0 = yawAxis ? velYaw : velPitch;
-        double e = Math.exp(-omega * dt);
-        double c = v0 + omega * x0;
-        double x1 = (x0 + c * dt) * e;
-        double v1 = (v0 - omega * c * dt) * e;
-        double step = x1 - x0;
-        if (Math.signum(step) == Math.signum(error) && Math.abs(step) > Math.abs(error)) {
-            step = error;
-            v1 = 0;
+        double w = omega * springOmegaMul;
+        double zeta = yawAxis ? springZeta : Math.min(1.0, springZeta + 0.1);
+        double x = -error, v = yawAxis ? velYaw : velPitch;
+        int steps = Math.max(1, (int) Math.ceil(dt * 240));
+        double h = dt / steps;
+        for (int i = 0; i < steps; i++) {
+            v += (-w * w * x - 2 * zeta * w * v) * h;
+            x += v * h;
         }
-        if (yawAxis) velYaw = v1;
-        else velPitch = v1;
+        double step = x + error;
+        // Не больше пятой части ошибки «за» цель за кадр — перелёт мягкий, а не рывок.
+        if (Math.signum(step) == Math.signum(error) && Math.abs(step) > Math.abs(error) * 1.2) {
+            step = error * 1.2;
+            v *= 0.5;
+        }
+        if (yawAxis) velYaw = v;
+        else velPitch = v;
         return step;
     }
 
@@ -161,12 +245,17 @@ public class AimBot extends Module {
         Vec3d c = box.getCenter();
         long now = System.currentTimeMillis();
         if (now > offsetUntil) {
-            // Точка наводки немного «гуляет» внутри хитбокса.
-            offset = new Vec3d((Math.random() - 0.5) * box.getLengthX() * 0.6,
+            // Точка наводки плавно «гуляет» внутри хитбокса: от старой случайной точки к новой.
+            offsetFrom = offsetTo;
+            offsetTo = new Vec3d((Math.random() - 0.5) * box.getLengthX() * 0.6,
                     (Math.random() - 0.5) * box.getLengthY() * 0.4,
                     (Math.random() - 0.5) * box.getLengthZ() * 0.6).multiply(jitter.value);
-            offsetUntil = now + 250 + (long) (Math.random() * 300);
+            offsetStart = now;
+            offsetUntil = now + 300 + (long) (Math.random() * 400);
         }
+        double k = MathHelper.clamp((now - offsetStart) / (double) (offsetUntil - offsetStart), 0, 1);
+        k = k * k * (3 - 2 * k);
+        Vec3d offset = offsetFrom.add(offsetTo.subtract(offsetFrom).multiply(k));
         return switch (point.get()) {
             case "Голова" -> new Vec3d(c.x, t.getEyeY() - 0.1, c.z).add(offset.multiply(1, 0.3, 1));
             case "Тело" -> new Vec3d(c.x, box.minY + box.getLengthY() * 0.6, c.z).add(offset);
@@ -225,7 +314,7 @@ public class AimBot extends Module {
         } else if (weaponOnly.value && !TargetFilter.holdingWeapon(mc.player)) {
             text = "AimBot: нет оружия в руке";
         } else if (target != null) {
-            text = "AimBot: цель " + target.getName().getString();
+            text = "AimBot: цель " + target.getName().getString() + (mouseFactor() <= 0 ? " (двигай мышью)" : "");
         } else {
             PlayerEntity near = null;
             for (PlayerEntity pl : mc.world.getPlayers()) {

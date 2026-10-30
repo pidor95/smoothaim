@@ -38,6 +38,12 @@ public class BurgerClientGameTest implements FabricClientGameTest {
             srv.runCommand("execute at @a run summon minecraft:zombie ~1.2 ~ ~2.8 "
                     + "{NoAI:1b,PersistenceRequired:1b,Silent:1b}");
             ctx.waitFor(mc -> zombie(mc) != null);
+            // «Только пока двигаешь мышью»: без движения мыши камера стоит.
+            float yaw0 = ctx.computeOnClient(mc -> mc.player.getYaw());
+            ctx.waitTicks(20);
+            float yaw1 = ctx.computeOnClient(mc -> mc.player.getYaw());
+            if (Math.abs(yaw1 - yaw0) > 0.01f) throw new AssertionError("AimBot двигал камеру без движения мыши");
+            System.out.println("[burger-test] AimBot без движения мыши: камера не двигалась");
             double before = ctx.computeOnClient(BurgerClientGameTest::angleToZombie);
             for (int i = 0; i < 6; i++) {
                 ctx.waitTicks(5);
@@ -46,7 +52,14 @@ public class BurgerClientGameTest implements FabricClientGameTest {
                         angleToZombie(mc), aim.target, mc.currentScreen, mc.player.getYaw(), mc.player.getPitch())));
             }
             ctx.takeScreenshot("burger-aim-debug");
-            ctx.waitFor(mc -> mc.crosshairTarget instanceof EntityHitResult h && h.getEntity() instanceof ZombieEntity, 60);
+            // Шевелим мышью туда-сюда (суммарно в ноль) — наводка должна включиться.
+            for (int i = 0; i < 60; i++) {
+                ctx.getInput().moveCursor(i % 2 == 0 ? 3 : -3, 0);
+                ctx.waitTick();
+                if (ctx.computeOnClient(mc -> mc.crosshairTarget instanceof EntityHitResult h
+                        && h.getEntity() instanceof ZombieEntity)) break;
+            }
+            ctx.waitFor(mc -> mc.crosshairTarget instanceof EntityHitResult h && h.getEntity() instanceof ZombieEntity, 5);
             double after = ctx.computeOnClient(BurgerClientGameTest::angleToZombie);
             ctx.takeScreenshot("burger-aim");
             System.out.printf("[burgerdlc-test] AimBot: угол до зомби %.1f° -> %.1f°%n", before, after);
@@ -57,6 +70,7 @@ public class BurgerClientGameTest implements FabricClientGameTest {
             ctx.waitTicks(5);
             ctx.runOnClient(mc -> {
                 aim.filter.mobs.value = false;
+                aim.mouseOnly.value = false;
                 var enemy = new net.minecraft.client.network.OtherClientPlayerEntity(mc.world,
                         new com.mojang.authlib.GameProfile(java.util.UUID.randomUUID(), "Enemy"));
                 enemy.setId(424242);
