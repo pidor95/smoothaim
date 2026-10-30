@@ -1,0 +1,180 @@
+package com.burgerdlc;
+
+import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
+import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
+import net.fabricmc.fabric.api.client.gametest.v1.context.TestServerContext;
+import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.ingame.InventoryScreen;
+import net.minecraft.entity.mob.ZombieEntity;
+import net.minecraft.util.hit.EntityHitResult;
+import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.math.Vec3d;
+import org.lwjgl.glfw.GLFW;
+
+public class BurgerClientGameTest implements FabricClientGameTest {
+    @Override
+    public void runTest(ClientGameTestContext ctx) {
+        try (TestSingleplayerContext sp = ctx.worldBuilder().create()) {
+            sp.getClientWorld().waitForChunksRender();
+            TestServerContext srv = sp.getServer();
+            srv.runCommand("difficulty easy");
+            srv.runCommand("gamemode survival @a");
+            srv.runCommand("item replace entity @a weapon.mainhand with minecraft:diamond_sword");
+            srv.runCommand("execute as @a at @s run tp @s ~ ~ ~ 0 0");
+            ctx.waitTicks(5);
+
+            AimBot aim = module(AimBot.class);
+            TriggerBot trigger = module(TriggerBot.class);
+            ctx.runOnClient(mc -> {
+                aim.setEnabled(true);
+                aim.activation.index = 1; // Всегда
+                aim.filter.mobs.value = true;
+                trigger.setEnabled(false);
+                trigger.filter.mobs.value = true;
+            });
+
+            // AimBot: зомби сбоку, прицел должен довестись на него.
+            srv.runCommand("execute at @a run summon minecraft:zombie ~1.2 ~ ~2.8 "
+                    + "{NoAI:1b,PersistenceRequired:1b,Silent:1b}");
+            ctx.waitFor(mc -> zombie(mc) != null);
+            double before = ctx.computeOnClient(BurgerClientGameTest::angleToZombie);
+            for (int i = 0; i < 6; i++) {
+                ctx.waitTicks(5);
+                System.out.println("[burgerdlc-test] " + ctx.computeOnClient(mc -> String.format(
+                        "угол=%.1f target=%s screen=%s yaw=%.1f pitch=%.1f",
+                        angleToZombie(mc), aim.target, mc.currentScreen, mc.player.getYaw(), mc.player.getPitch())));
+            }
+            ctx.takeScreenshot("burger-aim-debug");
+            ctx.waitFor(mc -> mc.crosshairTarget instanceof EntityHitResult h && h.getEntity() instanceof ZombieEntity, 60);
+            double after = ctx.computeOnClient(BurgerClientGameTest::angleToZombie);
+            ctx.takeScreenshot("burger-aim");
+            System.out.printf("[burgerdlc-test] AimBot: угол до зомби %.1f° -> %.1f°%n", before, after);
+
+            // TriggerBot: прицел на зомби — должен ударить сам.
+            ctx.runOnClient(mc -> trigger.setEnabled(true));
+            ctx.waitFor(mc -> zombie(mc) == null || zombie(mc).getHealth() < zombie(mc).getMaxHealth(), 60);
+            System.out.println("[burgerdlc-test] TriggerBot: зомби получил урон");
+            ctx.runOnClient(mc -> trigger.setEnabled(false));
+
+            // Бинд: R переключает AimBot.
+            boolean was = ctx.computeOnClient(mc -> aim.isEnabled());
+            ctx.getInput().pressKey(GLFW.GLFW_KEY_R);
+            ctx.waitTick();
+            boolean now = ctx.computeOnClient(mc -> aim.isEnabled());
+            if (was == now) throw new AssertionError("Бинд R не переключил AimBot");
+            System.out.println("[burgerdlc-test] Бинд R: AimBot " + was + " -> " + now);
+            ctx.getInput().pressKey(GLFW.GLFW_KEY_R);
+            ctx.waitTick();
+
+            // InvMove: в открытом инвентаре W двигает игрока.
+            Vec3d start = ctx.computeOnClient(mc -> mc.player.getEntityPos());
+            ctx.setScreen(() -> new InventoryScreen(MinecraftClient.getInstance().player));
+            ctx.getInput().holdKeyFor(GLFW.GLFW_KEY_W, 20);
+            double moved = ctx.computeOnClient(mc -> mc.player.getEntityPos().distanceTo(start));
+            if (moved < 1) throw new AssertionError("InvMove: игрок не сдвинулся (" + moved + ")");
+            System.out.printf("[burgerdlc-test] InvMove: прошёл %.2f блока в инвентаре%n", moved);
+            ctx.setScreen(() -> null);
+
+            // NoRender: все пункты, гроза и огонь — игра не должна упасть, небо без дождя.
+            ctx.runOnClient(mc -> {
+                NoRender.INSTANCE.setEnabled(true);
+                for (Setting st : NoRender.INSTANCE.settings) ((Setting.Bool) st).value = true;
+            });
+            srv.runCommand("weather thunder");
+            srv.runCommand("gamemode creative @a");
+            srv.runCommand("execute at @a run setblock ~ ~ ~ minecraft:fire");
+            ctx.waitTicks(40);
+            float rain = ctx.computeOnClient(mc -> mc.world.getRainGradient(1f));
+            if (rain != 0f) throw new AssertionError("NoRender: погода не убрана, rain=" + rain);
+            ctx.takeScreenshot("burger-norender");
+            System.out.println("[burgerdlc-test] NoRender: гроза и огонь скрыты, rain=" + rain);
+            srv.runCommand("execute at @a run setblock ~ ~ ~ minecraft:air");
+
+            // Визуалы: от третьего лица, шляпа, след, круги от прыжка, метка и частицы на зомби.
+            ctx.runOnClient(mc -> {
+                NoRender.INSTANCE.setEnabled(false);
+                for (Module m : BurgerDLC.MODULES) {
+                    if (m.category == Category.VISUALS && !(m instanceof Crosshair) && !(m instanceof TimeChanger)) m.setEnabled(true);
+                }
+                module(TargetESP.class).hold.value = 30;
+                mc.options.setPerspective(net.minecraft.client.option.Perspective.THIRD_PERSON_BACK);
+            });
+            srv.runCommand("weather clear");
+            srv.runCommand("gamemode survival @a");
+            srv.runCommand("kill @e[type=minecraft:zombie]");
+            srv.runCommand("execute as @a at @s run tp @s ~ ~ ~ 0 0");
+            srv.runCommand("execute at @a run summon minecraft:zombie ~ ~ ~2.5 {NoAI:1b,PersistenceRequired:1b,Silent:1b,Health:500f,Attributes:[{id:\"minecraft:max_health\",base:500}]}");
+            ctx.waitFor(mc -> zombie(mc) != null);
+            ctx.waitTicks(5);
+            ctx.runOnClient(mc -> mc.interactionManager.attackEntity(mc.player, zombie(mc)));
+            ctx.getInput().holdKeyFor(GLFW.GLFW_KEY_D, 12);
+            ctx.getInput().pressKey(GLFW.GLFW_KEY_SPACE);
+            ctx.waitTicks(6);
+            ctx.takeScreenshot("burger-visuals");
+            System.out.println("[burger-test] Визуалы: отрисованы без ошибок");
+
+            // FullBright + Time Changer «Ночь».
+            ctx.runOnClient(mc -> {
+                TimeChanger.INSTANCE.setEnabled(true);
+                TimeChanger.INSTANCE.time.index = 2;
+                mc.options.setPerspective(net.minecraft.client.option.Perspective.FIRST_PERSON);
+                Crosshair.INSTANCE.setEnabled(true);
+            });
+            ctx.waitTicks(10);
+            ctx.takeScreenshot("burger-night-fullbright");
+            ctx.runOnClient(mc -> FullBright.INSTANCE.setEnabled(false));
+            ctx.waitTicks(10);
+            ctx.takeScreenshot("burger-night-dark");
+            ctx.runOnClient(mc -> TimeChanger.INSTANCE.setEnabled(false));
+
+            // Меню: открыть, раскрыть AimBot кликом, сделать скриншоты.
+            ctx.setScreen(ClickGui::new);
+            ctx.waitTicks(10);
+            ctx.takeScreenshot("burger-gui");
+            double[] card = ctx.computeOnClient(mc -> {
+                int w = mc.getWindow().getScaledWidth(), h = mc.getWindow().getScaledHeight();
+                int size = Math.min(360, Math.min(w, h) - 16);
+                int px = (w - size) / 2, py = (h - size) / 2;
+                double scale = mc.getWindow().getScaleFactor();
+                return new double[]{(px + 84 + 8 + 40) * scale, (py + 28 + 8 + 15) * scale};
+            });
+            ctx.getInput().setCursorPos(card[0], card[1]);
+            ctx.getInput().pressMouse(GLFW.GLFW_MOUSE_BUTTON_LEFT);
+            ctx.waitTicks(10);
+            ctx.takeScreenshot("burger-gui-aimbot");
+            double[] visuals = ctx.computeOnClient(mc -> {
+                int w = mc.getWindow().getScaledWidth(), h = mc.getWindow().getScaledHeight();
+                int size = Math.min(360, Math.min(w, h) - 16);
+                int px = (w - size) / 2, py = (h - size) / 2;
+                double scale = mc.getWindow().getScaleFactor();
+                return new double[]{(px + 30) * scale, (py + 28 + 22 + 2 * 20 + 8) * scale};
+            });
+            ctx.getInput().setCursorPos(visuals[0], visuals[1]);
+            ctx.getInput().pressMouse(GLFW.GLFW_MOUSE_BUTTON_LEFT);
+            ctx.waitTicks(10);
+            ctx.takeScreenshot("burger-gui-visuals");
+            ctx.setScreen(() -> null);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Module> T module(Class<T> type) {
+        for (Module m : BurgerDLC.MODULES) {
+            if (type.isInstance(m)) return (T) m;
+        }
+        throw new AssertionError("Нет модуля " + type.getSimpleName());
+    }
+
+    private static ZombieEntity zombie(MinecraftClient mc) {
+        for (var e : mc.world.getEntities()) {
+            if (e instanceof ZombieEntity z && z.isAlive()) return z;
+        }
+        return null;
+    }
+
+    private static double angleToZombie(MinecraftClient mc) {
+        Vec3d d = zombie(mc).getBoundingBox().getCenter().subtract(mc.player.getEyePos()).normalize();
+        return Math.toDegrees(Math.acos(MathHelper.clamp(d.dotProduct(mc.player.getRotationVec(1f)), -1, 1)));
+    }
+}

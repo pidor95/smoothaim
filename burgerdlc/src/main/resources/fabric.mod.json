@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "burgerdlc",
+  "version": "${version}",
+  "name": "Burger DLC",
+  "description": "Burger DLC: AimBot, TriggerBot, визуалы (China Hat, Jump Circles, Target ESP, Trails и др.), NoRender, InvMove. Меню — Right Shift.",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.burgerdlc.BurgerDLC"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.17.0",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  },
+  "mixins": [
+    "burgerdlc.mixins.json"
+  ]
+}

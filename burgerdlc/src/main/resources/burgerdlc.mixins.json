@@ -1,0 +1,24 @@
+{
+  "required": true,
+  "package": "com.burgerdlc.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "GameRendererMixin",
+    "KeyboardMixin",
+    "MouseMixin",
+    "NoRenderOverlayMixin",
+    "NoRenderHudMixin",
+    "NoRenderGameRendererMixin",
+    "NoRenderMiscMixin",
+    "NoRenderWorldMixin",
+    "NoRenderParticlesMixin",
+    "AttackMixin",
+    "CrosshairMixin",
+    "FullBrightMixin",
+    "TimeChangerMixin",
+    "ViewModelMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
