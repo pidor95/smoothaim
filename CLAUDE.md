@@ -21,7 +21,9 @@ https://github.com/pidor95/smoothaim/releases/download/latest/PhysicsBox.apk
 ## Что уже есть
 - **NPC WAR** (новое имя, папка/APK прежние): только война, карт «дом»/«магазин»
   нет (house.gd/shop.gd удалены). Меню: «В БОЙ», настройки, «АВТОРЫ МОДЕЛЕЙ».
-- Карта ФРОНТ 420×340 м (траншеи ~300 м — «длиннее окопы», X0 = −270): `build_trenches.py` (чанки рельефа `Terrain_i_j` с
+- Карта ФРОНТ 840×680 м (увеличена ×2 по просьбе; X0 = −590, Z0 = −340 — эти числа ещё в
+  `bake_heights.gd` и `trench_level.gd` HEIGHTS_ORIGIN/NAV_AABB; траншеи −582..42, западнее −270
+  доски только у 30 % участков — экономия памяти; деревни в глубоком тылу z ≈ ±200/±290): `build_trenches.py` (чанки рельефа `Terrain_i_j` с
   шагом 0.5/1/2 м и «юбками», мебель траншей разбита по ячейкам 60 м
   `Planks_i_j`…, пустышки `B_<Proto>_<A|B|N>_k` — где стоят здания, Spawn/Post/Player).
   Здания — прототипы `build_buildings.py` → `buildings.glb` (`P_<Name>`; дети
@@ -78,6 +80,23 @@ https://github.com/pidor95/smoothaim/releases/download/latest/PhysicsBox.apk
   `SKETCHFAB_TOKEN=... python3 tools/fetch_sketchfab.py [имена]`
   → `tools/model_sources/` (gitignore) → `build_sketchfab_kit.py` (АК FP, бросок,
   `npc_rifle.glb` — `RIFLE_MUZZLE` печатает скрипт, `grenade.glb`, `fpv_drone.glb` с Prop0..3).
+- АС «Вал» (`asval_fp.glb`, Sketchfab SLIVA21; `build_sniper_fp("asval")` + `val_parts` — магазин отделён
+  по loose-частям; модель: ствол −Y, право −X): DEFS `integral` = встроенный глушитель (звук `val_*`),
+  открытый прицел — кость `sight` на линии целик–мушка. `npc_asval.glb` — что падает из рук при смерти.
+- Прицел АК: в `ak74_fp.glb` два прицела — «Кобра» (Kobra/RedDot, кость `sight`) и круглый коллиматор
+  Aim Point Pro (Aimpoint/RedDot2, `sight2`, AIM_AT в build_sketchfab_kit.py); DEFS `sights`,
+  `Settings.sight`, `Weapon.sight_of()`/`apply_mods()` переключают видимость и `ads`. По умолчанию коллиматор.
+- Экран снаряжения перед боем (`main_menu._build_loadout`, KIT): «В БОЙ» → карточки → «В БОЙ ▶».
+- Первая помощь (`player.start_treat`: bandage / promedol / medkit, `TREAT_TIMES`, `Weapon.busy` опускает
+  оружие; `call_medic` → `game.call_medic`), ряд над хотбаром `Hud.AID_IDS`. Аптечки на карте —
+  `game._place_medkits` (`assets/props/medkit.glb` из IFAK, `build_medical.py`), подбор `_medkit_pickups`.
+- Медики: `Npc.medic` (повязка + IFAK на груди), `State.TREAT`, клип `medic_treat` (build_mannequin_anims.py),
+  `_medic_think` ищет `needs_medic()` (без сознания / `_downed`), `patched_up()` → встаёт;
+  `game.MEDICS` = 2 на сторону, `_medic_wanted` — вызов без медика рядом.
+- GoPro: `Settings.camera` ("bodycam"/"gopro"), кнопка «КАМЕРА» / K: `player.GOPRO_AT`, `GOPRO_GUN`,
+  `_helmet` (сфера с камуфляжем у камеры), шейдер bodycam с параметрами из `bodycam.gd`.
+- Смерть как на видео: `Hud._draw_death` (красный → белая вспышка → серое со свечением `_glow` →
+  чёрное, точка гаснет), `Weapon.drop()` (вьюмодель выскальзывает, падает `WORLD_GUNS`), RESPAWN_TIME 8.
 - Меню оружия (`game._build_weapon_menu`): вкладки ОРУЖИЕ (взять / убрать из снаряжения / убрать из рук),
   СНАРЯЖЕНИЕ (гранаты, FPV), МОДИФИКАЦИИ (глушитель ПБС-1), БЕССМЕРТИЕ.
   `Settings.loadout` / `Settings.suppressed` (сохраняются), `Settings.carries(id)`;
@@ -98,6 +117,7 @@ https://github.com/pidor95/smoothaim/releases/download/latest/PhysicsBox.apk
   засыпание мёртвого тела (`_settled`, freeze; `wake_ragdoll()` от пули/взрыва/шага игрока; мета "settled"
   у частей и гора). Пулы: Blood `_burst` (mist/dust), вспышки NPC `_flashes`.
 - Тесты: `tools/war_test.gd`, `tools/gore_test.gd`, `tools/kit_test.gd` (кобура, снаряжение, глушитель, меню),
+  `tools/medic_test.gd` (прицелы, ВАЛ, GoPro, первая помощь, медик, смерть),
   `tools/mechanics_test.gd` (обморок, судороги,
   шея 5 с, авто-огонь, граната, стрелки FPV, смерть игрока), `tools/explosives_test.gd`.
   В контейнере Vulkan нет — Godot сам падает на OpenGL (llvmpipe), это медленно.

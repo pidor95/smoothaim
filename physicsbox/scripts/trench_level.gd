@@ -21,10 +21,10 @@ const NAV := "res://assets/maps/trenches_nav.res"
 ## HeightMapShape3D tiles, not trimesh shapes of the terrain chunks - those
 ## took ~130 MB and phones ran out of memory.
 const HEIGHTS := "res://assets/maps/trenches_height.res"
-const HEIGHTS_ORIGIN := Vector2(-270.0, -170.0)
+const HEIGHTS_ORIGIN := Vector2(-590.0, -340.0)
 const HEIGHTS_STEP := 0.5
 const HEIGHTS_TILE := 64
-const NAV_AABB := AABB(Vector3(-270.0, -4.0, -170.0), Vector3(420.0, 26.0, 340.0))
+const NAV_AABB := AABB(Vector3(-590.0, -4.0, -340.0), Vector3(840.0, 26.0, 680.0))
 
 var nav_region := NavigationRegion3D.new()
 var geo := Node3D.new()

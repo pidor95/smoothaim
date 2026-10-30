@@ -3,6 +3,8 @@ extends CanvasLayer
 ## Bodycam look (setting "Бодикам"): a post-process over the 3D view
 ## (assets/shaders/bodycam.gdshader) and the camera's stamp in the corner -
 ## model, serial, date and time, a blinking record dot. Lies under the HUD.
+## With the helmet GoPro (Settings.camera) the same layer gives its fisheye
+## look and its own stamp.
 
 var _rect := ColorRect.new()
 var _stamp := Label.new()
@@ -40,7 +42,16 @@ func _ready() -> void:
 
 
 func on_settings_changed() -> void:
-	visible = Settings.bodycam
+	var gopro := Settings.camera == "gopro"
+	visible = Settings.bodycam or gopro
+	var m := _rect.material as ShaderMaterial
+	m.set_shader_parameter("distortion", 1.4 if gopro else 0.32)
+	m.set_shader_parameter("aberration", 0.004 if gopro else 0.006)
+	m.set_shader_parameter("grain", 0.02 if gopro else 0.035)
+	m.set_shader_parameter("vignette", 0.45 if gopro else 0.75)
+	m.set_shader_parameter("saturation", 1.12 if gopro else 0.72)
+	m.set_shader_parameter("band", 0.0 if gopro else 1.0)
+	m.set_shader_parameter("tint", Vector3(1.02, 1.0, 0.97) if gopro else Vector3(0.96, 1.0, 1.04))
 
 
 func _process(_delta: float) -> void:
@@ -53,5 +64,8 @@ func _process(_delta: float) -> void:
 	_stamp.visible = on
 	_rec.visible = on
 	var d := Time.get_datetime_dict_from_system(true)
-	_stamp.text = "%04d-%02d-%02d T%02d:%02d:%02dZ\nAXON BODY 4  %s" % [d.year, d.month, d.day, d.hour, d.minute, d.second, _serial]
+	if Settings.camera == "gopro":
+		_stamp.text = "4K 60FPS  ▮▮▮▯ 87%%\nHELMET-CAM // GOPRO HERO  %04d-%02d-%02d %02d:%02d:%02d" % [d.year, d.month, d.day, d.hour, d.minute, d.second]
+	else:
+		_stamp.text = "%04d-%02d-%02d T%02d:%02d:%02dZ\nAXON BODY 4  %s" % [d.year, d.month, d.day, d.hour, d.minute, d.second, _serial]
 	_rec.text = "● REC" if Time.get_ticks_msec() / 600 % 2 == 0 else "  REC"

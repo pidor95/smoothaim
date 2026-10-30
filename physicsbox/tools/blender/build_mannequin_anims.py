@@ -451,6 +451,18 @@ def orders(arm):
             (0, KNEEL_DROP - 0.006 * (1 + math.sin(ph)), 0))
     c.finish()
 
+    # a medic on his knees over a wounded man: leans in, both hands press
+    # and wind the bandage in turn
+    c = Clip(arm, "medic_treat")
+    for i in range(n + 1):
+        ph = i / n * 2 * math.pi
+        c.pose(round(i / n * 48), _add(KNEEL, {
+            "chest": (-30 + 3 * math.sin(ph), 4 * math.sin(ph), 0), "head": (-22 + 3 * math.sin(ph * 2), 0, 0),
+            "uarm_l": (58 + 12 * math.sin(ph), 0, -12), "farm_l": (35 + 15 * math.sin(ph + 1.0), 0, 0),
+            "uarm_r": (58 - 12 * math.sin(ph), 0, 12), "farm_r": (35 - 15 * math.sin(ph + 1.0), 0, 0)}),
+            (0, KNEEL_DROP - 0.004 * (1 + math.sin(ph)), 0))
+    c.finish()
+
 
 # ---------------------------------------------------------------- pistol
 

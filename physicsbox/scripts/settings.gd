@@ -12,10 +12,16 @@ var volume := 0.8
 var show_fps := false
 ## Bodycam look: wide lens, distortion, grain, timestamp.
 var bodycam := true
+## Which camera films the fight (HUD button КАМЕРА): "bodycam" on the chest
+## or "gopro" on the side of the helmet (fisheye, the helmet's edge in view).
+var camera := "bodycam"
 ## What the player takes into battle (weapon menu: ОРУЖИЕ / СНАРЯЖЕНИЕ):
 ## item id -> carried; and which rifles wear the PBS-1 suppressor.
-var loadout := {"ak74": true, "svd": true, "grenade": true, "fpv": true}
+var loadout := {"ak74": true, "svd": true, "asval": true, "grenade": true, "fpv": true, "medkit": true}
 var suppressed := {"ak74": false, "svd": false}
+## The AK's sight (МОДИФИКАЦИИ): "collimator" (round tube, as on the video)
+## or "kobra".
+var sight := {"ak74": "collimator"}
 ## Resources the menu loaded on background threads for the battle (kept
 ## referenced so they stay in the cache).
 var preloaded: Array = []
@@ -42,11 +48,14 @@ func load_settings() -> void:
 	shadows = cfg.get_value("video", "shadows", shadows)
 	show_fps = cfg.get_value("video", "show_fps", show_fps)
 	bodycam = cfg.get_value("video", "bodycam", bodycam)
+	camera = cfg.get_value("video", "camera", camera)
 	volume = cfg.get_value("audio", "volume", volume)
 	for k in loadout:
 		loadout[k] = cfg.get_value("loadout", k, loadout[k])
 	for k in suppressed:
 		suppressed[k] = cfg.get_value("suppressor", k, suppressed[k])
+	for k in sight:
+		sight[k] = cfg.get_value("sight", k, sight[k])
 
 
 func save_settings() -> void:
@@ -58,11 +67,14 @@ func save_settings() -> void:
 	cfg.set_value("video", "shadows", shadows)
 	cfg.set_value("video", "show_fps", show_fps)
 	cfg.set_value("video", "bodycam", bodycam)
+	cfg.set_value("video", "camera", camera)
 	cfg.set_value("audio", "volume", volume)
 	for k in loadout:
 		cfg.set_value("loadout", k, loadout[k])
 	for k in suppressed:
 		cfg.set_value("suppressor", k, suppressed[k])
+	for k in sight:
+		cfg.set_value("sight", k, sight[k])
 	cfg.save(PATH)
 
 
@@ -93,6 +105,13 @@ func _setup_input() -> void:
 	_key_action("pause", [KEY_ESCAPE])
 	_key_action("weapon_1", [KEY_1])
 	_key_action("weapon_2", [KEY_2])
+	_key_action("weapon_3", [KEY_3])
+	# first aid: bandage, promedol, medkit, call the medic; the camera
+	_key_action("bandage", [KEY_Z])
+	_key_action("painkiller", [KEY_X])
+	_key_action("medkit", [KEY_T])
+	_key_action("call_medic", [KEY_M])
+	_key_action("camera", [KEY_K])
 	_key_action("weapon_next", [KEY_F])
 	_key_action("weapon_menu", [KEY_B, KEY_TAB])
 	_key_action("grenade", [KEY_G])

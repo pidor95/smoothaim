@@ -1,6 +1,7 @@
 class_name Weapon
 extends Node3D
-## First-person weapons: AK-74M with a red dot and the SVD sniper rifle.
+## First-person weapons: AK-74M with a red dot (the round tube collimator or
+## the Kobra), the SVD sniper rifle and the AS Val with its built-in silencer.
 ## Each viewmodel (gun + gloved hands) and its animations come from Blender
 ## (tools/blender/build_sketchfab_kit.py); scoped rifles look through the
 ## scope (HUD overlay) when aimed. This script
@@ -18,7 +19,13 @@ const MAX_SHELLS := 24
 const DEFS := [
 	{
 		"id": "ak74", "name": "АК-74М", "scene": "res://assets/weapons/ak74_fp.glb",
-		"title": "АК-74М + «Кобра»", "desc": "Автомат 5,45 мм, как у солдат, с коллиматором.",
+		"title": "АК-74М", "desc": "Автомат 5,45 мм, как у солдат, с коллиматором.",
+		# the sights it can wear (МОДИФИКАЦИИ, Settings.sight): marker bone,
+		# eye distance, the meshes that belong to it
+		"sights": {
+			"collimator": {"bone": "sight2", "ads_dist": 0.3, "meshes": ["Aimpoint", "RedDot2"], "title": "Коллиматор (круглый)"},
+			"kobra": {"bone": "sight", "ads_dist": 0.4, "meshes": ["Kobra", "RedDot"], "title": "«Кобра»"},
+		},
 		"stats": ["Урон: 36 (голова — насмерть)", "Магазин: 30", "Темп: 650 выстр/мин"],
 		"capacity": 30, "pellets": 1, "impulse": 12.0, "cooldown": 0.092, "power": 1.4, "auto": true,
 		"damage": {"head": 100.0, "chest": 36.0, "pelvis": 32.0, "uarm_l": 20.0, "uarm_r": 20.0, "farm_l": 16.0,
@@ -39,6 +46,17 @@ const DEFS := [
 		"sound": "sniper", "suppressor": Vector3(0.042, 0.042, 0.25),
 		"shell": "rifle", "shell_at": 0.0, "alert": 60.0, "flash": 1.4, "cam_recoil": 4.5,
 		"yaw": 2.5, "ads_dist": 0.1, "ads_fov": 0.22, "fire_last": "", "reload_empty": "",
+	},
+	{
+		"id": "asval", "name": "АС ВАЛ", "scene": "res://assets/weapons/asval_fp.glb", "integral": true,
+		"title": "АС «Вал»", "desc": "Бесшумный автомат 9×39 мм, глушитель встроен.",
+		"stats": ["Урон: 40 (тяжёлая дозвуковая пуля)", "Магазин: 20", "Темп: 900 выстр/мин, почти не слышно"],
+		"capacity": 20, "pellets": 1, "impulse": 14.0, "cooldown": 0.067, "power": 1.6, "auto": true,
+		"damage": {"head": 100.0, "chest": 40.0, "pelvis": 36.0, "uarm_l": 22.0, "uarm_r": 22.0, "farm_l": 18.0,
+				"farm_r": 18.0, "thigh_l": 28.0, "thigh_r": 28.0, "shin_l": 20.0, "shin_r": 20.0},
+		"spread_hip": 2.0, "spread_ads": 0.18, "falloff_start": 60.0, "falloff_min": 0.55,
+		"sound": "val", "shell": "rifle", "shell_at": 0.0, "alert": 30.0, "flash": 0.0, "cam_recoil": 1.1,
+		"yaw": 3.0, "ads_dist": 0.2, "ads_fov": 0.75, "fire_last": "", "reload_empty": "",
 	},
 ]
 ## Bullet power lost going through each body part (power 1 = pistol round).
@@ -66,6 +84,7 @@ class Slot:
 	var eject := -1
 	var ammo := 0
 	var ads := Transform3D.IDENTITY
+	var sight_ads := {} # sight name -> ads transform (guns with a choice of sights)
 	var suppressor: Node3D
 
 
@@ -106,6 +125,12 @@ var _throw_t := -1.0
 var _released := false
 var _lower := 0.0 # gun lowered out of view while the other hand throws
 var _sprint_t := 0.0 # gun swung across the chest while running
+var busy := false # the hands are busy with first aid: gun down, no shooting
+var dropped := false # killed: the gun slipped out of his hands
+var _drop_t := 0.0
+## What falls out of his hands (the soldiers' models), per gun.
+const WORLD_GUNS := {"ak74": "res://assets/npc/npc_rifle.glb", "svd": "res://assets/npc/npc_svd.glb",
+		"asval": "res://assets/npc/npc_asval.glb"}
 
 
 func _ready() -> void:
@@ -120,10 +145,10 @@ func _ready() -> void:
 		s.skel = s.root.find_children("*", "Skeleton3D", true, false)[0]
 		s.muzzle = s.skel.find_bone("muzzle")
 		s.eject = s.skel.find_bone("eject")
-		var sight := s.root.to_local(s.skel.to_global(s.skel.get_bone_global_rest(s.skel.find_bone("sight")).origin))
-		s.ads = Transform3D(Basis.IDENTITY, Vector3(0, 0, -def.ads_dist)) \
-				* Transform3D(Basis(Vector3.UP, -deg_to_rad(def.yaw)), Vector3.ZERO) \
-				* Transform3D(Basis.IDENTITY, -sight)
+		s.ads = _ads_for(s, "sight", def.ads_dist)
+		for sname in def.get("sights", {}):
+			var sd: Dictionary = def.sights[sname]
+			s.sight_ads[sname] = _ads_for(s, sd.bone, sd.ads_dist)
 		s.ammo = def.capacity
 		for mi in s.root.find_children("*", "MeshInstance3D", true, false):
 			(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -148,9 +173,20 @@ func _ready() -> void:
 	apply_mods()
 
 
+## Where the gun goes for aiming: marker `bone` on the line of sight,
+## `dist` in front of the eye.
+func _ads_for(s: Slot, bone: String, dist: float) -> Transform3D:
+	var sight := s.root.to_local(s.skel.to_global(s.skel.get_bone_global_rest(s.skel.find_bone(bone)).origin))
+	return Transform3D(Basis.IDENTITY, Vector3(0, 0, -dist)) \
+			* Transform3D(Basis(Vector3.UP, -deg_to_rad(s.def.yaw)), Vector3.ZERO) \
+			* Transform3D(Basis.IDENTITY, -sight)
+
+
 ## The PBS-1 screwed onto the muzzle bone, along the bore (the viewmodel is
 ## built turned by `yaw`), hidden until the rifle wears it.
 func _fit_suppressor(s: Slot) -> void:
+	if not s.def.has("suppressor"):
+		return # the Val has its own
 	var size: Vector3 = s.def.suppressor
 	var mount := BoneAttachment3D.new()
 	mount.bone_name = "muzzle"
@@ -172,7 +208,17 @@ func _fit_suppressor(s: Slot) -> void:
 ## of the kit (the one in hands goes back if it was left out).
 func apply_mods() -> void:
 	for s in slots:
-		s.suppressor.visible = suppressed(s)
+		if s.suppressor:
+			s.suppressor.visible = suppressed(s)
+		var sights: Dictionary = s.def.get("sights", {})
+		if sights.is_empty():
+			continue
+		var on := sight_of(s)
+		s.ads = s.sight_ads[on]
+		for sname in sights:
+			for mesh_name in sights[sname].meshes:
+				for mi in s.root.find_children(mesh_name, "MeshInstance3D", true, false):
+					mi.visible = sname == on
 	if not carried(slots.find(current)) and not holstered:
 		var other := _first_carried()
 		if other >= 0:
@@ -182,7 +228,15 @@ func apply_mods() -> void:
 
 
 func suppressed(s: Slot = null) -> bool:
-	return Settings.suppressed.get((s if s else current).def.id, false)
+	var d: Dictionary = (s if s else current).def
+	return d.get("integral", false) or Settings.suppressed.get(d.id, false)
+
+
+## The sight the gun wears (Settings.sight; the first one it can take).
+func sight_of(s: Slot) -> String:
+	var sights: Dictionary = s.def.get("sights", {})
+	var want: String = Settings.sight.get(s.def.id, "")
+	return want if sights.has(want) else sights.keys()[0]
 
 
 func carried(index: int) -> bool:
@@ -334,7 +388,53 @@ func start_throw() -> bool:
 
 ## Looking through a scope: the HUD draws it and the viewmodel is hidden.
 func scoped() -> bool:
-	return current.def.has("scope") and aim_t > 0.85 and _throw_t < 0.0 and not holstered
+	return current.def.has("scope") and aim_t > 0.85 and _throw_t < 0.0 and not holstered and not busy and not dropped
+
+
+## Killed: the gun drops out of view and falls to the ground in front.
+func drop() -> void:
+	if dropped:
+		return
+	dropped = true
+	_drop_t = 0.0
+	aiming = false
+	trigger_held = false
+	reloading = false
+	_events.clear()
+
+
+## Back on his feet (respawn): the gun is in his hands again.
+func pick_up() -> void:
+	dropped = false
+	_drop_t = 0.0
+	current.anim.play("draw")
+	current.anim.queue("idle")
+
+
+func _drop_world_gun() -> void:
+	if holstered:
+		return
+	var rb := RigidBody3D.new()
+	rb.mass = 3.4
+	rb.collision_layer = 32
+	rb.collision_mask = 1 | 2
+	rb.continuous_cd = true
+	rb.set_meta("surface", "metal")
+	var cs := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(0.05, 0.2, 1.0)
+	cs.shape = box
+	cs.position = Vector3(0, 0.03, -0.2)
+	rb.add_child(cs)
+	var model: Node3D = load(WORLD_GUNS.get(current.def.id, WORLD_GUNS.ak74)).instantiate()
+	rb.add_child(model)
+	rb.add_to_group("dropped_guns")
+	get_tree().current_scene.add_child(rb)
+	var cam := get_viewport().get_camera_3d()
+	var b := cam.global_basis
+	rb.global_transform = Transform3D(b * Basis(Vector3.UP, 0.4), cam.global_position + b * Vector3(0.15, -0.35, -0.45))
+	rb.linear_velocity = player.velocity + b * Vector3(0.2, -0.5, -1.4)
+	rb.angular_velocity = b * Vector3(randf_range(2, 5), randf_range(-3, 3), randf_range(-4, 4))
 
 
 func throwing() -> bool:
@@ -361,7 +461,7 @@ func trigger() -> void:
 	if player.piloting:
 		player.piloting.trigger_pressed()
 		return
-	if holstered:
+	if holstered or busy or dropped:
 		return
 	if player.sprinting or _sprint_t > 0.3:
 		player.block_sprint(0.7) # the gun comes up from the run first
@@ -393,6 +493,8 @@ func trigger() -> void:
 		_flash_root.get_node("Front").rotation.z = randf() * TAU
 		_place_flash()
 		Sfx.play(d.sound, 0.0, 0.05)
+	elif d.get("integral", false):
+		Sfx.play(d.sound, -1.0, 0.05) # the Val's own: barely more than the bolt
 	else:
 		Sfx.play(d.sound + "_sup", -1.0, 0.05) # a dull thump and the bolt clack: quieter, not silent
 	var kick: float = d.cam_recoil
@@ -411,7 +513,7 @@ func trigger() -> void:
 
 func reload() -> void:
 	var d := current.def
-	if holstered or reloading or current.ammo >= d.capacity or _cooldown > 0.3:
+	if holstered or busy or reloading or current.ammo >= d.capacity or _cooldown > 0.3:
 		return
 	reloading = true
 	var anim_name := "reload"
@@ -630,7 +732,13 @@ func _process(frame_delta: float) -> void:
 				current.anim.play("draw")
 				current.anim.queue("idle")
 			_cooldown = 0.3
-	_lower = move_toward(_lower, 1.0 if _throw_t >= 0.0 and _throw_t < _throw_anim.current_animation_length - 0.25 else 0.0, delta * 5.0)
+	var down := (_throw_t >= 0.0 and _throw_t < _throw_anim.current_animation_length - 0.25) or busy
+	_lower = move_toward(_lower, 1.0 if down else 0.0, delta * 5.0)
+	if dropped:
+		var was := _drop_t
+		_drop_t += delta
+		if was < 0.35 and _drop_t >= 0.35:
+			_drop_world_gun()
 	var held := trigger_held
 	if not player.touch_mode and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and not player.dead:
 		held = held or Input.is_action_pressed("fire")
@@ -642,6 +750,8 @@ func _process(frame_delta: float) -> void:
 			toggle(0)
 		if Input.is_action_just_pressed("weapon_2"):
 			toggle(1)
+		if Input.is_action_just_pressed("weapon_3"):
+			toggle(2)
 		if Input.is_action_just_pressed("weapon_next"):
 			next_weapon()
 		if Input.is_action_just_pressed("holster"):
@@ -650,7 +760,7 @@ func _process(frame_delta: float) -> void:
 	if held and current.def.auto and _cooldown <= 0.0 and current.ammo > 0 and not holstered:
 		trigger()
 
-	var aim_target := 1.0 if aiming and not reloading and _throw_t < 0.0 and not holstered else 0.0
+	var aim_target := 1.0 if aiming and not reloading and _throw_t < 0.0 and not holstered and not busy and not dropped else 0.0
 	aim_t = move_toward(aim_t, aim_target, delta * 6.0)
 	var a := smoothstep(0.0, 1.0, aim_t)
 
@@ -681,11 +791,14 @@ func _process(frame_delta: float) -> void:
 			wall = reach - cam.global_position.distance_to(hit.position)
 	_wall_push = lerpf(_wall_push, wall, clampf(delta * 12.0, 0.0, 1.0))
 
-	current.root.visible = not scoped() and not holstered
+	current.root.visible = not scoped() and not holstered and _drop_t < 0.35
 	var low := smoothstep(0.0, 1.0, _lower)
 	_sprint_t = move_toward(_sprint_t, 1.0 if player.sprinting else 0.0, delta * 5.0)
 	var run := smoothstep(0.0, 1.0, _sprint_t)
 	var offset := Transform3D(Basis(Vector3.RIGHT, _wall_push * 1.0 - low * 0.9 - run * 0.25) * Basis(Vector3.UP, run * 0.7)
 			* Basis(Vector3.BACK, run * 0.35),
 			bob + Vector3(_sway.x * (1.0 - a * 0.6) - run * 0.06, _sway.y * (1.0 - a * 0.6) - low * 0.35 - run * 0.06, _wall_push * 0.5 + run * 0.04))
+	if dropped: # slipping out of the hands: down and twisting away
+		var f := minf(_drop_t / 0.35, 1.0)
+		offset = Transform3D(Basis(Vector3.BACK, -f * 0.9) * Basis(Vector3.RIGHT, -f * 0.7), Vector3(f * 0.1, -f * f * 0.45, -f * 0.1)) * offset
 	_holder.transform = offset * Transform3D.IDENTITY.interpolate_with(current.ads, a)

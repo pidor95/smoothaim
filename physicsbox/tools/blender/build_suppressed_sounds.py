@@ -1,7 +1,9 @@
 """Suppressed shots (AK-74M / SVD with the PBS-1) made in Blender from the
 recorded ones: the muzzle crack is mostly gone - a dull low "thup" of the
 gas in the can, the clack of the bolt and a short, quiet tail.
-Writes assets/sounds/rifle_sup_<n>.wav and sniper_sup_<n>.wav.
+Writes assets/sounds/rifle_sup_<n>.wav and sniper_sup_<n>.wav, and the AS Val
+(val_<n>.wav): a slow 9x39 round through its built-in silencer - a deeper,
+softer thump and a quicker bolt.
 
 Run (after build_recorded_sounds.py and build_sniper_sounds.py):
   blender -b --python tools/blender/build_suppressed_sounds.py
@@ -72,3 +74,5 @@ for i in range(4):
     save("rifle_sup_%d" % i, suppressed(os.path.join(SND, "rifle_%d.wav" % i), 0.45, 140.0, 0.018), 0.7)
 for i in range(3):
     save("sniper_sup_%d" % i, suppressed(os.path.join(SND, "sniper_%d.wav" % i), 0.6, 95.0, 0.03), 0.8)
+for i in range(4):
+    save("val_%d" % i, suppressed(os.path.join(SND, "rifle_%d.wav" % i), 0.32, 105.0, 0.012), 0.55)

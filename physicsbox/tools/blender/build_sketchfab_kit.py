@@ -4,11 +4,18 @@
   FPV drone   by Kvasovich      https://sketchfab.com/3d-models/fpv-kamikaze-drone-low-poly-87f5bbb5b08641b782bc084ddd4082a7
   SVD         by Sergei3D       https://sketchfab.com/3d-models/svd-dragunov-7e5c38ec11b54b08b14e49843ad04ed5
   Kobra sight by Mivoriss57     https://sketchfab.com/3d-models/low-poly-ekp-1s-03-kobra-red-dot-sight-b95a9a049fdc4df1b9f02fb8c7a608e8
+  AS Val      by SLIVA21        https://sketchfab.com/3d-models/as-val-9e094248fe8c4320a70f87589932c847
+  Aim Point Pro red dot by armoredwave
+                                https://sketchfab.com/3d-models/aim-point-pro-red-dot-sight-no-trade-marks-ba4d5b384e3a4f7f9706fe23e727282d
 
 Outputs:
-  assets/weapons/ak74_fp.glb     first-person AK-74M with a Kobra red dot on the
-                                 side rail and gloved hands: idle, fire,
-                                 reload, reload_empty, draw
+  assets/weapons/ak74_fp.glb     first-person AK-74M with gloved hands and two
+                                 sights the game picks from: the Kobra red dot
+                                 (Kobra/RedDot, bone "sight") and the round
+                                 tube collimator (Aimpoint/RedDot2, "sight2"):
+                                 idle, fire, reload, reload_empty, draw
+  assets/weapons/asval_fp.glb    first-person AS Val (iron sights, its own
+                                 silencer): idle, fire, reload, draw
   assets/weapons/svd_fp.glb      first-person SVD with the PSO-1: idle, fire,
                                  reload, draw
   assets/npc/npc_svd.glb         the enemy and friendly snipers' SVD
@@ -38,6 +45,10 @@ bw.PREVIEW = ARGS[0] if ARGS else ""
 
 AK_SCALE = 0.1007  # model is 9.37 units long; an AK-74M is 0.943 m
 KOBRA_DOT = Vector((0.62, 0.0, 1.272))  # the middle of the Kobra's window (model units)
+# Aim Point Pro: metres, tube along +Y (objective +Y), up +Z; the tube axis
+# runs at this height over the bottom of its rail mount
+AIM_AXIS_Z = 0.031
+AIM_AT = Vector((0.0, -0.75, 1.62))  # AK model units: middle of the tube, the mount on the dust cover
 RGD_SCALE = 0.023
 RGD_CENTER = Vector((0.0, 0.0, 0.45))  # middle of the egg in model units
 
@@ -200,6 +211,36 @@ def build_ak_fp():
     dot.name = "RedDot"
     dot.data.materials.append(emissive("RedDot", (1.0, 0.04, 0.02), 1.6))
 
+    # the round tube collimator (as on the video), the other sight choice:
+    # its mount on the dust cover, the dot glowing near the objective
+    aim = import_more("aimpoint")
+    shrink_images(1024)
+    for o in list(aim):
+        if "Reticle" in o.name:
+            aim.remove(o)
+            bpy.data.objects.remove(o)
+        elif "glass" in o.name:
+            glass = bpy.data.materials.new("AimGlass")
+            glass.use_nodes = True
+            b = glass.node_tree.nodes["Principled BSDF"]
+            b.inputs["Base Color"].default_value = (0.75, 0.6, 0.45, 1)
+            b.inputs["Alpha"].default_value = 0.1
+            b.inputs["Roughness"].default_value = 0.05
+            glass.blend_method = "BLEND"
+            o.data.materials.clear()
+            o.data.materials.append(glass)
+    to_aim = Matrix.Translation(AIM_AT) @ Matrix.Scale(1.0 / s, 4) @ Matrix.Translation((0.0, 0.0, -AIM_AXIS_Z))
+    transform(aim, to_cam @ to_aim)
+    aim = bw.join(aim, "Aimpoint")
+    for p in aim.data.polygons:
+        p.use_smooth = True
+    aim_front = AIM_AT + Vector((0.0, 0.045 / s, 0.0))
+    aim_rear = AIM_AT + Vector((0.0, -0.05 / s, 0.0))
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=10, ring_count=6, radius=0.0011, location=g(aim_front))
+    dot2 = bpy.context.active_object
+    dot2.name = "RedDot2"
+    dot2.data.materials.append(emissive("RedDot2", (1.0, 0.05, 0.02), 1.8))
+
     glove, _ = bw.gloves()
     sleeve = bw.material("SleeveCamo", (0.075, 0.085, 0.055), roughness=0.95)
     guard = g((0.0, 1.0, 0.42))  # under the handguard
@@ -227,8 +268,9 @@ def build_ak_fp():
         ("muzzle", g((0.0, 4.72, 0.99)), "gun"),
         ("eject", g((0.22, -0.55, 0.98)), "gun"),
         ("sight", g(dot_at), "gun"),
+        ("sight2", g(aim_rear), "gun"),
     ])
-    for o, b in [(body, "gun"), (kobra, "gun"), (dot, "gun"), (hand_r, "gun"), (arm_r, "gun"), (bolt, "bolt"), (mag, "mag"),
+    for o, b in [(body, "gun"), (kobra, "gun"), (dot, "gun"), (aim, "gun"), (dot2, "gun"), (hand_r, "gun"), (arm_r, "gun"), (bolt, "bolt"), (mag, "mag"),
                  (hand_l, "hand_l"), (arm_l, "hand_l"), (mag_new, "mag_new")]:
         bw.bind(o, arm, b)
 
@@ -339,6 +381,56 @@ SNIPERS = {
 }
 
 
+# AS Val model units: muzzle -Y, right -X, up +Z; 11.48 units long (the
+# skeleton stock unfolded), 875 mm on the real rifle
+VAL_SCALE = 0.0762
+VAL_GRIP = Vector((-0.26, 0.62, -0.73))  # middle of the pistol grip, on the bore's centre line
+SNIPERS["asval"] = {
+    "to_model": Matrix.Scale(VAL_SCALE, 4) @ Matrix.Rotation(math.pi, 4, "Z") @ Matrix.Translation(-VAL_GRIP),
+    # iron sights: the line from the rear notch over the front post tip
+    "muzzle": (0.0, 0.583, 0.073), "guard": (0.0, 0.2, 0.032), "mag": (0.0, 0.12, 0.018),
+    "sight": (0.0, 0.27, 0.1083), "eject": (0.021, 0.162, 0.082),
+    "grip_cam": (0.13, 0.27, -0.235), "yaw": 3.0, "mag_obj": "",
+    "kick": (0.002, -0.02, 0.006, 2.5),
+}
+
+
+def val_parts():
+    """The AS Val in model metres (barrel +Y, right +X, up +Z, origin in the
+    grip): body and the magazine split off by its loose pieces."""
+    meshes = import_gltf("asval")
+    pieces = []
+    for o in meshes:
+        pieces += separate_loose(o)
+    mag = []
+    rest = []
+    for p in pieces:
+        c, _ = centre(p)
+        (mag if -1.6 < c.y < -0.45 and c.z < -0.5 else rest).append(p)
+    body = bw.join(rest, "ASVAL")
+    mag = bw.join(mag, "Mag")
+    transform([body, mag], SNIPERS["asval"]["to_model"])
+    for o in (body, mag):
+        for p in o.data.polygons:
+            p.use_smooth = True
+    return body, mag
+
+
+def build_npc_val():
+    """The AS Val in the rifle frame of npc.gd (as npc_rifle.glb): what falls
+    out of the player's hands when he is killed with it."""
+    bw.reset()
+    body, mag = val_parts()
+    shrink_images(512)
+    val = bw.join([body, mag], "ASVAL")
+    decimate(val, 5000)
+    for m in val.data.materials:
+        bsdf = m.node_tree.nodes.get("Principled BSDF")
+        for link in list(bsdf.inputs["Normal"].links):
+            m.node_tree.links.remove(link)
+    bw.export(os.path.join(ROOT, "assets", "npc", "npc_asval.glb"))
+
+
 def sniper_parts(wid):
     """The rifle's meshes in model metres (see SNIPERS): body and magazine."""
     spec = SNIPERS[wid]
@@ -360,7 +452,7 @@ def sniper_parts(wid):
 def build_sniper_fp(wid):
     bw.reset()
     spec = SNIPERS[wid]
-    body, extra = sniper_parts(wid)
+    body, extra = val_parts() if wid == "asval" else sniper_parts(wid)
     shrink_images(2048)
     grip = Vector(spec["grip_cam"])
     rot = Matrix.Rotation(math.radians(spec["yaw"]), 4, "Z")
@@ -404,9 +496,14 @@ def build_sniper_fp(wid):
     c.key(hidden, 0, scale=0.0)
     c.hold_all([0])
     c.key("gun", 0, loc=(0, 0, 0), rot=(0, 0, 0))
-    c.key("gun", 1, loc=(0.003, -0.05, 0.016), rot=(8.0, 0, -1.5))
-    c.key("gun", 7, loc=(0, -0.005, 0.002), rot=(1.0, 0, 0))
-    c.key("gun", 10, loc=(0, 0, 0), rot=(0, 0, 0))
+    if "kick" in spec:  # automatic: a short shove like the AK's
+        kx, ky, kz, kr = spec["kick"]
+        c.key("gun", 1, loc=(kx, ky, kz), rot=(kr, 0, -0.8))
+        c.key("gun", 3, loc=(0, 0, 0), rot=(0, 0, 0))
+    else:
+        c.key("gun", 1, loc=(0.003, -0.05, 0.016), rot=(8.0, 0, -1.5))
+        c.key("gun", 7, loc=(0, -0.005, 0.002), rot=(1.0, 0, 0))
+        c.key("gun", 10, loc=(0, 0, 0), rot=(0, 0, 0))
     c.finish()
 
     c = bw.Clip(arm, "reload")
@@ -608,8 +705,16 @@ def build_drone():
 
 
 if __name__ == "__main__":
+    only = [a for a in ARGS[1:]]
+    if only:  # e.g. -- preview_dir ak asval
+        for name in only:
+            {"ak": build_ak_fp, "asval": lambda: build_sniper_fp("asval"), "svd": lambda: build_sniper_fp("svd"),
+             "npc_asval": build_npc_val}[name]()
+        sys.exit(0)
     build_ak_fp()
     build_sniper_fp("svd")
+    build_sniper_fp("asval")
+    build_npc_val()
     build_npc_svd()
     build_grenade_fp()
     build_npc_rifle()

@@ -284,7 +284,7 @@ func _process(_delta: float) -> bool:
 		19:
 			_shot("m09_dead_black")
 			print("death_t=%.1f" % p.death_t)
-			_wait = 260
+			_wait = 360 # (respawn after Player.RESPAWN_TIME = 8 s)
 		20:
 			print("respawned: dead=%s hits=%d blood=%.0f" % [p.dead, p.hits, p.blood])
 			quit()

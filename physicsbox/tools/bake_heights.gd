@@ -9,8 +9,8 @@ extends SceneTree
 
 const MAP := "res://assets/maps/trenches.glb"
 const OUT := "res://assets/maps/trenches_height.res"
-const X0 := -270.0
-const Z0 := -170.0
+const X0 := -590.0
+const Z0 := -340.0
 const CHX := 30.0
 const CHZ := 34.0
 const STEP := 0.5

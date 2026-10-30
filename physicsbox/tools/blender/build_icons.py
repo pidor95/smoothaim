@@ -1,6 +1,7 @@
 """Renders the icons for the weapon menu and the hotbar in Blender from the
 exported models: assets/ui/icon_<id>.png (transparent, 512x256, side view)
-for the guns (viewmodels), the grenade, the FPV drone and the suppressor.
+for the guns (viewmodels), the AK's two sights, the grenade, the FPV drone,
+the suppressor and the first aid (medkit, bandage, promedol).
 
 Run (after build_weapons.py / build_sketchfab_kit.py):
   blender -b --python tools/blender/build_icons.py [-- id ...]
@@ -13,19 +14,27 @@ import bpy
 from mathutils import Matrix, Vector
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-WEAPONS = {"ak74": 3.0, "svd": 2.5}  # id -> yaw the viewmodel was built with
-PROPS = {"grenade": "grenade.glb", "fpv": "fpv_drone.glb", "suppressor": "suppressor.glb"}
+WEAPONS = {"ak74": 3.0, "svd": 2.5, "asval": 3.0}  # id -> yaw the viewmodel was built with
+PROPS = {"grenade": "grenade.glb", "fpv": "fpv_drone.glb", "suppressor": "suppressor.glb",
+         "medkit": "../props/medkit.glb", "bandage": "../props/bandage.glb", "promedol": "../props/promedol.glb"}
+# the AK's sights on their own (ak74_fp.glb): icon id -> mesh name prefixes kept
+SIGHTS = {"kobra": ("Kobra",), "collimator": ("Aimpoint",)}
+# small first aid things are seen from above at an angle, not from the side
+TILTED = ("medkit", "bandage", "promedol")
+# per icon: meshes left out (the AK icon shows it with the collimator)
+DROP = {"ak74": ("Kobra",)}
 ONLY = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []  # icon ids to render (all by default)
 SKIP = ("Hand", "Arm", "Thumb", "Shell", "MagNew", "Clip", "Round", "RedDot")
 
 
-def render_icon(wid, yaw, path=None):
+def render_icon(wid, yaw, path=None, keep=None, src=None):
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.import_scene.gltf(filepath=path or os.path.join(ROOT, "assets", "weapons", wid + "_fp.glb"))
+    bpy.ops.import_scene.gltf(filepath=path or os.path.join(ROOT, "assets", "weapons", (src or wid) + "_fp.glb"))
     meshes = []
     for o in list(bpy.context.scene.objects):
         # the importer adds a bone display shape (unparented); hands are not part of the icon
-        if o.type == "MESH" and (o.name.startswith(SKIP) or (path is None and o.parent_type != "BONE")):
+        if o.type == "MESH" and (o.name.startswith(SKIP) or (path is None and o.parent_type != "BONE")
+                                 or o.name.startswith(DROP.get(wid, ("-",))) or (keep and not o.name.startswith(keep))):
             bpy.data.objects.remove(o)
         elif o.type == "MESH":
             meshes.append(o)
@@ -49,12 +58,16 @@ def render_icon(wid, yaw, path=None):
     scene = bpy.context.scene
     cam_data = bpy.data.cameras.new("cam")
     cam_data.type = "ORTHO"
-    cam_data.ortho_scale = max(size.y, size.z * 2.0, size.x) * 1.12
+    cam_data.ortho_scale = max(size.y, size.z * 2.0, size.x * (1.0 if keep or path is None else 2.0)) * 1.12
     cam = bpy.data.objects.new("cam", cam_data)
     scene.collection.objects.link(cam)
     # look along -X at the right side of the gun, muzzle to the right
     look = Matrix.Rotation(math.radians(yaw), 4, "Z") @ Matrix.Rotation(math.radians(90), 4, "Z") @ Matrix.Rotation(math.radians(90), 4, "X")
     cam.matrix_world = Matrix.Translation(center + unyaw.inverted().to_3x3() @ Vector((2.0, 0, 0))) @ look
+    if wid in TILTED:
+        cam_data.ortho_scale = size.length * 1.7
+        tilt = Matrix.Rotation(math.radians(-25), 4, "Z") @ Matrix.Rotation(math.radians(-48), 4, "Y")
+        cam.matrix_world = Matrix.Translation(center) @ tilt @ Matrix.Translation(-center) @ cam.matrix_world
     scene.camera = cam
     for rot, energy in (((50, 10, 60), 4.0), ((-30, -20, -120), 1.5)):
         sun = bpy.data.objects.new("sun", bpy.data.lights.new("sun", "SUN"))
@@ -83,6 +96,9 @@ def render_icon(wid, yaw, path=None):
 for wid, yaw in WEAPONS.items():
     if not ONLY or wid in ONLY:
         render_icon(wid, yaw)
+for wid, keep in SIGHTS.items():
+    if not ONLY or wid in ONLY:
+        render_icon(wid, 3.0, keep=keep, src="ak74")
 for wid, f in PROPS.items():
     if not ONLY or wid in ONLY:
         render_icon(wid, 0.0, os.path.join(ROOT, "assets", "weapons", f))

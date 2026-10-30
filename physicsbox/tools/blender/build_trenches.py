@@ -39,7 +39,7 @@ random.seed(1916)
 rng = np.random.default_rng(1916)
 
 C = Matrix(((1, 0, 0), (0, 0, -1), (0, 1, 0)))  # Godot -> Blender axes
-X0, X1, Z0, Z1 = -270.0, 150.0, -170.0, 170.0
+X0, X1, Z0, Z1 = -590.0, 250.0, -340.0, 340.0  # 840 x 680 m
 CHX, CHZ = 30.0, 34.0  # terrain chunk size
 CELL = 60.0  # furniture meshes are split into cells this big (culling)
 WALL = 0.92        # half width of the trench floor (inner face of the walls)
@@ -75,13 +75,14 @@ TRENCHES = []  # [points, depths]
 FRONTS = []
 REARS = []
 for side, sgn in ((0, 1.0), (1, -1.0)):
-    front = zigzag(-262.0, 42.0, 11.0, sgn * 29.0, 2.6)
-    rear = zigzag(-258.0, 38.0, 17.0, sgn * 50.0, 2.0)
+    front = zigzag(-582.0, 42.0, 11.0, sgn * 29.0, 2.6)
+    rear = zigzag(-578.0, 38.0, 17.0, sgn * 50.0, 2.0)
     FRONTS.append(len(TRENCHES))
     TRENCHES.append([front, [FRONT_D] * len(front)])
     REARS.append(len(TRENCHES))
     TRENCHES.append([rear, [DEEP_D] * len(rear)])
-    for x in (-240.0, -200.0, -160.0, -118.0, -74.0, -31.0, 14.0):
+    for x in (-560.0, -515.0, -470.0, -425.0, -380.0, -335.0, -290.0,
+              -240.0, -200.0, -160.0, -118.0, -74.0, -31.0, 14.0):
         f = nearest(front, x)
         r = nearest(rear, x + random.uniform(-6, 6))
         mid = ((f[0] + r[0]) / 2 + random.uniform(-4, 4), (f[1] + r[1]) / 2)
@@ -126,9 +127,40 @@ BUILDINGS = [
     ("HouseWood", 19.0, -91.0, math.pi - 0.3), ("HouseBrick", 58.0, -96.0, math.pi + 0.2),
     ("Garages", 100.0, -94.0, math.pi), ("CarWreck", -40.0, -70.0, 2.5),
 ]
+# the map doubled: the line runs on 320 m further west, deep rear areas
+# behind both lines with their own villages, farms by the roads, and open
+# fields east of the town
+BUILDINGS += [
+    # the far western stretch of the line: ruins and wrecks by the trenches
+    ("Ruin2", -330.0, 4.0, 0.3), ("CarWreck", -365.0, -5.0, 0.7), ("HouseBrick", -410.0, -2.0, 1.4),
+    ("Ruin2", -468.0, 3.0, -0.2), ("CarWreck", -512.0, 6.0, 2.4), ("HouseWood", -548.0, -4.0, 0.9),
+    # villages behind the allied lines (+Z)
+    ("HouseWood", -300.0, 90.0, 0.2), ("HouseBrick", -345.0, 98.0, -0.1), ("Garages", -395.0, 96.0, 0.0),
+    ("HouseWood", -440.0, 86.0, 0.35), ("HouseBrick", -490.0, 94.0, 0.05), ("Ruin2", -545.0, 100.0, 0.0),
+    ("HouseBrick", -470.0, 205.0, 0.1), ("HouseWood", -430.0, 214.0, -0.3), ("HouseWood", -392.0, 198.0, 0.2),
+    ("Garages", -350.0, 210.0, 0.0), ("HouseBrick", -150.0, 205.0, -0.15), ("HouseWood", -110.0, 214.0, 0.3),
+    ("Ruin2", -60.0, 200.0, 0.0), ("HouseBrick", 0.0, 208.0, 0.2), ("HouseWood", 45.0, 198.0, -0.2),
+    ("Garages", 140.0, 210.0, 0.0), ("HouseBrick", 190.0, 200.0, 0.1), ("CarWreck", -250.0, 190.0, 1.1),
+    ("HouseWood", -520.0, 290.0, 0.4), ("HouseBrick", -200.0, 292.0, -0.2), ("HouseWood", 100.0, 285.0, 0.1),
+    # villages behind the enemy lines (-Z)
+    ("HouseWood", -300.0, -90.0, math.pi + 0.2), ("HouseBrick", -350.0, -96.0, math.pi), ("Ruin2", -405.0, -100.0, math.pi + 0.1),
+    ("HouseWood", -450.0, -86.0, math.pi - 0.3), ("Garages", -500.0, -96.0, math.pi), ("HouseBrick", -548.0, -92.0, math.pi + 0.2),
+    ("HouseBrick", -460.0, -205.0, math.pi), ("HouseWood", -415.0, -212.0, math.pi + 0.3), ("Ruin2", -370.0, -198.0, math.pi),
+    ("HouseWood", -160.0, -210.0, math.pi - 0.2), ("HouseBrick", -115.0, -200.0, math.pi), ("Garages", -60.0, -212.0, math.pi),
+    ("HouseWood", 10.0, -204.0, math.pi + 0.1), ("HouseBrick", 60.0, -198.0, math.pi - 0.1), ("Ruin2", 150.0, -205.0, math.pi),
+    ("HouseWood", 195.0, -212.0, math.pi + 0.4), ("CarWreck", -260.0, -192.0, 0.6),
+    ("HouseBrick", -480.0, -292.0, math.pi + 0.1), ("HouseWood", -180.0, -288.0, math.pi), ("HouseBrick", 120.0, -290.0, math.pi - 0.2),
+    # east of the town: open fields, a farm on each side
+    ("HouseWood", 205.0, 60.0, -math.pi / 2), ("Garages", 222.0, 92.0, 0.0), ("Ruin2", 210.0, 2.0, -math.pi / 2),
+    ("HouseWood", 205.0, -60.0, -math.pi / 2), ("CarWreck", 180.0, -20.0, 0.3),
+]
 TOWN = (52.0, 146.0, -62.0, 62.0)  # flat ground of the town sector
-ROADS = [[(-268.0, 64.0), (148.0, 64.0)], [(-268.0, -64.0), (148.0, -64.0)],
-         [(97.0, 64.0), (97.0, 30.0)], [(97.0, -64.0), (97.0, -30.0)], [(55.0, 0.0), (140.0, 0.0)]]
+ROADS = [[(-588.0, 64.0), (248.0, 64.0)], [(-588.0, -64.0), (248.0, -64.0)],
+         [(97.0, 64.0), (97.0, 30.0)], [(97.0, -64.0), (97.0, -30.0)], [(55.0, 0.0), (140.0, 0.0)],
+         [(-588.0, 182.0), (248.0, 182.0)], [(-588.0, -182.0), (248.0, -182.0)],
+         [(-280.0, 64.0), (-280.0, 182.0)], [(-280.0, -64.0), (-280.0, -182.0)],
+         [(170.0, 64.0), (170.0, 182.0)], [(170.0, -64.0), (170.0, -182.0)],
+         [(-430.0, 182.0), (-430.0, 330.0)], [(-430.0, -182.0), (-430.0, -330.0)]]
 
 
 # ---------------------------------------------------------------- geometry maths
@@ -181,12 +213,12 @@ def in_town(x, z, margin=0.0):
 
 
 CRATERS = []
-while len(CRATERS) < 270:
-    x, z = random.uniform(-266, 50), random.uniform(-22, 22)
+while len(CRATERS) < 540:
+    x, z = random.uniform(-586, 50), random.uniform(-22, 22)
     if all(math.hypot(x - c[0], z - c[1]) > 4.0 for c in CRATERS) and not in_pad(x, z, 3.0):
         CRATERS.append((x, z, random.uniform(1.4, 3.4), random.uniform(0.5, 1.3)))
-while len(CRATERS) < 400:  # shell holes behind the lines and in the town too
-    x, z = random.uniform(-266, 146), random.uniform(-160, 160)
+while len(CRATERS) < 760:  # shell holes behind the lines and in the town too
+    x, z = random.uniform(-586, 246), random.uniform(-336, 336)
     if abs(z) < 22 and x < 50:
         continue
     if in_pad(x, z, 3.0) or any(math.hypot(x - c[0], z - c[1]) < 4.0 for c in CRATERS):
@@ -343,7 +375,8 @@ def chunk_step(x0, x1, z0, z1):
     if near_trench(x0, x1, z0, z1, 3.0):
         return 0.5
     for b in BUILDINGS:
-        if x0 - 20 < b[1] < x1 + 20 and z0 - 20 < b[2] < z1 + 20:
+        m = 20 if b[0] == "Panel5" else 8  # (the doubled map: finer ground only right round a house)
+        if x0 - m < b[1] < x1 + m and z0 - m < b[2] < z1 + m:
             return 1.0
     if any(x0 - 4 < c[0] < x1 + 4 and z0 - 4 < c[1] < z1 + 4 for c in CRATERS):
         return 1.0
@@ -445,7 +478,7 @@ def build_walls(m_planks, m_backing, m_post, m_wire):
             L = math.hypot(bx - ax, bz - az)
             ux, uz = (bx - ax) / L, (bz - az) / L
             yaw = math.atan2(-uz, ux)  # box X axis along the segment
-            plank_run = random.random() < 0.65
+            plank_run = random.random() < (0.65 if ax > -270.0 else 0.3)  # the far west: mostly bare earth
             n = max(1, int(math.ceil((L + 0.6) / 1.0)))
             piece = (L + 0.6) / n
             for side in (-1, 1):
@@ -573,7 +606,7 @@ def build_wire(m_post, m_wire):
     stakes = Cells("WireStakes", m_post)
     wire = Cells("Wire", m_wire)
     for z0 in (-14.0, 14.0):
-        x = -266.0
+        x = -586.0
         prev = None
         while x < 48.0:
             z = z0 + random.uniform(-1.0, 1.0)
@@ -623,7 +656,7 @@ def make_tree(name, m_bark, seed):
 def place_trees(variants):
     placed = []
     tries = 0
-    while len(placed) < 420 and tries < 30000:
+    while len(placed) < 1000 and tries < 60000:
         tries += 1
         x, z = random.uniform(X0 + 3, X1 - 3), random.uniform(Z0 + 3, Z1 - 3)
         d, _ = trench_field(np.array(x), np.array(z))

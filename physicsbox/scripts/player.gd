@@ -47,7 +47,7 @@ static var immortal := false
 const LETHAL_HITS := 5
 const BLOOD_FULL := 5000.0
 const BLOOD_DEATH := 2400.0
-const RESPAWN_TIME := 6.5
+const RESPAWN_TIME := 8.0
 var hits := 0
 var blood := BLOOD_FULL
 var bleed_rate := 0.0 # ml per second, clots slowly
@@ -57,6 +57,23 @@ var dead := false
 var death_t := 0.0 # seconds since death: the HUD fades to black round a white dot
 var ear_ring := 0.0 # 0..1 ringing in the ears (blasts, hits, death)
 var hurt_flash := 0.0 # 1 on a hit, fades (HUD red vignette)
+## First aid (the row over the hotbar, keys Z X T M): a bandage slows the
+## bleeding, promedol takes the pain away for a while, the medkit patches up
+## two wounds; the medic (called over) puts him right. Medkits lying on the
+## map refill everything.
+const MAX_BANDAGES := 3
+const MAX_PROMEDOL := 2
+const MAX_MEDKITS := 2
+const TREAT_TIMES := {"bandage": 3.0, "promedol": 1.6, "medkit": 6.0}
+var bandages := 0
+var promedol := 0
+var medkits := 0
+var painkiller := 0.0 # seconds of promedol left
+var treating := "" # what he is putting on now
+var treat_t := 0.0
+var wants_medic := false # called the medic; one is on the way
+var medic_note := "" # HUD line about the medic / a pickup
+var medic_note_t := 0.0
 var heart_phase := 0.0 # 0..1 within the current beat (HUD ECG)
 var _stress := 0.0
 var _ring_player := AudioStreamPlayer.new()
@@ -134,6 +151,8 @@ func _ready() -> void:
 	yaw = rotation.y
 	_spawn = global_transform
 	touch_mode = DisplayServer.is_touchscreen_available() or OS.has_feature("mobile")
+	_restock(Settings.carries("medkit"))
+	_build_helmet()
 	on_settings_changed()
 
 	# ringing ears and a pounding heart; blasts and wounds muffle the world
@@ -159,6 +178,137 @@ func _exit_tree() -> void:
 
 func on_settings_changed() -> void:
 	camera.fov = Settings.fov
+	if _helmet:
+		_helmet.visible = gopro()
+
+
+## The GoPro on the side of the helmet (Settings.camera): the camera sits
+## higher and to the right of the eyes, sees wider, and the helmet's rim
+## bulges into the top left corner.
+const GOPRO_AT := Vector3(0.1, 0.13, 0.03)
+const GOPRO_GUN := Vector3(-0.12, 0.03, -0.05) # the gun sits more in the middle of its view
+var _helmet: MeshInstance3D
+
+
+func gopro() -> bool:
+	return Settings.camera == "gopro"
+
+
+func _build_helmet() -> void:
+	_helmet = MeshInstance3D.new()
+	var m := SphereMesh.new()
+	m.radius = 0.16
+	m.height = 0.24
+	m.radial_segments = 32
+	m.rings = 16
+	_helmet.mesh = m
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = load(Npc.TEAM_CAMO[0])
+	mat.albedo_color = Color(0.5, 0.5, 0.46)
+	mat.uv1_triplanar = true
+	mat.uv1_scale = Vector3.ONE * 2.5
+	mat.roughness = 0.75
+	_helmet.material_override = mat
+	_helmet.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# the helmet's middle is to the left of, above and a touch behind the
+	# camera: only its rim shows, in the top left corner
+	_helmet.position = Vector3(-0.2, 0.12, -0.03)
+	_helmet.rotation = Vector3(0.2, 0.0, -0.35)
+	camera.add_child(_helmet)
+
+
+## The КАМЕРА button: bodycam on the chest <-> GoPro on the helmet.
+func toggle_camera() -> void:
+	Settings.camera = "bodycam" if gopro() else "gopro"
+	Settings.save_settings()
+	Settings.apply()
+	medic_note = "Камера: GoPro на шлеме (4K 60FPS) [экшн-камера]" if gopro() else "Камера: нательная (бодикам)"
+	medic_note_t = 2.5
+
+
+# ------------------------------------------------------------------ first aid
+
+func _restock(full: bool) -> void:
+	bandages = 2 if full else 0
+	promedol = 1 if full else 0
+	medkits = 1 if full else 0
+
+
+## A medkit picked up off the ground: everything topped up.
+func pick_medkit() -> void:
+	bandages = MAX_BANDAGES
+	promedol = MAX_PROMEDOL
+	medkits = mini(medkits + 1, MAX_MEDKITS)
+	medic_note = "+ АПТЕЧКА: бинты, промедол"
+	medic_note_t = 2.0
+	Sfx.play("ui_click", -4.0)
+
+
+## Starts putting on `what` ("bandage", "promedol", "medkit"): the gun goes
+## down for TREAT_TIMES[what] seconds. False when it cannot be done.
+func start_treat(what: String) -> bool:
+	if dead or treating != "" or piloting or weapon.throwing():
+		return false
+	var have := {"bandage": bandages, "promedol": promedol, "medkit": medkits}
+	if have.get(what, 0) <= 0:
+		medic_note = {"bandage": "Бинтов нет", "promedol": "Промедола нет", "medkit": "Аптечек нет"}[what]
+		medic_note_t = 1.5
+		return false
+	match what:
+		"bandage":
+			bandages -= 1
+		"promedol":
+			promedol -= 1
+		"medkit":
+			medkits -= 1
+	treating = what
+	treat_t = 0.0
+	weapon.busy = true
+	weapon.trigger_held = false
+	weapon.set_aiming(false)
+	Sfx.play("ui_click", -10.0)
+	return true
+
+
+func _treat_done() -> void:
+	match treating:
+		"bandage":
+			bleed_rate *= 0.15
+			medic_note = "Кровотечение остановлено" if bleed_rate < 1.0 else "Перевязано"
+		"promedol":
+			painkiller = 120.0
+			ear_ring = 0.0
+			_stress = 0.0
+			medic_note = "Промедол: боль ушла"
+		"medkit":
+			bleed_rate = 0.0
+			hits = maxi(hits - 2, 0)
+			blood = minf(blood + 700.0, BLOOD_FULL)
+			medic_note = "Раны обработаны"
+	medic_note_t = 1.8
+	treating = ""
+	weapon.busy = false
+
+
+## Calls a medic over (the game sends the nearest of his side).
+func call_medic() -> void:
+	if dead:
+		return
+	wants_medic = true
+	var game := get_tree().current_scene
+	if game and game.has_method("call_medic"):
+		medic_note = game.call_medic()
+	medic_note_t = 3.0
+
+
+## The medic has done his work: all wounds dressed, bleeding stopped.
+func medic_heal() -> void:
+	wants_medic = false
+	hits = 0
+	bleed_rate = 0.0
+	blood = maxf(blood, 4700.0)
+	medic_note = "Медик: раны перевязаны"
+	medic_note_t = 2.5
 
 
 func capture_mouse() -> void:
@@ -231,7 +381,10 @@ func die() -> void:
 	dead = true
 	death_t = 0.0
 	ear_ring = 1.0
-	weapon.visible = false
+	treating = ""
+	weapon.busy = false
+	wants_medic = false
+	weapon.drop() # slips out of the hands and falls
 	if piloting:
 		piloting.detonate()
 
@@ -307,13 +460,16 @@ func _respawn() -> void:
 	velocity = Vector3.ZERO
 	yaw = _spawn.basis.get_euler().y
 	pitch = 0.0
-	head.position.y = EYE_HEIGHT
+	head.position = Vector3(0.0, EYE_HEIGHT, 0.0)
 	_eye = EYE_HEIGHT
 	set_crouch(false)
 	sprint = false
 	stamina = 1.0
 	head.rotation.z = 0.0
 	weapon.visible = true
+	weapon.pick_up()
+	painkiller = 0.0
+	_restock(Settings.carries("medkit"))
 
 
 func _physics_process(delta: float) -> void:
@@ -328,17 +484,35 @@ func _physics_process(delta: float) -> void:
 	if _drone_regen > 40.0:
 		_drone_regen = 0.0
 		drones = mini(drones + 1, MAX_DRONES)
+	painkiller = maxf(painkiller - delta, 0.0)
+	medic_note_t = maxf(medic_note_t - delta, 0.0)
+	if treating != "":
+		treat_t += delta
+		if treat_t >= TREAT_TIMES[treating]:
+			_treat_done()
 	if not touch_mode and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		if Input.is_action_just_pressed("grenade"):
 			throw_grenade()
 		if Input.is_action_just_pressed("drone"):
 			launch_drone()
+		if Input.is_action_just_pressed("bandage"):
+			start_treat("bandage")
+		if Input.is_action_just_pressed("painkiller"):
+			start_treat("promedol")
+		if Input.is_action_just_pressed("medkit"):
+			start_treat("medkit")
+		if Input.is_action_just_pressed("call_medic"):
+			call_medic()
+		if Input.is_action_just_pressed("camera"):
+			toggle_camera()
 	_body_process(delta)
 	if dead:
-		# down on the floor; back at the start after a while
+		# the legs go: he drops to the floor (faster and faster), the camera
+		# rolls onto its side and lies there; back at the start after a while
 		death_t += delta
-		head.position.y = move_toward(head.position.y, 0.3, delta * 2.5)
-		head.rotation.z = move_toward(head.rotation.z, 1.2, delta * 2.0)
+		var fall := clampf(death_t / 0.9, 0.0, 1.0) * clampf(death_t / 0.9, 0.0, 1.0)
+		head.position = Vector3(lerpf(0.0, -0.15, fall), lerpf(_eye, 0.25, fall), lerpf(0.0, 0.2, fall))
+		head.rotation = Vector3(lerpf(pitch, 0.35, fall), 0.0, lerpf(0.0, 1.25, fall))
 		velocity = Vector3(0, velocity.y - GRAVITY * delta, 0) if not is_on_floor() else Vector3.ZERO
 		move_and_slide()
 		if death_t >= RESPAWN_TIME:
@@ -391,9 +565,13 @@ func _physics_process(delta: float) -> void:
 	_kick_loose_bodies()
 	_footsteps(delta)
 
-	# the bodycam's wide lens
-	var fov := Settings.fov + (14.0 if Settings.bodycam else 0.0)
-	camera.fov = lerpf(fov, fov * weapon.current.def.ads_fov, smoothstep(0.0, 1.0, weapon.aim_t))
+	# the bodycam's wide lens; the GoPro's wider still
+	var fov := Settings.fov + (30.0 if gopro() else (14.0 if Settings.bodycam else 0.0))
+	var aim_s := smoothstep(0.0, 1.0, weapon.aim_t)
+	camera.fov = lerpf(fov, fov * weapon.current.def.ads_fov, aim_s)
+	camera.position = GOPRO_AT * (1.0 - aim_s) if gopro() else Vector3.ZERO
+	weapon.position = GOPRO_GUN * (1.0 - aim_s) if gopro() else Vector3.ZERO
+	_helmet.visible = gopro() and not weapon.scoped()
 	# camera recoil recovers over time; it never changes where you aim permanently
 	_recoil = _recoil.lerp(Vector2.ZERO, clampf(delta * 9.0, 0.0, 1.0))
 	var sh := shake * shake * 0.07
@@ -415,9 +593,11 @@ func _body_process(delta: float) -> void:
 			blood = BLOOD_DEATH
 			die()
 	consciousness = 0.0 if dead else clampf((blood - BLOOD_DEATH) / (4300.0 - BLOOD_DEATH), 0.0, 1.0) * (1.0 - ear_ring * 0.25)
+	if painkiller > 0.0 and not dead: # promedol keeps him on his feet a while longer
+		consciousness = minf(consciousness + 0.3, 1.0)
 	_stress = maxf(_stress - delta * 0.06, 0.0)
 	var target := 72.0 + Vector2(velocity.x, velocity.z).length() * 5.0 + _stress * 38.0 + hits * 8.0 \
-			+ (BLOOD_FULL - blood) / 35.0
+			+ (BLOOD_FULL - blood) / 35.0 - (14.0 if painkiller > 0.0 else 0.0)
 	if dead:
 		target = maxf(0.0, 40.0 - death_t * 25.0) # the heart stops
 	bpm = move_toward(bpm, target, delta * (14.0 if target > bpm else 4.0))
@@ -452,7 +632,7 @@ func add_stress(amount: float) -> void:
 ## a racing heart), and jolts on landing, on every shot and every hit. With
 ## the "Бодикам" setting off the motion is much gentler.
 func _bodycam_motion(delta: float, hspeed: float) -> void:
-	var k := 1.0 if Settings.bodycam else 0.35
+	var k := (0.6 if gopro() else 1.0) if Settings.bodycam or gopro() else 0.35
 	var aim := weapon.aim_t
 	var dt := maxf(delta, 0.001)
 	var turn_rate := wrapf(yaw - _last_yaw, -PI, PI) / dt

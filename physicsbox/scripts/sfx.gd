@@ -11,6 +11,8 @@ const SOUNDS := {
 	# with the PBS-1 on (tools/blender/build_suppressed_sounds.py)
 	"rifle_sup": ["rifle_sup_0", "rifle_sup_1", "rifle_sup_2", "rifle_sup_3"],
 	"sniper_sup": ["sniper_sup_0", "sniper_sup_1", "sniper_sup_2"],
+	# the AS Val: subsonic round, built-in silencer
+	"val": ["val_0", "val_1", "val_2", "val_3"],
 	"wall_hit": ["wall_hit_0", "wall_hit_1"],
 	"wood_hit": ["wood_hit"],
 	"wood_break": ["wood_break"],

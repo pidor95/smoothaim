@@ -18,6 +18,9 @@ MODELS = {
     "svd": "7e5c38ec11b54b08b14e49843ad04ed5",  # SVD "Dragunov" by Sergei3D, CC-BY-4.0
     "kobra": "b95a9a049fdc4df1b9f02fb8c7a608e8",  # Low-Poly EKP-1S-03 Kobra Red Dot Sight by Mivoriss57, CC-BY-4.0
     "pbs1": "cb95b1e5f55842beb9a80587c6ff3f19",  # PBS-1 Silencer for AK-74 5.45x39 by 3dYaroslav, CC-BY-4.0
+    "asval": "9e094248fe8c4320a70f87589932c847",  # AS Val by SLIVA21, CC-BY-4.0
+    "aimpoint": "ba4d5b384e3a4f7f9706fe23e727282d",  # Aim Point Pro Red Dot Sight by armoredwave, CC-BY-4.0
+    "ifak": "011c33c121284bc88bb765a85511dae1",  # Tactical FIRST AID KIT by ruskoschey, CC-BY-4.0
 }
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_sources")
 

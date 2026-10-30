@@ -17,7 +17,7 @@ extends CharacterBody3D
 
 signal died(npc: Npc, headshot: bool)
 
-enum State { IDLE, WANDER, PANIC, STAGGER, KNOCKED, GETUP, DEAD, CHOKE, ORDER, SHOOT }
+enum State { IDLE, WANDER, PANIC, STAGGER, KNOCKED, GETUP, DEAD, CHOKE, ORDER, SHOOT, TREAT }
 
 ## Global AI switch (pause menu / HUD). When off NPCs just stand and take hits.
 static var ai_enabled := true
@@ -56,6 +56,10 @@ const RIFLE_BASIS := Basis(Vector3(0.4422, 0.4624, -0.7685), Vector3(-0.4624, -0
 		Vector3(-0.7685, 0.6371, -0.0588))
 const RIFLE_MUZZLE := Vector3(0, 0.105, -0.666)
 const RIFLE_MAG := 30
+const MEDKIT_SCENE := "res://assets/props/medkit.glb"
+const TREAT_TIME := 4.5
+const MEDIC_RANGE := 45.0
+static var _medkit_mesh: Mesh
 # Snipers carry an SVD (tools/blender/build_sketchfab_kit.py, same rifle frame).
 const SVD_SCENE := "res://assets/npc/npc_svd.glb"
 const SVD_MUZZLE := Vector3(0, 0.095, -0.992)
@@ -143,6 +147,15 @@ var role := "hold" # hold (his post in the line) | assault (the enemy's line)
 var post := Vector3.ZERO
 var suicided := false
 var last_hit_by_player := false
+## Medic: a white armband with a red cross and the IFAK on his chest; he
+## runs to the wounded of his side (out cold, writhing on the floor, or the
+## player who called) and patches them up on his knees.
+var medic := false
+var _patient: Node3D
+var _treat_t := 0.0
+var _medic_scan := 0.0
+var _patient_retarget := 0.0
+var _unreachable := {} # instance id -> seconds he will not try that man again
 
 var pelvis: RigidBody3D
 var chest: RigidBody3D
@@ -527,6 +540,27 @@ func _build_body() -> void:
 	for p in [uarm_l, uarm_r]:
 		_visual(p, ring, tape, Vector3(0, 0.05, 0))
 	_visual(thigh_r, ring, tape, Vector3(0, 0.08, 0), Vector3.ZERO, Vector3(1.3, 1, 1.3))
+	if medic:
+		_medic_kit(ring)
+
+
+## The medic's marks: a white band with a red cross on the left arm (over
+## the team's tape) and the first aid pouch on his chest.
+func _medic_kit(ring: CylinderMesh) -> void:
+	var white := _mat(Color(0.92, 0.92, 0.9), 0.7)
+	var red := _mat(Color(0.8, 0.04, 0.04), 0.6)
+	_visual(uarm_l, ring, white, Vector3(0, -0.02, 0), Vector3.ZERO, Vector3(1.05, 1.6, 1.05))
+	# the cross on the outside of the band and on its front
+	_visual(uarm_l, _box_mesh(Vector3(0.006, 0.05, 0.014)), red, Vector3(-0.066, -0.02, 0))
+	_visual(uarm_l, _box_mesh(Vector3(0.006, 0.014, 0.05)), red, Vector3(-0.066, -0.02, 0))
+	_visual(uarm_l, _box_mesh(Vector3(0.014, 0.05, 0.006)), red, Vector3(0, -0.02, -0.066))
+	_visual(uarm_l, _box_mesh(Vector3(0.05, 0.014, 0.006)), red, Vector3(0, -0.02, -0.066))
+	if _medkit_mesh == null:
+		var scene: Node = load(MEDKIT_SCENE).instantiate()
+		_medkit_mesh = (scene.find_children("*", "MeshInstance3D", true, false)[0] as MeshInstance3D).mesh
+		scene.free()
+	# the pouch stands on the vest's front, red cross outwards
+	_visual(chest, _medkit_mesh, null, Vector3(0.0, -0.12, -0.16), Vector3(-PI / 2, 0, 0), Vector3.ONE * 0.85)
 
 
 # ------------------------------------------------------------------ animation
@@ -631,7 +665,7 @@ func _update_layers(delta: float, hspeed: float) -> void:
 	_t_idle = fposmod(_t_idle + delta, _c_idle.length)
 	if _order_clip != null:
 		_t_order = fposmod(_t_order + delta, _order_clip.length)
-	_order_w = 1.0 if state == State.ORDER and _order_clip != null else 0.0
+	_order_w = 1.0 if (state == State.ORDER or state == State.TREAT) and _order_clip != null else 0.0
 	var panic := state == State.PANIC or (state == State.WANDER and _speed > 3.0) # running, not walking
 	_t_walk = fposmod(_t_walk + delta * maxf(hspeed, 0.4) / 1.3, _c_walk.length)
 	_t_panic = fposmod(_t_panic + delta * maxf(hspeed, 1.0) / 4.3, _c_panic.length)
@@ -687,6 +721,9 @@ func _physics_process(delta: float) -> void:
 		State.STAGGER:
 			_stagger_process(delta)
 			return
+		State.TREAT:
+			_treat_process(delta)
+			return
 
 	var ai := ai_enabled and not display_only and _suicide_t < 0.0
 	if _order != "" and (state == State.IDLE or state == State.WANDER or state == State.PANIC):
@@ -703,13 +740,27 @@ func _physics_process(delta: float) -> void:
 		if global_position.distance_to(player.global_position) < 1.8:
 			_set_order("stand")
 	if ai:
+		if medic:
+			_medic_think(delta)
 		_war_think(delta)
 		match state:
 			State.IDLE:
-				if _state_time <= 0.0:
+				if _state_time <= 0.0 and not _patient:
 					_war_move()
 			State.WANDER:
-				if _agent.is_navigation_finished():
+				if _patient:
+					# the last few metres straight at him (the player may stand
+					# off the navmesh: on a parapet, a pile of rubble)
+					var gap := global_position.distance_to(_patient_at())
+					if gap < 1.5:
+						_start_treat()
+					elif _agent.is_navigation_finished() and gap > 6.0:
+						# the paths end too far from him: leave him for now
+						_unreachable[_patient.get_instance_id()] = 20.0
+						_patient = null
+						state = State.IDLE
+						_state_time = 0.5
+				elif _agent.is_navigation_finished():
 					_arrived()
 			State.PANIC:
 				if _state_time <= 0.0 and player and global_position.distance_to(player.global_position) < 12.0:
@@ -732,6 +783,10 @@ func _physics_process(delta: float) -> void:
 		to.y = 0.0
 		if to.length() > 0.05:
 			desired = to.normalized() * (4.3 if state == State.PANIC else _speed)
+	elif state == State.WANDER and _patient and global_position.distance_to(_patient_at()) < 6.0:
+		var to := _patient_at() - global_position
+		to.y = 0.0
+		desired = to.normalized() * 1.8
 	# reacting to a hit slows him down while he catches his balance
 	desired *= clampf(0.35 + balance * 0.65, 0.0, 1.0)
 
@@ -741,6 +796,11 @@ func _physics_process(delta: float) -> void:
 	_shove = Vector3.ZERO
 	if is_on_floor():
 		velocity.y = -0.5
+		# a step up on his path (trench floor into a shallower trench, a
+		# stair): he steps up onto it instead of walking into its face
+		if desired != Vector3.ZERO and is_on_wall() and moving and not _agent.is_navigation_finished() \
+				and _agent.get_next_path_position().y > global_position.y + 0.1:
+			velocity.y = 3.2
 	else:
 		velocity.y -= 9.8 * delta
 	if not display_only:
@@ -769,6 +829,11 @@ func _physics_process(delta: float) -> void:
 				if state == State.PANIC:
 					_stuck_count += 1 # cornered
 					_flee_target()
+				elif state == State.WANDER and _patient:
+					if global_position.distance_to(_patient_at()) < 4.0:
+						_start_treat() # as close as he can get
+					else:
+						_agent.target_position = _reachable(_patient_at())
 				elif state == State.WANDER:
 					_war_move(true)
 			else:
@@ -2191,6 +2256,160 @@ func _sees(target: Vector3) -> bool:
 # ------------------------------------------------------------------ war AI
 
 ## Still a threat: alive, on his feet and not surrendering.
+# ------------------------------------------------------------------ medic
+
+## Lying hurt and still alive: out cold or writhing on the floor (not a
+## man choking on his own blood - nothing to be done for him).
+func needs_medic() -> bool:
+	return not dead and not _neck_wound and (unconscious or _downed) and _suicide_t < 0.0
+
+
+## Sent to someone (the player who called him, or a man of his side down).
+func send_to(who: Node3D) -> bool:
+	if not medic or dead or not is_combatant() or state == State.TREAT:
+		return false
+	_patient = who
+	_target = null
+	_aiming = false
+	state = State.WANDER
+	_speed = 3.6
+	_agent.target_position = _reachable(_patient_at())
+	_patient_retarget = 0.5
+	_stuck_time = 0.0
+	return true
+
+
+## The nearest point the paths reach (a man down may lie off the navmesh:
+## against a trench wall, in a crater).
+func _reachable(at: Vector3) -> Vector3:
+	var p := NavigationServer3D.map_get_closest_point(get_world_3d().navigation_map, at)
+	return at if p == Vector3.ZERO else p # (the map not synced yet)
+
+
+## Where the patient actually is: a man down lies where his ragdoll fell,
+## not where his body node stood.
+func _patient_at() -> Vector3:
+	if _patient is Npc:
+		var c := (_patient as Npc).center()
+		return Vector3(c.x, (_patient as Npc).pelvis.global_position.y - 0.15, c.z)
+	return _patient.global_position
+
+
+func _patient_ok() -> bool:
+	if not is_instance_valid(_patient):
+		return false
+	if _patient is Player:
+		return not (_patient as Player).dead and (_patient as Player).wants_medic
+	return (_patient as Npc).needs_medic()
+
+
+## Every second or so: the nearest wounded man of his side within reach.
+func _medic_think(delta: float) -> void:
+	if _patient and not _patient_ok():
+		_patient = null
+		if state == State.WANDER:
+			state = State.IDLE
+			_state_time = 0.5
+	for k in _unreachable.keys():
+		_unreachable[k] -= delta
+		if _unreachable[k] <= 0.0:
+			_unreachable.erase(k)
+	if _patient:
+		_patient_retarget -= delta
+		if _patient_retarget <= 0.0 and state == State.WANDER:
+			_patient_retarget = 0.6
+			_agent.target_position = _reachable(_patient_at())
+		return
+	_medic_scan -= delta
+	if _medic_scan > 0.0 or state == State.SHOOT:
+		return
+	_medic_scan = randf_range(0.8, 1.4)
+	var best: Npc = null
+	var best_d := MEDIC_RANGE
+	for n in get_tree().get_nodes_in_group("npcs"):
+		if n == self or n.team != team or not n.needs_medic() or _unreachable.has(n.get_instance_id()):
+			continue
+		var d := global_position.distance_to(n.center())
+		if d < best_d:
+			best = n
+			best_d = d
+	if best:
+		send_to(best)
+
+
+## Down on his knees by the patient: the rifle on his back, both hands on
+## the wound for TREAT_TIME.
+func _start_treat() -> void:
+	_capture_blend()
+	_blend_time = 0.6
+	state = State.TREAT
+	_treat_t = 0.0
+	_order_clip = _lib.clip("medic_treat")
+	_t_order = 0.0
+	_aiming = false
+	velocity = Vector3.ZERO
+	if _gun:
+		_gun.visible = false
+
+
+func _treat_process(delta: float) -> void:
+	_treat_t += delta
+	_blend_w = minf(_blend_w + delta / _blend_time, 1.0)
+	if not _patient_ok():
+		_end_treat()
+		return
+	var tp := _patient_at() - global_position
+	tp.y = 0.0
+	if tp.length() > 4.5: # the player walked off
+		_end_treat()
+		return
+	rotation.y = lerp_angle(rotation.y, atan2(-tp.x, -tp.z), 5.0 * delta)
+	if is_on_floor():
+		velocity = Vector3(0, -0.5, 0)
+	else:
+		velocity = Vector3(0, velocity.y - 9.8 * delta, 0)
+	move_and_slide()
+	_update_layers(delta, 0.0)
+	_bleed(delta, 0.25, 0.45)
+	_apply_pose(_compute_pose())
+	if _treat_t >= TREAT_TIME:
+		if _patient is Player:
+			(_patient as Player).medic_heal()
+		else:
+			(_patient as Npc).patched_up()
+		_end_treat()
+
+
+func _end_treat() -> void:
+	_patient = null
+	_capture_blend()
+	_blend_time = 0.5
+	_order_clip = null
+	state = State.IDLE
+	_state_time = randf_range(0.5, 1.5)
+	if _gun:
+		_gun.visible = true
+
+
+## The medic's work: the bleeding stopped, he comes round and gets up.
+func patched_up() -> void:
+	if dead:
+		return
+	health = maxf(health, 65.0)
+	_bleed_left = 0.0
+	_choke_drain = 0.0
+	_arteries.clear()
+	_pain = 0.0
+	if unconscious:
+		unconscious = false
+		_out_cold = 0.0
+		if state == State.KNOCKED:
+			_start_getup()
+	elif _downed:
+		_downed = false
+		_start_getup()
+
+
 func is_combatant() -> bool:
 	return not dead and not _downed and not _neck_wound and not unconscious and _order != "hands_up" and _order != "kneel" \
 			and state != State.KNOCKED and state != State.GETUP

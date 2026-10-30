@@ -13,11 +13,19 @@ var game: Node
 
 ## Everything the hotbar can hold; it shows what the player carries
 ## (weapon menu, ОРУЖИЕ / СНАРЯЖЕНИЕ).
-const SLOT_IDS := ["ak74", "svd", "grenade", "fpv"]
-const SLOT_KEYS := ["1", "2", "G", "V"]
-const SLOT_W := 100.0
+const SLOT_IDS := ["ak74", "svd", "asval", "grenade", "fpv"]
+const SLOT_KEYS := ["1", "2", "3", "G", "V"]
+const SLOT_W := 92.0
 const SLOT_H := 66.0
 const ECG_N := 110
+## First aid row over the hotbar (as on the video): bandage, promedol,
+## medkit, call the medic.
+const AID_IDS := ["bandage", "promedol", "medkit", "medic"]
+const AID_KEYS := ["Z", "X", "T", "M"]
+const AID_NAMES := ["БИНТ", "ПРОМЕДОЛ", "АПТЕЧКА", "МЕДИК"]
+const AID_W := 84.0
+const AID_H := 50.0
+const RESPAWN_FADE := 8.0
 
 var _font: Font
 var _ammo := 30
@@ -26,6 +34,7 @@ var _kills := 0
 var _tickets := [0, 0]
 var _winner := -1
 var _icons := {}
+var _glow: GradientTexture2D
 var _ecg := PackedFloat32Array()
 var _ecg_t := 0.0
 
@@ -51,6 +60,19 @@ func _ready() -> void:
 	_font = ThemeDB.fallback_font
 	for id in SLOT_IDS:
 		_icons[id] = load("res://assets/ui/icon_%s.png" % id)
+	for id in ["bandage", "promedol", "medkit"]:
+		_icons[id] = load("res://assets/ui/icon_%s.png" % id)
+	# the death's glow: a soft round light, hot in the middle
+	var g := Gradient.new()
+	g.offsets = PackedFloat32Array([0.0, 0.12, 0.4, 1.0])
+	g.colors = PackedColorArray([Color(1, 1, 0.97, 1), Color(1, 0.98, 0.92, 0.9), Color(1, 0.95, 0.85, 0.3), Color(1, 0.95, 0.85, 0)])
+	_glow = GradientTexture2D.new()
+	_glow.gradient = g
+	_glow.fill = GradientTexture2D.FILL_RADIAL
+	_glow.fill_from = Vector2(0.5, 0.5)
+	_glow.fill_to = Vector2(1.0, 0.5)
+	_glow.width = 256
+	_glow.height = 256
 	_ecg.resize(ECG_N)
 	player.weapon.ammo_changed.connect(func(a, m):
 		_ammo = a
@@ -88,6 +110,29 @@ func _slot_rects() -> Array[Rect2]:
 	for i in n:
 		out.append(Rect2(x0 + i * (SLOT_W + gap), size.y - SLOT_H - 12.0, SLOT_W, SLOT_H))
 	return out
+
+
+## The first aid row, just over the hotbar.
+func _aid_rects() -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	var n := AID_IDS.size()
+	var gap := 6.0
+	var x0 := size.x * 0.5 - (n * AID_W + (n - 1) * gap) * 0.5
+	for i in n:
+		out.append(Rect2(x0 + i * (AID_W + gap), size.y - SLOT_H - 12.0 - 18.0 - AID_H, AID_W, AID_H))
+	return out
+
+
+func use_aid(k: int) -> void:
+	match AID_IDS[k]:
+		"bandage":
+			player.start_treat("bandage")
+		"promedol":
+			player.start_treat("promedol")
+		"medkit":
+			player.start_treat("medkit")
+		"medic":
+			player.call_medic()
 
 
 ## Hotbar slot `k` (of the carried items) pressed.
@@ -131,6 +176,7 @@ func _buttons() -> Dictionary:
 		"pause": {"pos": Vector2(s.x - 50, 50), "r": 32.0, "text": "II"},
 		"weapons": {"pos": Vector2(s.x - 135, 50), "r": 36.0, "text": "ОРУЖ."},
 		"orders": {"pos": Vector2(s.x - 222, 50), "r": 36.0, "text": "ПРИКАЗ"},
+		"camera": {"pos": Vector2(s.x - 309, 50), "r": 36.0, "text": "КАМЕРА"},
 	}
 
 
@@ -164,6 +210,11 @@ func _touch_down(i: int, p: Vector2) -> void:
 		for k in slots.size():
 			if slots[k].grow(4).has_point(p):
 				use_slot(k)
+				return
+		var aids := _aid_rects()
+		for k in aids.size():
+			if aids[k].grow(3).has_point(p):
+				use_aid(k)
 				return
 	if _orders_open:
 		var rects := _order_rects()
@@ -201,6 +252,8 @@ func _touch_down(i: int, p: Vector2) -> void:
 					game.toggle_weapon_menu()
 				"orders":
 					_orders_open = not _orders_open
+				"camera":
+					player.toggle_camera()
 				"exit":
 					reset_touches()
 					player.exit_drone()
@@ -341,15 +394,34 @@ func _draw() -> void:
 	_draw_status()
 	if not player.piloting:
 		_draw_hotbar()
+		_draw_aid()
 		_draw_stamina()
+	var line_y := size.y - SLOT_H - 12.0 - 18.0 - AID_H - 14.0
 	if player.weapon.reloading:
 		var t := "ПЕРЕЗАРЯДКА"
-		_text(Vector2(c.x - _font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x * 0.5, size.y - SLOT_H - 30), t, 24, Color(1, 0.85, 0.4, 0.95))
+		_text(Vector2(c.x - _font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x * 0.5, line_y), t, 24, Color(1, 0.85, 0.4, 0.95))
+	if player.treating != "" and not player.dead:
+		var t: String = {"bandage": "ПЕРЕВЯЗКА", "promedol": "УКОЛ ПРОМЕДОЛА", "medkit": "АПТЕЧКА: ОБРАБОТКА РАН"}[player.treating]
+		var f: float = player.treat_t / Player.TREAT_TIMES[player.treating]
+		_text(Vector2(c.x - _font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x * 0.5, line_y - 26), t, 24, Color(0.6, 1, 0.65, 0.95))
+		draw_rect(Rect2(c.x - 130, line_y - 16, 260, 6), Color(0, 0, 0, 0.5))
+		draw_rect(Rect2(c.x - 130, line_y - 16, 260 * f, 6), Color(0.5, 1, 0.6, 0.9))
+	if player.medic_note_t > 0.0 and not player.dead:
+		var a := clampf(player.medic_note_t / 0.4, 0.0, 1.0)
+		var t := player.medic_note
+		_text(Vector2(c.x - _font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x * 0.5, 230), t, 24, Color(1, 1, 1, a))
+	if player.wants_medic and not player.dead:
+		var t := "МЕДИК ИДЁТ К ВАМ"
+		var m: Node3D = game.medic_for_player() if game and game.has_method("medic_for_player") else null
+		if m:
+			t += " — %d м" % int(m.global_position.distance_to(player.global_position))
+		_text(Vector2(c.x - _font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x * 0.5, 262), t, 20, Color(0.6, 1, 0.65, 0.9))
 	if player.dead:
 		_draw_death()
 		return
 	if not player.touch_mode:
-		_text(Vector2(24, 132), "WASD ход · Shift бег · C присед · ЛКМ огонь · ПКМ прицел/оптика · R перезарядка · 1 АК, 2 СВД · H убрать оружие · G граната · V FPV · B меню · Esc пауза", 16, Color(1, 1, 1, 0.5))
+		_text(Vector2(24, 132), "WASD ход · Shift бег · C присед · ЛКМ огонь · ПКМ прицел/оптика · R перезарядка · 1 АК, 2 СВД, 3 ВАЛ · H убрать оружие · G граната · V FPV · B меню · Esc пауза", 16, Color(1, 1, 1, 0.5))
+		_text(Vector2(24, 176), "Z бинт · X промедол · T аптечка · M позвать медика · K камера (бодикам / GoPro)", 16, Color(1, 1, 1, 0.5))
 		_text(Vector2(24, 154), "Дрон: висит сам; ↑ вперёд, ↓ назад, ← → поворот, E выше, Q ниже, мышь — камера · Приказы: 4–9, 0, −", 16, Color(1, 1, 1, 0.5))
 		return
 
@@ -448,6 +520,8 @@ func _draw_status() -> void:
 	var w := 340.0
 	var h := 132.0
 	var o := Vector2(14, size.y - h - 14)
+	if p.painkiller > 0.0 and not p.dead:
+		_text(o + Vector2(4, -10), "+ ПРОМЕДОЛ %d с" % int(ceil(p.painkiller)), 17, Color(0.55, 1, 0.6, 0.95))
 	draw_rect(Rect2(o, Vector2(w, h)), Color(0.04, 0.045, 0.05, 0.72))
 	draw_rect(Rect2(o, Vector2(w, h)), Color(1, 1, 1, 0.08), false, 1.0)
 	var state := "Боеспособен"
@@ -520,6 +594,8 @@ func _draw_hotbar() -> void:
 	for k in player.weapon.slots.size():
 		counts.append("%d" % (_ammo if held == k else player.weapon.slots[k].ammo))
 	counts += ["×%d" % player.grenades, "×%d" % player.drones]
+	while counts.size() < SLOT_IDS.size(): # (more guns than DEFS know of: none)
+		counts.append("")
 	for k in slots.size():
 		var i: int = items[k]
 		var r: Rect2 = slots[k]
@@ -540,6 +616,38 @@ func _draw_hotbar() -> void:
 		draw_string(_font, r.end - Vector2(cw + 6, 6), cnt, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.92))
 
 
+## First aid row: bandages, promedol, medkits, the medic.
+func _draw_aid() -> void:
+	var rects := _aid_rects()
+	var counts := [player.bandages, player.promedol, player.medkits, -1]
+	draw_string(_font, rects[0].position + Vector2(0, -4), "ПЕРВАЯ ПОМОЩЬ", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.55))
+	for k in rects.size():
+		var r: Rect2 = rects[k]
+		var id: String = AID_IDS[k]
+		var busy: bool = player.treating == id or (id == "medic" and player.wants_medic)
+		var empty: bool = counts[k] == 0
+		draw_rect(r, Color(0.05, 0.08, 0.06, 0.65) if busy else Color(0.05, 0.05, 0.06, 0.5))
+		draw_rect(r, Color(0.5, 1, 0.6, 0.9) if busy else Color(1, 1, 1, 0.22), false, 2.0 if busy else 1.0)
+		var ir := Rect2(r.position + Vector2(4, 3), Vector2(r.size.x - 8, r.size.y - 18))
+		if id == "medic":
+			var cc := ir.get_center()
+			var col := Color(0.85, 0.1, 0.1, 0.95)
+			draw_circle(cc, 13, Color(1, 1, 1, 0.9))
+			draw_rect(Rect2(cc - Vector2(3.5, 10), Vector2(7, 20)), col)
+			draw_rect(Rect2(cc - Vector2(10, 3.5), Vector2(20, 7)), col)
+		else:
+			var tex: Texture2D = _icons[id]
+			var ts := tex.get_size()
+			var sc := minf(ir.size.x / ts.x, ir.size.y / ts.y)
+			draw_texture_rect(tex, Rect2(ir.get_center() - ts * sc * 0.5, ts * sc), false, Color(1, 1, 1, 0.3 if empty else 1.0))
+		draw_string(_font, r.position + Vector2(4, 12), AID_KEYS[k], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1, 1, 1, 0.55))
+		var label: String = AID_NAMES[k] if counts[k] < 0 else "%s ×%d" % [AID_NAMES[k], counts[k]]
+		var fs := 11
+		var lw := _font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		draw_string(_font, Vector2(r.get_center().x - lw * 0.5, r.end.y - 4), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
+				Color(1, 1, 1, 0.45 if empty else 0.9))
+
+
 ## Breath for running: a thin bar over the hotbar while it is not full.
 func _draw_stamina() -> void:
 	if player.stamina >= 0.999:
@@ -555,23 +663,42 @@ func _draw_stamina() -> void:
 	draw_rect(Rect2(x0, y, w * player.stamina, 4), col)
 
 
-## Dying: ringing ears, the picture goes black round a white point that
-## shrinks and goes out.
+## Dying, as on the video: the picture goes red as he drops and the gun
+## falls, then a white flash; the white fades to grey round a soft glow in
+## the middle, the grey goes dark, the glow shrinks to a point and goes out.
 func _draw_death() -> void:
 	var t := player.death_t
 	var c := size * 0.5
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.25, 0.0, 0.0, clampf(0.5 - t, 0.0, 0.5)))
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, clampf((t - 0.15) / 1.2, 0.0, 1.0)))
-	var dot := clampf(1.0 - (t - 1.2) / 3.0, 0.0, 1.0)
-	if t > 0.4 and dot > 0.0:
-		var r := lerpf(3.0, 26.0, dot * dot)
-		for k in 4:
-			draw_circle(c, r * (2.6 - k * 0.5), Color(1, 1, 1, 0.06 * dot))
-		draw_circle(c, r, Color(1, 1, 1, dot))
-	if t > 4.2:
-		var a := clampf((t - 4.2) / 0.8, 0.0, 0.8)
+	var full := Rect2(Vector2.ZERO, size)
+	# red while falling
+	var red := clampf(t / 0.12, 0.0, 1.0) * clampf((1.15 - t) / 0.2, 0.0, 1.0)
+	if red > 0.0:
+		draw_rect(full, Color(0.7, 0.02, 0.02, 0.42 * red))
+		for k in 6:
+			var inset := k * 30.0
+			draw_rect(Rect2(Vector2(inset, inset), size - Vector2(inset, inset) * 2.0), Color(0.3, 0.0, 0.0, 0.1 * red), false, 30.0)
+	# the white flash, then the background: white -> grey -> black
+	var white := Color(1.0, 0.985, 0.95)
+	var grey := Color(0.62, 0.61, 0.6)
+	var bg_a := clampf((t - 0.95) / 0.15, 0.0, 1.0)
+	if bg_a > 0.0:
+		var col := white
+		if t > 1.6:
+			col = white.lerp(grey, clampf((t - 1.6) / 1.2, 0.0, 1.0))
+		if t > 2.8:
+			col = grey.lerp(Color(0, 0, 0), clampf((t - 2.8) / 1.4, 0.0, 1.0))
+		col.a = bg_a
+		draw_rect(full, col)
+	# the glow in the middle: wide while it is grey, shrinking in the dark
+	var glow := clampf((t - 1.3) / 0.6, 0.0, 1.0) * clampf((6.3 - t) / 0.8, 0.0, 1.0)
+	if glow > 0.0:
+		var r := size.y * lerpf(0.42, 0.012, clampf((t - 2.6) / 3.2, 0.0, 1.0) ** 0.7)
+		draw_texture_rect(_glow, Rect2(c - Vector2(r, r), Vector2(r, r) * 2.0), false, Color(1, 1, 1, glow))
+		draw_circle(c, maxf(r * 0.1, 1.5), Color(1, 1, 0.97, glow))
+	if t > 5.0:
+		var a := clampf((t - 5.0) / 0.8, 0.0, 0.8) * clampf((RESPAWN_FADE - t) / 0.4, 0.0, 1.0)
 		var txt := "ВЫ ПОГИБЛИ"
-		_text(Vector2(c.x - _font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x * 0.5, c.y + 60), txt, 30, Color(0.8, 0.8, 0.8, a))
+		_text(Vector2(c.x - _font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x * 0.5, c.y + 70), txt, 30, Color(0.8, 0.8, 0.8, a))
 
 
 ## Flying the FPV drone: analog video look (scan lines, noise, dark edges)

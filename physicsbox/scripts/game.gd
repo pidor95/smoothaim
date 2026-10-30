@@ -12,6 +12,16 @@ const TICKETS := 120
 const ACTION_RADIUS := 75.0
 ## This share of the men holding the line are snipers.
 const SNIPER_CHANCE := 0.18
+## Medics per side on the field (the player can call his own over).
+const MEDICS := 2
+const MEDIC_CALL_RANGE := 150.0
+## A medic of his side comes to the wounded player by himself this often
+## (no call needed); the clock runs only while he is hurt.
+const MEDIC_ROUND := 90.0
+## First aid pouches lying about the trenches; one comes back after a while.
+const MEDKIT_COUNT := 48
+const MEDKIT_BACK := 90.0
+const MEDKIT_SCENE := "res://assets/props/medkit.glb"
 
 var house: TrenchLevel
 var player: Player
@@ -24,6 +34,10 @@ var _round_end_t := 0.0
 var _reinforce_t := [2.0, 2.0]
 var _drone_t := randf_range(25.0, 45.0)
 var _team_points: Array = [[], []] # [team] -> reinforcement points
+var _medic_wanted := [false, false]
+var _medic_round_t := MEDIC_ROUND
+var _medic_wait := 0.0
+var _medkits: Array = [] # [node, gone_t]
 
 var _bodies: Array[Npc] = []
 var _pause_layer := CanvasLayer.new()
@@ -72,6 +86,7 @@ func _ready() -> void:
 	_build_weapon_menu()
 	player.capture_mouse()
 	_setup_teams()
+	_place_medkits()
 
 	# let the navigation map sync before soldiers start pathing
 	await get_tree().physics_frame
@@ -201,9 +216,15 @@ func spawn_soldier(team: int, assault_mode := -1, start := false) -> Npc:
 	if start and not assault:
 		var own: Array = _near_player(Npc.war_posts[team], ACTION_RADIUS * 0.8)
 		at = own[randi() % own.size()]
-	# now and then a sniper with an SVD: he takes a post up in a building
-	var sniper := not assault and randf() < SNIPER_CHANCE
-	var npc := spawn_npc(at + Vector3(randf_range(-0.4, 0.4), 0, randf_range(-0.4, 0.4)), team, "svd" if sniper else "rifle")
+	# now and then a sniper with an SVD: he takes a post up in a building;
+	# each side keeps a couple of medics
+	var medic: bool = not assault and (_medic_wanted[team] or (_medics(team) < MEDICS and randf() < 0.35))
+	var sniper := not assault and not medic and randf() < SNIPER_CHANCE
+	var npc := spawn_npc(at + Vector3(randf_range(-0.4, 0.4), 0, randf_range(-0.4, 0.4)), team, "svd" if sniper else "rifle", medic)
+	if medic:
+		_medic_wanted[team] = false
+		if team == 0 and player.wants_medic:
+			npc.send_to.call_deferred(player)
 	npc.role = "assault" if assault else "hold"
 	if sniper:
 		var high := (Npc.war_posts[team] as Array).filter(func(p): return p.y > 3.0)
@@ -234,15 +255,132 @@ func send_enemy_drone() -> FpvDrone:
 	return d
 
 
-func spawn_npc(pos: Vector3, team := 1, weapon := "rifle") -> Npc:
+func spawn_npc(pos: Vector3, team := 1, weapon := "rifle", medic := false) -> Npc:
 	var npc := Npc.new()
 	npc.team = team
 	npc.weapon = weapon
+	npc.medic = medic
 	npc.position = pos
 	npc.rotation.y = 0.0 if team == 0 else PI
 	add_child(npc)
 	npc.died.connect(_on_npc_died)
 	return npc
+
+
+func _medics(team: int) -> int:
+	var n := 0
+	for npc in get_tree().get_nodes_in_group("npcs"):
+		if npc.team == team and npc.medic and not npc.dead:
+			n += 1
+	return n
+
+
+## The player called for a medic: the nearest one of his side runs over;
+## with none close by the next reinforcement is one. Returns the HUD line.
+func call_medic() -> String:
+	var m := medic_for_player()
+	if m:
+		return "Медик идёт — %d м" % int(m.global_position.distance_to(player.global_position))
+	var best: Npc = null
+	var best_d := MEDIC_CALL_RANGE
+	for npc in get_tree().get_nodes_in_group("npcs"):
+		if npc.team != 0 or not npc.medic or not npc.is_combatant():
+			continue
+		var d: float = npc.global_position.distance_to(player.global_position)
+		if d < best_d:
+			best = npc
+			best_d = d
+	if best and best.send_to(player):
+		return "МЕДИК! — идёт, %d м" % int(best_d)
+	_medic_wanted[0] = true
+	_reinforce_t[0] = minf(_reinforce_t[0], 0.5)
+	return "МЕДИК! — рядом нет, придёт с подкреплением"
+
+
+## Every MEDIC_ROUND seconds of being hurt the nearest medic comes over and
+## patches the player up on his own.
+func _medic_rounds(delta: float) -> void:
+	var hurt := not player.dead and (player.hits > 0 or player.bleed_rate > 0.5 or player.blood < Player.BLOOD_FULL - 400.0)
+	if player.wants_medic:
+		# called, but nobody is on the way (the medic was killed, none came
+		# with the reinforcements yet): ask again every 20 s
+		_medic_wait = _medic_wait + delta if medic_for_player() == null else 0.0
+		if _medic_wait > 20.0:
+			_medic_wait = 0.0
+			call_medic()
+		return
+	if not hurt:
+		_medic_round_t = MEDIC_ROUND
+		return
+	_medic_round_t -= delta
+	if _medic_round_t > 0.0:
+		return
+	_medic_round_t = MEDIC_ROUND
+	player.wants_medic = true
+	var note := call_medic()
+	if note.begins_with("МЕДИК! — идёт"):
+		player.medic_note = "Медик сам идёт к вам: " + note.get_slice("идёт, ", 1)
+	else:
+		player.medic_note = "Медик придёт с подкреплением"
+	player.medic_note_t = 3.0
+
+
+## The medic on his way to (or working on) the player.
+func medic_for_player() -> Npc:
+	for npc in get_tree().get_nodes_in_group("npcs"):
+		if npc.medic and not npc.dead and npc._patient == player:
+			return npc
+	return null
+
+
+## First aid pouches about the trenches and the firing posts of both sides,
+## on the ground; walking over one picks it up.
+func _place_medkits() -> void:
+	var spots: Array = []
+	for t in 2:
+		spots += house.team_posts[t]
+		spots += house.team_spawns[t]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	var space := get_world_3d().direct_space_state
+	var scene: PackedScene = load(MEDKIT_SCENE)
+	var taken: Array[Vector3] = []
+	var tries := 0
+	while _medkits.size() < MEDKIT_COUNT and tries < 600 and not spots.is_empty():
+		tries += 1
+		var at: Vector3 = spots[rng.randi() % spots.size()] + Vector3(rng.randf_range(-1.2, 1.2), 0.0, rng.randf_range(-1.2, 1.2))
+		if taken.any(func(p): return p.distance_to(at) < 12.0):
+			continue
+		var q := PhysicsRayQueryParameters3D.create(at + Vector3.UP * 1.2, at + Vector3.DOWN * 2.0, 1)
+		var hit := space.intersect_ray(q)
+		if hit.is_empty() or hit.normal.y < 0.8:
+			continue
+		var kit: Node3D = scene.instantiate()
+		add_child(kit)
+		kit.global_transform = Transform3D(Basis(Vector3.UP, rng.randf() * TAU), hit.position)
+		for mi in kit.find_children("*", "MeshInstance3D", true, false):
+			(mi as MeshInstance3D).visibility_range_end = 70.0
+			(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		taken.append(at)
+		_medkits.append([kit, 0.0])
+
+
+func _medkit_pickups(delta: float) -> void:
+	if player.dead:
+		return
+	var at := player.global_position
+	for m in _medkits:
+		var kit: Node3D = m[0]
+		if not kit.visible:
+			m[1] -= delta
+			if m[1] <= 0.0:
+				kit.visible = true
+			continue
+		var d := kit.global_position - at
+		if absf(d.y) < 1.4 and Vector2(d.x, d.z).length() < 1.1:
+			kit.visible = false
+			m[1] = MEDKIT_BACK
+			player.pick_medkit()
 
 
 ## Soldiers of `team` still in the fight (not dead, down or out cold).
@@ -332,6 +470,8 @@ func _order_targets() -> Array[Npc]:
 func _physics_process(delta: float) -> void:
 	if player == null:
 		return
+	_medkit_pickups(delta)
+	_medic_rounds(delta)
 	if winner >= 0:
 		_round_end_t -= delta
 		if _round_end_t <= 0.0:
@@ -507,6 +647,9 @@ func _refresh_weapon_cards() -> void:
 				b.text = "В СНАРЯЖЕНИИ ✓" if carried else "УБРАНО — ВЕРНУТЬ"
 			"suppressor":
 				b.text = "ГЛУШИТЕЛЬ: УСТАНОВЛЕН" if Settings.suppressed.get(id, false) else "ГЛУШИТЕЛЬ: СНЯТ"
+			"sight":
+				var sd: Dictionary = w.slots[i].def.sights
+				b.text = "ПРИЦЕЛ: " + String(sd[w.sight_of(w.slots[i])].title).to_upper()
 	_holster_button.text = "ОРУЖИЕ УБРАНО (руки свободны)" if w.holstered else "УБРАТЬ ОРУЖИЕ ИЗ РУК"
 	_holster_button.disabled = w.holstered
 
@@ -582,19 +725,19 @@ func _build_weapon_menu() -> void:
 	for i in w.slots.size():
 		var d: Dictionary = w.slots[i].def
 		var v := _card(row)
-		v.add_child(_icon(d.id, Vector2(360, 140)))
-		v.add_child(UiKit.label(d.title, 30, Color(1, 1, 1)))
-		v.add_child(UiKit.label(d.desc, 18, Color(0.75, 0.75, 0.75)))
+		v.add_child(_icon(d.id, Vector2(300, 110)))
+		v.add_child(UiKit.label(d.title, 28, Color(1, 1, 1)))
+		v.add_child(UiKit.label(d.desc, 15, Color(0.75, 0.75, 0.75)))
 		for line in d.stats:
-			v.add_child(UiKit.label(line, 19, Color(0.9, 0.85, 0.7)))
+			v.add_child(UiKit.label(line, 16, Color(0.9, 0.85, 0.7)))
 		var idx := i
 		var id: String = d.id
 		var take := _small_button("ВЗЯТЬ В РУКИ", func():
 			w.select(idx)
-			toggle_weapon_menu(), 360)
+			toggle_weapon_menu(), 300)
 		v.add_child(take)
 		_weapon_cards.append([take, i, id, "take"])
-		var carry := _small_button("", func(): _set_carried(id, not Settings.carries(id)), 360)
+		var carry := _small_button("", func(): _set_carried(id, not Settings.carries(id)), 300)
 		v.add_child(carry)
 		_weapon_cards.append([carry, i, id, "carry"])
 	_holster_button = _small_button("", func():
@@ -609,7 +752,8 @@ func _build_weapon_menu() -> void:
 	kit.alignment = BoxContainer.ALIGNMENT_CENTER
 	col.add_child(kit)
 	for it in [["grenade", "Гранаты РГД-5", "Бросок анимацией, ×4,\nпополняются со временем."],
-			["fpv", "FPV-дрон", "Камикадзе с зарядом ПГ-7:\nлетишь через его камеру."]]:
+			["fpv", "FPV-дрон", "Камикадзе с зарядом ПГ-7:\nлетишь через его камеру."],
+			["medkit", "Аптечка", "Бинты ×2, промедол, аптечка\nв начале боя и после гибели."]]:
 		var v := _card(kit)
 		v.add_child(_icon(it[0], Vector2(250, 125)))
 		v.add_child(UiKit.label(it[1], 26, Color(1, 1, 1)))
@@ -627,22 +771,37 @@ func _build_weapon_menu() -> void:
 	for i in w.slots.size():
 		var d: Dictionary = w.slots[i].def
 		var v := _card(mods)
-		v.add_child(_icon(d.id, Vector2(360, 120)))
-		v.add_child(UiKit.label(d.title, 28, Color(1, 1, 1)))
+		v.add_child(_icon(d.id, Vector2(300, 100)))
+		v.add_child(UiKit.label(d.title, 26, Color(1, 1, 1)))
+		var id: String = d.id
 		var line := HBoxContainer.new()
 		line.add_theme_constant_override("separation", 8)
-		line.add_child(_icon("suppressor", Vector2(110, 55)))
-		line.add_child(UiKit.label("Глушитель ПБС-1", 22, Color(0.9, 0.85, 0.7)))
+		line.add_child(_icon("suppressor", Vector2(90, 45)))
+		if d.get("integral", false):
+			line.add_child(UiKit.label("Глушитель встроен", 20, Color(0.9, 0.85, 0.7)))
+			v.add_child(line)
+			v.add_child(UiKit.label("Стреляет тихо всегда: вспышки нет,\nсолдаты слышат только вблизи.", 15, Color(0.75, 0.75, 0.75)))
+			continue
+		line.add_child(UiKit.label("Глушитель ПБС-1", 20, Color(0.9, 0.85, 0.7)))
 		v.add_child(line)
-		v.add_child(UiKit.label("Нет вспышки у ствола, выстрел тихий:\nсолдаты слышат его только вблизи.", 17, Color(0.75, 0.75, 0.75)))
-		var id: String = d.id
+		v.add_child(UiKit.label("Нет вспышки у ствола, выстрел тихий:\nсолдаты слышат его только вблизи.", 15, Color(0.75, 0.75, 0.75)))
 		var b := _small_button("", func():
 			Settings.suppressed[id] = not Settings.suppressed.get(id, false)
 			w.apply_mods()
 			Settings.save_settings()
-			_refresh_weapon_cards(), 360)
+			_refresh_weapon_cards(), 300)
 		v.add_child(b)
 		_weapon_cards.append([b, i, id, "suppressor"])
+		if d.has("sights"):
+			# the AK: the round tube collimator (as on the video) or the Kobra
+			var sb := _small_button("", func():
+				var names: Array = d.sights.keys()
+				Settings.sight[id] = names[(names.find(w.sight_of(w.slots[i])) + 1) % names.size()]
+				w.apply_mods()
+				Settings.save_settings()
+				_refresh_weapon_cards(), 300)
+			v.add_child(sb)
+			_weapon_cards.append([sb, i, id, "sight"])
 
 	var immortal_page := _toggle_page("Пули и осколки не наносят вам урона.\nБез бессмертия: пятая пуля убивает, раны кровоточат,\nпри смерти — возрождение в своей траншее.")
 	_immortal_button = immortal_page.get_child(1)

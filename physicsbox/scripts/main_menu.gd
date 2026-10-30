@@ -1,6 +1,7 @@
 extends Node3D
 ## Main menu: dark red-grid stage with a soldier you can tap to shoot,
-## title, "to battle", settings and the model credits.
+## title, "to battle" (first the kit screen: what to take into the fight),
+## settings and the model credits.
 
 var cam := Camera3D.new()
 var dummy: Npc
@@ -13,8 +14,21 @@ var _settings_box: Control
 var _log_box: Control
 var _log_text: Label
 var _loading: Label
+var _margin: Control
+var _loadout: Control
+var _loadout_refresh: Array[Callable] = []
+## The kit screen's cards: what can be taken into the fight.
+const KIT := [
+	["ak74", "АК-74М", "Автомат 5,45 мм, 30 патронов,\nкруглый коллиматор или «Кобра»."],
+	["asval", "АС «Вал»", "Бесшумный автомат 9×39 мм,\n20 патронов, глушитель встроен."],
+	["svd", "СВД + ПСО-1", "Снайперская винтовка, 10 патронов,\nоптика ×4, пробивает бронеплиты."],
+	["grenade", "Гранаты РГД-5", "×4, бросок анимацией,\nпополняются со временем."],
+	["fpv", "FPV-дрон", "Камикадзе с зарядом ПГ-7:\nлетишь через его камеру."],
+	["medkit", "Аптечка", "Бинты ×2, промедол, аптечка:\nостановить кровь, снять боль."],
+]
 const PRELOAD := ["res://scenes/game.tscn", "res://assets/maps/trenches.glb", "res://assets/maps/buildings.glb",
-		"res://assets/maps/trenches_nav.res", "res://assets/weapons/ak74_fp.glb", "res://assets/weapons/svd_fp.glb",
+		"res://assets/maps/trenches_nav.res", "res://assets/weapons/ak74_fp.glb", "res://assets/weapons/svd_fp.glb", "res://assets/weapons/asval_fp.glb",
+		"res://assets/props/medkit.glb",
 		"res://assets/weapons/grenade_fp.glb", "res://assets/npc/npc_rifle.glb", "res://assets/npc/npc_svd.glb",
 		"res://assets/npc/soldier_gear.glb", "res://assets/npc/mannequin_anims.glb",
 		"res://assets/weapons/suppressor.glb", "res://assets/npc/gibs.glb", "res://assets/textures/wound_atlas.png"]
@@ -163,6 +177,7 @@ func _build_ui() -> void:
 	for side in ["left", "top", "right", "bottom"]:
 		margin.add_theme_constant_override("margin_" + side, 56)
 	_ui.add_child(margin)
+	_margin = margin
 	var col := VBoxContainer.new()
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
@@ -182,7 +197,7 @@ func _build_ui() -> void:
 	_main_box = VBoxContainer.new()
 	_main_box.add_theme_constant_override("separation", 12)
 	col.add_child(_main_box)
-	var play := UiKit.button("В БОЙ", _start_game, 420)
+	var play := UiKit.button("В БОЙ", _show_loadout, 420)
 	play.custom_minimum_size.y = 80
 	play.add_theme_font_size_override("font_size", 40)
 	_main_box.add_child(play)
@@ -200,6 +215,9 @@ func _build_ui() -> void:
 			"«SVD \"Dragunov\"» — Sergei3D (sketchfab.com/Sergei3D)",
 			"«Low-Poly EKP-1S-03 Kobra Red Dot Sight» — Mivoriss57 (sketchfab.com/Mivoriss57)",
 			"«PBS-1 Silencer for AK-74 5.45x39» — 3dYaroslav (sketchfab.com/3dYaroslav)",
+			"«AS Val» — SLIVA21 (sketchfab.com/SLIVA21)",
+			"«Aim Point Pro Red Dot Sight» — armoredwave (sketchfab.com/armoredwave)",
+			"«Tactical FIRST AID KIT» — ruskoschey (sketchfab.com/ruskoschey)",
 			"Остальное — сделано в Blender скриптами проекта."]:
 		_credits_box.add_child(UiKit.label(line, 22, Color(0.8, 0.8, 0.8)))
 	_credits_box.add_child(UiKit.button("НАЗАД", func(): _show(_main_box)))
@@ -242,6 +260,8 @@ func _build_ui() -> void:
 	_ui.add_child(version)
 	version.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT, Control.PRESET_MODE_MINSIZE, 24)
 
+	_build_loadout()
+
 	_loading = UiKit.label("ЗАГРУЗКА...", 48, Color(1, 1, 1))
 	_loading.visible = false
 	_ui.add_child(_loading)
@@ -252,6 +272,124 @@ func _build_ui() -> void:
 func _show(box: Control) -> void:
 	for b in [_main_box, _credits_box, _settings_box, _log_box]:
 		b.visible = b == box
+	_margin.visible = true
+	_loadout.visible = false
+
+
+# ------------------------------------------------------------------ kit screen
+
+## Before the battle: a card for every gun and piece of kit - take it or
+## leave it, the AK's sight, the SVD's suppressor. The choices stick
+## (Settings) and the hotbar shows only what was taken.
+func _build_loadout() -> void:
+	_loadout = Control.new()
+	_loadout.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_ui.add_child(_loadout)
+	var dim := ColorRect.new()
+	dim.color = Color(0.02, 0.02, 0.025, 0.86)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_loadout.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_loadout.add_child(center)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 14)
+	center.add_child(col)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 18)
+	col.add_child(top)
+	var back := UiKit.button("◀ НАЗАД", func():
+		Settings.save_settings()
+		_show(_main_box), 200)
+	back.custom_minimum_size.y = 56
+	top.add_child(back)
+	var title := UiKit.label("ОРУЖИЕ И СНАРЯЖЕНИЕ НА БОЙ", 34, Color(1, 1, 1))
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	top.add_child(title)
+	var go := UiKit.button("В БОЙ ▶", func():
+		Settings.save_settings()
+		_start_game(), 240)
+	go.custom_minimum_size.y = 56
+	go.add_theme_color_override("font_color", Color(1, 0.85, 0.5))
+	top.add_child(go)
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 14)
+	grid.add_theme_constant_override("v_separation", 14)
+	col.add_child(grid)
+	for it in KIT:
+		grid.add_child(_kit_card(it[0], it[1], it[2]))
+	_loadout.visible = false
+
+
+func _kit_card(id: String, title: String, desc: String) -> Control:
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(380, 0)
+	var on_box := StyleBoxFlat.new()
+	on_box.bg_color = Color(0.1, 0.09, 0.06, 0.98)
+	on_box.border_color = Color(1, 0.78, 0.3)
+	on_box.set_border_width_all(3)
+	on_box.set_corner_radius_all(6)
+	on_box.set_content_margin_all(12)
+	var off_box := on_box.duplicate() as StyleBoxFlat
+	off_box.bg_color = Color(0.06, 0.06, 0.07, 0.98)
+	off_box.border_color = Color(0.25, 0.25, 0.27)
+	off_box.set_border_width_all(2)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
+	card.add_child(v)
+	var icon := TextureRect.new()
+	icon.texture = load("res://assets/ui/icon_%s.png" % id)
+	icon.custom_minimum_size = Vector2(340, 96)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	v.add_child(icon)
+	v.add_child(UiKit.label(title, 25, Color(1, 1, 1)))
+	v.add_child(UiKit.label(desc, 15, Color(0.72, 0.72, 0.72)))
+	var take := _kit_button(func():
+		Settings.loadout[id] = not Settings.carries(id)
+		_refresh_loadout())
+	v.add_child(take)
+	var extra: Button = null
+	if id == "ak74":
+		extra = _kit_button(func():
+			Settings.sight["ak74"] = "kobra" if Settings.sight.get("ak74", "collimator") == "collimator" else "collimator"
+			_refresh_loadout())
+	elif id == "svd":
+		extra = _kit_button(func():
+			Settings.suppressed["svd"] = not Settings.suppressed.get("svd", false)
+			_refresh_loadout())
+	if extra:
+		v.add_child(extra)
+	_loadout_refresh.append(func():
+		var on := Settings.carries(id)
+		card.add_theme_stylebox_override("panel", on_box if on else off_box)
+		icon.modulate = Color(1, 1, 1, 1.0 if on else 0.35)
+		take.text = "✓ БЕРУ" if on else "НЕ БЕРУ"
+		if id == "ak74":
+			extra.text = "ПРИЦЕЛ: " + ("КОЛЛИМАТОР" if Settings.sight.get("ak74", "collimator") == "collimator" else "«КОБРА»")
+		elif id == "svd":
+			extra.text = "ГЛУШИТЕЛЬ ПБС-1: " + ("ДА" if Settings.suppressed.get("svd", false) else "НЕТ"))
+	return card
+
+
+func _kit_button(callback: Callable) -> Button:
+	var b := UiKit.button("", callback, 340)
+	b.custom_minimum_size.y = 44
+	b.add_theme_font_size_override("font_size", 21)
+	return b
+
+
+func _refresh_loadout() -> void:
+	for f in _loadout_refresh:
+		f.call()
+
+
+func _show_loadout() -> void:
+	_refresh_loadout()
+	_margin.visible = false
+	_loadout.visible = true
 
 
 ## The newest log of an earlier run (Godot keeps a few in user://logs; the
@@ -272,6 +410,7 @@ func _show_log() -> void:
 ## Settings.preloaded for the battle scene.
 func _start_game() -> void:
 	_main_box.get_parent().visible = false
+	_loadout.visible = false
 	_loading.visible = true
 	for path in PRELOAD:
 		ResourceLoader.load_threaded_request(path, "", true)
