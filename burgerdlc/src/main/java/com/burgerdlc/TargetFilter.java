@@ -8,6 +8,7 @@ import net.minecraft.entity.passive.AnimalEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.AxeItem;
 import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
 import net.minecraft.registry.tag.ItemTags;
 
 /** Общие настройки «по кому работать» для боевых модулей. */
@@ -35,6 +36,6 @@ final class TargetFilter {
 
     static boolean holdingWeapon(PlayerEntity p) {
         ItemStack stack = p.getMainHandStack();
-        return stack.isIn(ItemTags.SWORDS) || stack.getItem() instanceof AxeItem;
+        return stack.isIn(ItemTags.SWORDS) || stack.getItem() instanceof AxeItem || stack.isOf(Items.MACE);
     }
 }

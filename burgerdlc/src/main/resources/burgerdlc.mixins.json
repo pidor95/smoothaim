@@ -22,7 +22,8 @@
     "OptimizerEntityMixin",
     "OptimizerBlockEntityMixin",
     "OptimizerFpsMixin",
-    "OptimizerToastMixin"
+    "OptimizerToastMixin",
+    "SwingMixin"
   ],
   "injectors": {
     "defaultRequire": 1

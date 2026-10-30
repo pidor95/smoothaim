@@ -23,15 +23,15 @@ public class Watermark extends Module {
 
         TextRenderer tr = mc.textRenderer;
         int gap = 12, width = 0;
-        for (String s : parts) width += tr.getWidth(s);
+        for (String s : parts) width += UI.width(s);
         width += gap * (parts.length - 1) + 16;
 
         int x = (ctx.getScaledWindowWidth() - width) / 2, y = 4;
         Render2D.round(ctx, x, y, width, 15, 5, ClickGui.PANEL);
         int tx = x + 8;
         for (int i = 0; i < parts.length; i++) {
-            ctx.drawText(tr, parts[i], tx, y + 4, i == 0 ? ClickGui.ACCENT : ClickGui.TEXT, false);
-            tx += tr.getWidth(parts[i]);
+            UI.draw(ctx, parts[i], tx, y + 4, i == 0 ? ClickGui.ACCENT : ClickGui.TEXT);
+            tx += UI.width(parts[i]);
             if (i < parts.length - 1) {
                 ctx.fill(tx + gap / 2, y + 4, tx + gap / 2 + 1, y + 11, ClickGui.LINE);
                 tx += gap;

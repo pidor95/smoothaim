@@ -24,11 +24,12 @@ import java.util.Properties;
 public class BurgerDLC implements ClientModInitializer {
     static final List<Module> MODULES = List.of(
             new AimBot(), new TriggerBot(),
-            new InvMove(),
+            new InvMove(), new AutoSprint(), new Optimizer(),
             new ChinaHat(), new JumpCircles(), new TargetESP(), new Trails(), new HitParticles(),
+            new KillEffect(), new FireFlies(), new SwingAnimation(),
             new ESP(), new Crosshair(), new FullBright(), new TimeChanger(), new ViewModel(),
-            new Optimizer(),
-            new Theme(), new NoRender(), new Watermark());
+            new Theme(), new TargetHud(), new KeyBindsHud(), new ArmorHud(), new PotionsHud(),
+            new NoRender(), new Watermark());
 
     static final KeyBinding.Category CATEGORY = KeyBinding.Category.create(Identifier.of("burgerdlc", "main"));
 

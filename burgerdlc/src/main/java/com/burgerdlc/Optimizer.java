@@ -65,7 +65,7 @@ public class Optimizer extends Module {
     private Integer oldBlend;
 
     public Optimizer() {
-        super("Оптимизатор", "FPS, частицы, сущности, графика", Category.OPTIMIZATION, false);
+        super("Оптимизатор", "FPS, частицы, сущности, графика", Category.MOVEMENT, false);
         INSTANCE = this;
     }
 

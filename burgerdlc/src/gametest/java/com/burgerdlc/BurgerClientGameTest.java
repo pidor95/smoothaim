@@ -118,7 +118,7 @@ public class BurgerClientGameTest implements FabricClientGameTest {
             ctx.runOnClient(mc -> {
                 for (Module m : BurgerDLC.MODULES) {
                     if (m.category == Category.VISUALS && !(m instanceof ESP)) m.setEnabled(false);
-                    if (m.category == Category.OPTIMIZATION) m.setEnabled(true);
+                    if (m instanceof Optimizer) m.setEnabled(true);
                 }
                 ESP esp = module(ESP.class);
                 esp.setEnabled(true);
@@ -141,9 +141,60 @@ public class BurgerClientGameTest implements FabricClientGameTest {
             System.out.println("[burger-test] ESP и оптимизация: без ошибок, облака выключены");
             ctx.runOnClient(mc -> {
                 for (Module m : BurgerDLC.MODULES) {
-                    if (m.category == Category.OPTIMIZATION || m instanceof ESP) m.setEnabled(false);
+                    if (m instanceof Optimizer || m instanceof ESP) m.setEnabled(false);
                 }
             });
+
+            // Булава: падаем на зомби с высоты — TriggerBot должен ударить ещё в воздухе.
+            srv.runCommand("kill @e[type=minecraft:zombie]");
+            srv.runCommand("item replace entity @a weapon.mainhand with minecraft:mace");
+            srv.runCommand("execute as @a at @s run tp @s ~ ~ ~ 0 90");
+            ctx.runOnClient(mc -> {
+                module(TriggerBot.class).setEnabled(false);
+                module(AimBot.class).setEnabled(false);
+            });
+            ctx.waitTicks(40); // булава заряжается ~1.7 с
+            srv.runCommand("execute as @a at @s run tp @s ~ ~8 ~ 0 90");
+            srv.runCommand("execute at @a run summon minecraft:husk ~ ~-8 ~ {NoAI:1b,PersistenceRequired:1b,Silent:1b}");
+            ctx.waitFor(mc -> !mc.player.isOnGround() && zombie(mc) != null);
+            ctx.runOnClient(mc -> module(TriggerBot.class).setEnabled(true));
+            boolean[] hitInAir = {false};
+            for (int i = 0; i < 60 && !hitInAir[0]; i++) {
+                ctx.waitTick();
+                String st = ctx.computeOnClient(mc -> {
+                    ZombieEntity z = zombie(mc);
+                    // Удар сбрасывает заряд; если это случилось в воздухе — ранний удар сработал.
+                    if (!mc.player.isOnGround() && mc.player.getAttackCooldownProgress(0.5f) < 0.5f) hitInAir[0] = true;
+                    return String.format("ground=%s fall=%.2f vy=%.2f cd=%.2f hit=%s hp=%s item=%s",
+                            mc.player.isOnGround(), mc.player.fallDistance, mc.player.getVelocity().y,
+                            mc.player.getAttackCooldownProgress(0.5f), mc.crosshairTarget == null ? null : mc.crosshairTarget.getType(),
+                            z == null ? "-" : z.getHealth(), mc.player.getMainHandStack().getItem());
+                });
+                if (i % 3 == 0 || hitInAir[0]) System.out.println("[burger-test] mace " + i + ": " + st);
+            }
+            System.out.println("[burger-test] Булава: удар в воздухе = " + hitInAir[0]);
+            if (!hitInAir[0]) throw new AssertionError("Ранний удар булавой не сработал в воздухе");
+            ctx.runOnClient(mc -> module(TriggerBot.class).setEnabled(false));
+            srv.runCommand("item replace entity @a weapon.mainhand with minecraft:diamond_sword");
+
+            // Kill Effect + HUD-панели: убиваем слабого зомби.
+            srv.runCommand("kill @e[type=minecraft:zombie]");
+            srv.runCommand("effect give @a minecraft:speed 120 1");
+            srv.runCommand("item replace entity @a armor.chest with minecraft:diamond_chestplate");
+            srv.runCommand("execute as @a at @s run tp @s ~ ~ ~ 0 0");
+            srv.runCommand("execute at @a run summon minecraft:zombie ~ ~ ~2.5 {NoAI:1b,PersistenceRequired:1b,Silent:1b,Health:3f}");
+            ctx.waitFor(mc -> zombie(mc) != null);
+            ctx.runOnClient(mc -> {
+                for (Module m : BurgerDLC.MODULES) {
+                    if (m instanceof KillEffect || m instanceof TargetHud || m instanceof KeyBindsHud
+                            || m instanceof ArmorHud || m instanceof PotionsHud) m.setEnabled(true);
+                }
+            });
+            ctx.waitTicks(3);
+            ctx.runOnClient(mc -> mc.interactionManager.attackEntity(mc.player, zombie(mc)));
+            ctx.waitTicks(3);
+            ctx.takeScreenshot("burger-kill-hud");
+            System.out.println("[burger-test] Kill Effect и HUD: без ошибок");
 
             // FullBright + Time Changer «Ночь».
             ctx.runOnClient(mc -> {
@@ -171,7 +222,7 @@ public class BurgerClientGameTest implements FabricClientGameTest {
                 return new double[]{(px + 84 + 8 + 40) * scale, (py + 28 + 8 + 15) * scale};
             });
             ctx.getInput().setCursorPos(card[0], card[1]);
-            ctx.getInput().pressMouse(GLFW.GLFW_MOUSE_BUTTON_LEFT);
+            ctx.getInput().pressMouse(GLFW.GLFW_MOUSE_BUTTON_RIGHT);
             ctx.waitTicks(10);
             ctx.takeScreenshot("burger-gui-aimbot");
             double[] visuals = ctx.computeOnClient(mc -> {
@@ -198,7 +249,7 @@ public class BurgerClientGameTest implements FabricClientGameTest {
             ctx.waitTicks(10);
             ctx.takeScreenshot("burger-gui-theme");
             ctx.runOnClient(mc -> {
-                ClickGui.current = Category.OPTIMIZATION;
+                ClickGui.current = Category.MOVEMENT;
                 ClickGui.expanded.add(Optimizer.INSTANCE);
                 mc.setScreen(new ClickGui());
             });
