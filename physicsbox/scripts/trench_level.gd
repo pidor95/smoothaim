@@ -82,6 +82,8 @@ func _tex_mat(color: Color, tex: String, uv_scale: float, roughness := 0.85) -> 
 	m.roughness = roughness
 	if tex != "":
 		m.albedo_texture = load(tex)
+		# sharp ground and walls at a glancing angle too
+		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
 		m.uv1_triplanar = true
 		m.uv1_world_triplanar = true
 		m.uv1_scale = Vector3.ONE * uv_scale

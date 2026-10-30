@@ -538,7 +538,9 @@ func _alert_npcs(radius: float) -> void:
 
 func _shoot() -> void:
 	var d := current.def
-	var cam := get_viewport().get_camera_3d()
+	# the bullet goes where the gun points (player.aim), not where the
+	# swaying chest camera looks
+	var cam: Node3D = player.aim
 	var from := cam.global_position
 	var spread_deg: float = lerpf(d.spread_hip, d.spread_ads, aim_t) + player.velocity.length() * 0.25 * (1.0 - aim_t)
 	var spread := deg_to_rad(spread_deg)

@@ -214,7 +214,9 @@ def build_ak_fp():
     # the round tube collimator (as on the video), the other sight choice:
     # its mount on the dust cover, the dot glowing near the objective
     aim = import_more("aimpoint")
-    shrink_images(1024)
+    for img in bpy.data.images:  # (the sight's own textures only: the AK keeps its 2048)
+        if img.name.startswith("M_AimPointPro") and img.size[0] > 1024:
+            img.scale(1024, 1024)
     for o in list(aim):
         if "Reticle" in o.name:
             aim.remove(o)

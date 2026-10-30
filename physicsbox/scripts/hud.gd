@@ -370,11 +370,13 @@ func _draw() -> void:
 
 	if player.weapon.scoped() and not player.piloting and not player.dead:
 		_draw_scope(player.weapon.current.def.scope)
-	# a small white dot for shots from the hip (no scope)
+	# a small white dot for shots from the hip (no scope): where the gun
+	# points, swaying about the picture with the camera
 	if aim < 0.6 and not player.piloting and not player.dead:
 		var a := 1.0 - aim / 0.6
-		draw_circle(c, 3.0, Color(0, 0, 0, 0.45 * a))
-		draw_circle(c, 2.0, Color(1, 1, 1, 0.95 * a))
+		var dot := player.aim_screen()
+		draw_circle(dot, 3.0, Color(0, 0, 0, 0.45 * a))
+		draw_circle(dot, 2.0, Color(1, 1, 1, 0.95 * a))
 
 	# counters
 	_text(Vector2(24, 44), "УБИЙСТВ: %d" % _kills, 26, Color(1, 1, 1, 0.9))
@@ -469,7 +471,8 @@ func _draw() -> void:
 ## Looking through the scope: black all round the eyepiece, a dark rim and
 ## the PSO-1 reticle (chevrons, drop marks, rangefinder).
 func _draw_scope(kind: String) -> void:
-	var c := size * 0.5 + player.scope_shift * size.y
+	var o := player.aim_screen() # the reticle stays on the line of the bore
+	var c := o + player.scope_shift * size.y * 0.5
 	var r := size.y * 0.47
 	var ink := Color(0.02, 0.02, 0.02, 0.95)
 	# outside the eyepiece: black
@@ -477,7 +480,6 @@ func _draw_scope(kind: String) -> void:
 	for k in 6:
 		draw_arc(c, r - k * 7.0, 0, TAU, 96, Color(0, 0, 0, 0.32 - k * 0.05), 8.0, true)
 	var u := r / 10.0 # reticle unit
-	var o := size * 0.5 # the reticle stays on the line of the bore
 	if kind == "pso":
 		var red := Color(0.85, 0.08, 0.05, 0.95)
 		for k in 4: # the aiming chevron and three below it (300..1000 m)

@@ -46,8 +46,8 @@ func on_settings_changed() -> void:
 	visible = Settings.bodycam or gopro
 	var m := _rect.material as ShaderMaterial
 	m.set_shader_parameter("distortion", 1.4 if gopro else 0.32)
-	m.set_shader_parameter("aberration", 0.004 if gopro else 0.006)
-	m.set_shader_parameter("grain", 0.02 if gopro else 0.035)
+	m.set_shader_parameter("aberration", 0.003 if gopro else 0.004)
+	m.set_shader_parameter("grain", 0.015 if gopro else 0.025)
 	m.set_shader_parameter("vignette", 0.45 if gopro else 0.75)
 	m.set_shader_parameter("saturation", 1.12 if gopro else 0.72)
 	m.set_shader_parameter("band", 0.0 if gopro else 1.0)

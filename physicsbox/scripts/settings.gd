@@ -5,7 +5,7 @@ const PATH := "user://settings.cfg"
 
 var sensitivity := 1.0
 var fov := 75.0
-var render_scale := 0.85
+var render_scale := 0.9
 var shadows := true
 var blood_amount := 1.0
 var volume := 0.8
@@ -39,12 +39,14 @@ func load_settings() -> void:
 	if cfg.load(PATH) != OK:
 		# Phones get a lighter default resolution.
 		if OS.has_feature("mobile"):
-			render_scale = 0.75
+			render_scale = 0.85
 		return
 	sensitivity = cfg.get_value("game", "sensitivity", sensitivity)
 	fov = cfg.get_value("game", "fov", fov)
 	blood_amount = cfg.get_value("game", "blood_amount", blood_amount)
 	render_scale = cfg.get_value("video", "render_scale", render_scale)
+	if cfg.get_value("video", "quality_rev", 0) < 1:
+		render_scale = maxf(render_scale, 0.85) # the picture made a little sharper (once)
 	shadows = cfg.get_value("video", "shadows", shadows)
 	show_fps = cfg.get_value("video", "show_fps", show_fps)
 	bodycam = cfg.get_value("video", "bodycam", bodycam)
@@ -64,6 +66,7 @@ func save_settings() -> void:
 	cfg.set_value("game", "fov", fov)
 	cfg.set_value("game", "blood_amount", blood_amount)
 	cfg.set_value("video", "render_scale", render_scale)
+	cfg.set_value("video", "quality_rev", 1)
 	cfg.set_value("video", "shadows", shadows)
 	cfg.set_value("video", "show_fps", show_fps)
 	cfg.set_value("video", "bodycam", bodycam)

@@ -29,6 +29,8 @@ func _process(_delta: float) -> bool:
 	if game == null or game.get("hud") == null:
 		game = current_scene if current_scene and current_scene.has_method("spawn_soldier") else null
 		return false
+	if frame == 35 and NavigationServer3D.map_get_closest_point(root.get_world_3d().navigation_map, game.player.global_position) == Vector3.ZERO:
+		return false # (the big navigation map takes a few seconds to sync)
 	frame += 1
 	if frame == 30:
 		p = game.player

@@ -17,6 +17,16 @@ const CROUCH_HEIGHT := 1.15
 
 var head := Node3D.new()
 var camera := Camera3D.new()
+## Where the gun points (and the bullets go): the camera rides on the chest
+## and sways on its own, the gun in the hands only follows part of that, so
+## the gun, its sight and the aiming dot drift about in the picture.
+var aim := Node3D.new()
+## Share of the camera's sway the gun follows: from the hip, aimed down the
+## sights (the eye on the sight), through a scope.
+const AIM_FOLLOW := Vector3(0.15, 0.6, 0.85)
+var _hand_lag := Vector2.ZERO
+var _hand_lag_v := Vector2.ZERO
+var _hand_prev := Vector2.ZERO
 var weapon: Weapon
 var touch_mode := false
 var touch_move := Vector2.ZERO
@@ -144,9 +154,11 @@ func _ready() -> void:
 	camera.far = 260.0
 	camera.current = true
 	head.add_child(camera)
+	aim.position = head.position
+	add_child(aim)
 	weapon = Weapon.new()
 	weapon.player = self
-	camera.add_child(weapon)
+	aim.add_child(weapon)
 
 	yaw = rotation.y
 	_spawn = global_transform
@@ -461,6 +473,7 @@ func _respawn() -> void:
 	yaw = _spawn.basis.get_euler().y
 	pitch = 0.0
 	head.position = Vector3(0.0, EYE_HEIGHT, 0.0)
+	aim.transform = head.transform
 	_eye = EYE_HEIGHT
 	set_crouch(false)
 	sprint = false
@@ -513,6 +526,7 @@ func _physics_process(delta: float) -> void:
 		var fall := clampf(death_t / 0.9, 0.0, 1.0) * clampf(death_t / 0.9, 0.0, 1.0)
 		head.position = Vector3(lerpf(0.0, -0.15, fall), lerpf(_eye, 0.25, fall), lerpf(0.0, 0.2, fall))
 		head.rotation = Vector3(lerpf(pitch, 0.35, fall), 0.0, lerpf(0.0, 1.25, fall))
+		aim.transform = head.transform
 		velocity = Vector3(0, velocity.y - GRAVITY * delta, 0) if not is_on_floor() else Vector3.ZERO
 		move_and_slide()
 		if death_t >= RESPAWN_TIME:
@@ -570,13 +584,19 @@ func _physics_process(delta: float) -> void:
 	var aim_s := smoothstep(0.0, 1.0, weapon.aim_t)
 	camera.fov = lerpf(fov, fov * weapon.current.def.ads_fov, aim_s)
 	camera.position = GOPRO_AT * (1.0 - aim_s) if gopro() else Vector3.ZERO
-	weapon.position = GOPRO_GUN * (1.0 - aim_s) if gopro() else Vector3.ZERO
+	weapon.position = (GOPRO_AT + GOPRO_GUN) * (1.0 - aim_s) if gopro() else Vector3.ZERO
 	_helmet.visible = gopro() and not weapon.scoped()
 	# camera recoil recovers over time; it never changes where you aim permanently
 	_recoil = _recoil.lerp(Vector2.ZERO, clampf(delta * 9.0, 0.0, 1.0))
 	var sh := shake * shake * 0.07
 	head.rotation = Vector3(pitch + _recoil.x + randf_range(-sh, sh), _recoil.y + randf_range(-sh, sh), randf_range(-sh, sh) * 0.5)
+	var base_rot := head.rotation
 	_bodycam_motion(delta, Vector2(velocity.x, velocity.z).length())
+	# the gun follows the camera's sway only in part (more once aimed)
+	var follow := lerpf(AIM_FOLLOW.x, AIM_FOLLOW.z if weapon.current.def.has("scope") else AIM_FOLLOW.y, aim_s)
+	var base_pos := Vector3(0.0, _eye, 0.0)
+	aim.position = base_pos + (head.position - base_pos) * follow
+	aim.rotation = base_rot + (head.rotation - base_rot) * follow + _hand_sway(delta, aim_s)
 
 	if global_position.y < -30.0:
 		global_transform = _spawn
@@ -620,6 +640,36 @@ func _body_process(delta: float) -> void:
 	# the world goes dull and far away
 	var dull := maxf(ear_ring, 1.0 - consciousness)
 	_muffle.cutoff_hz = lerpf(20000.0, 450.0, clampf(dull, 0.0, 1.0) ** 0.7)
+
+
+## The gun's own wander in the hands, on top of the camera's: it bobs with
+## the steps (out of step with the chest), rises and falls with the breath,
+## and trails quick turns; much less once aimed.
+func _hand_sway(delta: float, aim_s: float) -> Vector3:
+	var hspeed := Vector2(velocity.x, velocity.z).length()
+	var gait := clampf(hspeed / SPEED, 0.0, 1.5) * (0.6 if crouching else 1.0)
+	var ph := _step_phase * PI
+	var t := _cam_t
+	var calm := 1.0 - aim_s * 0.75
+	var bob := Vector3(sin(ph * 2.0 + 0.8) * 0.03, sin(ph + 1.1) * 0.05, 0.0) * gait
+	var breath := Vector3(sin(t * 1.1) * 0.01 + sin(t * 0.43) * 0.007, sin(t * 0.67 + 2.0) * 0.011, 0.0) \
+			* (1.0 + clampf((bpm - 75.0) / 40.0, 0.0, 2.0)) * (1.0 + _stress)
+	# turning: the hands trail the turn and swing past
+	var dt := maxf(delta, 0.001)
+	var target := Vector2(clampf(-(pitch - _hand_prev.x) / dt * 0.04, -0.1, 0.1),
+			clampf(-wrapf(yaw - _hand_prev.y, -PI, PI) / dt * 0.05, -0.14, 0.14))
+	_hand_prev = Vector2(pitch, yaw)
+	_hand_lag_v += ((target - _hand_lag) * 60.0 - _hand_lag_v * 9.0) * delta
+	_hand_lag += _hand_lag_v * delta
+	return (bob + breath + Vector3(_hand_lag.x, _hand_lag.y, 0.0)) * calm
+
+
+## Where the aiming dot is on screen: the point the gun points at, 50 m out.
+func aim_screen() -> Vector2:
+	var at := aim.global_position - aim.global_basis.z * 50.0
+	if camera.is_position_behind(at):
+		return get_viewport().get_visible_rect().size * 0.5
+	return camera.unproject_position(at)
 
 
 func add_stress(amount: float) -> void:
